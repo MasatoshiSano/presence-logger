@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
+
 from services.bridge.src.oracle_client import MergeResult
 
 
@@ -11,7 +12,9 @@ class FakeOracle:
 
     def execute_merge_for_profile(self, **kwargs):
         self.calls.append(kwargs)
-        return self.canned.pop(0) if self.canned else MergeResult(rows_affected=1, ora_code=None, error_message="")
+        if self.canned:
+            return self.canned.pop(0)
+        return MergeResult(rows_affected=1, ora_code=None, error_message="")
 
 
 @dataclass
