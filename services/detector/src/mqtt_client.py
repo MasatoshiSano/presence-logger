@@ -14,7 +14,7 @@ class DetectorMqttClient:
         self._client: paho.Client | None = None
 
     def connect_and_loop(self, *, host: str, port: int, keepalive: int = 60) -> None:
-        client = paho.Client(client_id=self._client_id, protocol=paho.MQTTv5)
+        client = paho.Client(client_id=self._client_id, protocol=paho.MQTTv311)
         client.reconnect_delay_set(min_delay=1, max_delay=60)
         client.connect(host, port, keepalive=keepalive)
         client.loop_start()
