@@ -1,0 +1,4 @@
+opencv-python-headless==4.11.0.86
+paho-mqtt==2.1.0
+pyyaml==6.0.2
+python-json-logger==2.0.7

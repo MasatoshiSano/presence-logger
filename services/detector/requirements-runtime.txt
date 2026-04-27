@@ -1,0 +1,4 @@
+# Runtime-only dependencies installed inside the Docker image.
+# Kept out of the local dev venv because mediapipe lacks aarch64 wheels for
+# Python 3.13 (host) — the Dockerfile pins a python:3.11 base where they exist.
+mediapipe==0.10.18
