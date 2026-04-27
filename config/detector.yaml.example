@@ -1,0 +1,32 @@
+camera:
+  device: "/dev/video0"
+  width: 640
+  height: 480
+  warmup_frames: 5
+
+inference:
+  model_path: "/opt/models/efficientdet_lite0.tflite"
+  target_fps: 1.5
+  score_threshold: 0.5
+  category: "person"
+
+debounce:
+  enter_seconds: 3.0
+  exit_seconds: 3.0
+
+mqtt:
+  host: "mosquitto"
+  port: 1883
+  qos: 2
+  topic_event: "presence/event"
+  topic_ack: "presence/event/ack"
+  client_id_prefix: "presence-detector"
+
+retry:
+  initial_delay_seconds: 5
+  max_delay_seconds: 600
+  multiplier: 3
+
+buffer:
+  path: "/var/lib/presence-logger/detector_buf.db"
+  max_rows: 100000

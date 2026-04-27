@@ -1,0 +1,5 @@
+device_id: null              # null=hostname auto-detected from /etc/host_hostname
+station:
+  sta_no1: "001"
+  sta_no2: "A"
+  sta_no3: "01"

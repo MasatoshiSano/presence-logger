@@ -1,0 +1,39 @@
+mqtt:
+  host: "mosquitto"
+  port: 1883
+  qos: 2
+  topic_event: "presence/event"
+  topic_ack: "presence/event/ack"
+  client_id: "presence-bridge"
+
+oracle:
+  connect_timeout_seconds: 10
+  query_timeout_seconds: 30
+  pool_min: 1
+  pool_max: 2
+  instant_client_dir: "/opt/oracle/instantclient"
+
+network_watcher:
+  poll_interval_seconds: 5
+  ssid_command: "nmcli -t -f ACTIVE,SSID dev wifi"
+
+time_watcher:
+  poll_interval_seconds: 10
+  sync_command: "timedatectl show -p NTPSynchronized --value"
+
+retry:
+  initial_delay_seconds: 5
+  max_delay_seconds: 600
+  multiplier: 3
+
+circuit_breaker:
+  permanent_ora_codes: [942, 904, 1017, 1031, 12514]
+  half_open_after_seconds: 900
+
+buffer:
+  path: "/var/lib/presence-logger/bridge_buf.db"
+  max_rows: 100000
+
+logging:
+  level: "INFO"
+  buffer_stats_interval_seconds: 60
