@@ -1,0 +1,72 @@
+version: "3.8"
+
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: presence-mosquitto
+    restart: unless-stopped
+    networks: [presence-net]
+    volumes:
+      - ./docker/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+
+  detector:
+    build: ./services/detector
+    container_name: presence-detector
+    restart: unless-stopped
+    depends_on: [mosquitto]
+    networks: [presence-net]
+    devices:
+      - "/dev/video0:/dev/video0"
+    volumes:
+      - /etc/presence-logger/device.yaml:/etc/presence-logger/device.yaml:ro
+      - /etc/presence-logger/detector.yaml:/etc/presence-logger/detector.yaml:ro
+      - /etc/hostname:/etc/host_hostname:ro
+      - /var/lib/presence-logger:/var/lib/presence-logger
+      - /var/log/presence-logger:/var/log/presence-logger
+    environment:
+      MQTT_HOST: mosquitto
+      LOG_LEVEL: INFO
+      TZ: Asia/Tokyo
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/detector.healthy"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  bridge:
+    build:
+      context: ./services/bridge
+      args:
+        INSTANT_CLIENT_URL: "${INSTANT_CLIENT_URL:-}"
+    container_name: presence-bridge
+    restart: unless-stopped
+    depends_on: [mosquitto]
+    networks: [presence-net]
+    volumes:
+      - /etc/presence-logger/device.yaml:/etc/presence-logger/device.yaml:ro
+      - /etc/presence-logger/profiles.yaml:/etc/presence-logger/profiles.yaml:ro
+      - /etc/presence-logger/bridge.yaml:/etc/presence-logger/bridge.yaml:ro
+      - /etc/presence-logger/wallets:/etc/presence-logger/wallets:ro
+      - /etc/hostname:/etc/host_hostname:ro
+      - /var/lib/presence-logger:/var/lib/presence-logger
+      - /var/log/presence-logger:/var/log/presence-logger
+      - /run/dbus:/run/dbus:ro
+      - /var/run/NetworkManager:/var/run/NetworkManager:ro
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
+    env_file: [/etc/presence-logger/secrets.env]
+    environment:
+      MQTT_HOST: mosquitto
+      LOG_LEVEL: INFO
+      TZ: Asia/Tokyo
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/bridge.healthy"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+networks:
+  presence-net:
+    driver: bridge
