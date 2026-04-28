@@ -178,7 +178,7 @@ dev イメージは `services/<name>/src` と `tests/` を **read-only bind moun
 
 ## 運用
 
-### ログとデータの場所
+### ファイル・ディレクトリ一覧
 
 | 種別 | パス | 内容 |
 |---|---|---|
@@ -190,6 +190,112 @@ dev イメージは `services/<name>/src` と `tests/` を **read-only bind moun
 | 設定 | `/etc/presence-logger/{device,detector,bridge,profiles}.yaml` | 編集対象 |
 | シークレット | `/etc/presence-logger/secrets.env`（chmod 640 root:docker） | パスワード等、Git 対象外 |
 | Wallet | `/etc/presence-logger/wallets/adb/` | Oracle Cloud ADB 接続用 |
+
+### ログ仕様（共通フォーマット）
+
+両プロセス（detector / bridge）とも **JSON Lines** で書き出す。1 行 = 1 イベントの整形済み JSON。
+ファイルは **10 MB × 5 世代**ローテーション（プロセスあたり最大 60 MB、全体 120 MB 上限）。
+
+#### 共通フィールド（全行に必ず含まれる）
+
+| キー | 型 | 例 |
+|---|---|---|
+| `ts` | string (ISO 8601 + JST オフセット + ミリ秒) | `"2026-04-28T11:33:37.901+09:00"` |
+| `level` | string | `"INFO"` / `"WARNING"` / `"ERROR"` / `"CRITICAL"` |
+| `logger` | string（ドット区切り階層） | `"detector.fsm"` / `"bridge.oracle"` |
+| `event` | string（このイベントの種類） | `"transition"` / `"merge_committed"` |
+| `process` | string | `"detector"` または `"bridge"` |
+| `pid` | int | `1` |
+| `device_id` | string | `"raspberrypi5"` |
+| `event_id` | string | UUIDv4。該当イベントを跨いで**同じ ID** で追跡可能 |
+| `error` | object（ERROR 以上のみ） | `{"type":"...","message":"...","traceback":"..."}` |
+
+加えて各イベント固有のキーが付く（後述カタログ参照）。
+
+### イベントカタログ — detector
+
+| logger | event | レベル | 主なフィールド | 意味 |
+|---|---|---|---|---|
+| `detector.fsm` | `transition` | INFO | `from`, `to`, `event_type`, `event_id`, `candidate_duration_ms`, `latest_score` | ENTER または EXIT が確定 |
+| `detector.fsm` | `candidate_start` | DEBUG | `candidate`, `score` | 状態遷移候補の開始（デバウンス開始） |
+| `detector.fsm` | `candidate_cancel` | DEBUG | `held_ms`, `reason` | 候補取り消し（デバウンス未満の点滅） |
+| `detector.inference` | `frame` | DEBUG | `infer_ms`, `top_score`, `has_person` | フレーム単位の推論結果（高頻度） |
+| `detector.mqtt` | `publish` | INFO | `topic`, `qos`, `event_id`, `mid` | MQTT publish 実行 |
+| `detector.mqtt` | `ack_received` | INFO | `event_id`, `mk_date_committed`, `round_trip_ms` | bridge から ACK 到着、送信完了確定 |
+| `detector.mqtt` | `ack_timeout` | WARNING | `event_id`, `retry_count`, `next_retry_at` | ACK タイムアウト、再送スケジュール |
+| `detector.camera` | `failure` | ERROR | `consecutive_failures` | 連続読み取り失敗（USB 抜け検知） |
+| `detector.stats` | `periodic` | INFO（60s 毎） | `fps_observed`, `infer_p50_ms`, `buffer_pending` | 統計サマリ |
+| `detector.main` | `startup` | INFO | `config_path` | プロセス起動 |
+
+### イベントカタログ — bridge
+
+| logger | event | レベル | 主なフィールド | 意味 |
+|---|---|---|---|---|
+| `bridge.main` | `received` | INFO | `event_id` | MQTT 受信、`inbox` に永続化 |
+| `bridge.sender` | `merge_committed` | INFO | `event_id`, `mk_date`, `rows_affected`, `profile`, `latency_ms` | Oracle MERGE 成功（rows_affected=0 は冪等 skip） |
+| `bridge.sender` | `merge_failed` | ERROR | `event_id`, `ora_code`, `retry_count`, `next_retry_at` | Oracle 書き込み失敗、再試行スケジュール |
+| `bridge.mqtt` | `ack_published` | INFO | `event_id` | detector に ACK を返した |
+| `bridge.profile` | `resolve` | INFO | `ssid`, `profile`, `oracle_host`, `auth_mode`, `client_mode` | SSID → プロファイル解決 |
+| `bridge.profile` | `switch` | INFO | `from`, `to` | プロファイル切替（WiFi 移動） |
+| `bridge.profile` | `unknown_ssid` | WARNING | `ssid`, `policy`, `inbox_pending` | プロファイル未定義の SSID |
+| `bridge.network` | `nmcli_failed` | WARNING | `error.type`, `error.message` | nmcli 実行失敗（DBus 不通等） |
+| `bridge.time` | `sync_acquired` | INFO | `sync_wall_iso`, `sync_monotonic_ns`, `backfill_count` | NTP 同期完了、補正基準確定 |
+| `bridge.time` | `sync_lost` | WARNING | `unsynced_for_seconds` | 同期喪失 |
+| `bridge.oracle` | `circuit_open` | CRITICAL | `profile`, `ora_code`, `reopens_at` | 恒久エラー検出、サーキット OPEN（15 分後 half-open） |
+| `bridge.oracle` | `circuit_close` | INFO | `profile` | サーキット復旧 |
+| `bridge.stats` | `periodic` | INFO（60s 毎） | `current_ssid`, `ntp_synced`, `inbox_count`, `oracle_circuit_state` | 統計サマリ |
+
+### 実サンプル行
+
+```json
+{"ts":"2026-04-28T11:33:37.114+09:00","level":"INFO","logger":"detector.mqtt","process":"detector","pid":1,"device_id":"raspberrypi5","event":"publish","topic":"presence/event","qos":2,"event_id":"e6ed87d4-1a92-4aa6-bbb2-129dc66c327b","payload_size_bytes":237,"mid":5}
+{"ts":"2026-04-28T11:33:37.122+09:00","level":"INFO","logger":"detector.fsm","process":"detector","pid":1,"device_id":"raspberrypi5","event":"transition","from":"ABSENT","to":"PRESENT","event_type":"ENTER","event_id":"e6ed87d4-1a92-4aa6-bbb2-129dc66c327b","candidate_duration_ms":3329,"latest_score":0.6289836168289185}
+{"ts":"2026-04-28T11:33:37.127+09:00","level":"INFO","logger":"bridge.main","process":"bridge","pid":1,"device_id":"raspberrypi5","event":"received","event_id":"e6ed87d4-1a92-4aa6-bbb2-129dc66c327b"}
+{"ts":"2026-04-28T11:33:37.901+09:00","level":"INFO","logger":"bridge.time","process":"bridge","pid":1,"device_id":"raspberrypi5","event":"sync_acquired","sync_wall_iso":"2026-04-28T11:33:37.901+09:00","sync_monotonic_ns":1456585470085}
+{"ts":"2026-04-28T11:33:38.412+09:00","level":"INFO","logger":"bridge.sender","process":"bridge","pid":1,"device_id":"raspberrypi5","event":"merge_committed","event_id":"e6ed87d4-1a92-4aa6-bbb2-129dc66c327b","mk_date":"20260428113337","rows_affected":1,"profile":"286345207328","latency_ms":68}
+```
+
+### ログレベルとトリアージ指針
+
+| レベル | 意味 | 運用アクション |
+|---|---|---|
+| `INFO` | 通常動作、状態遷移、統計 | 監視ダッシュボードで集計 |
+| `WARNING` | 自己回復可能な異常（ACK タイムアウト、未知 SSID、nmcli 一時失敗） | 件数集計、急増したら調査 |
+| `ERROR` | 一時的な失敗（Oracle 接続失敗、MERGE 失敗） | retry_count を見て累積するなら調査 |
+| `CRITICAL` | 恒久エラー、サーキット OPEN（テーブル無し、認証失敗等） | **即対応**：設定 / 権限 / DB 状態を確認 |
+| `FATAL` | プロセス終了 | systemd / Docker 再起動。再発するなら設定不正 |
+
+### 運用 jq レシピ
+
+```bash
+# 特定の event_id の「一生」を時系列で追う（detector → bridge → ACK）
+EID="e6ed87d4-1a92-4aa6-bbb2-129dc66c327b"
+sudo cat /var/log/presence-logger/*.log | jq -c "select(.event_id == \"$EID\")" | jq -s 'sort_by(.ts)'
+
+# 直近 5 分の ENTER / EXIT 確定だけ抽出
+sudo tail -n 5000 /var/log/presence-logger/detector.log | jq -c 'select(.event == "transition")'
+
+# Oracle MERGE 成功を時系列で（mk_date と latency 列だけ）
+sudo cat /var/log/presence-logger/bridge.log | jq -c 'select(.event == "merge_committed") | {ts, mk_date, rows_affected, latency_ms}'
+
+# サーキット OPEN 履歴（重大インシデント追跡）
+sudo cat /var/log/presence-logger/bridge.log | jq -c 'select(.event | startswith("circuit_"))'
+
+# ERROR / CRITICAL だけ抽出
+sudo cat /var/log/presence-logger/*.log | jq -c 'select(.level | IN("ERROR","CRITICAL","FATAL"))'
+
+# 60 秒統計の inbox_count 推移を CSV 化（ダッシュボード投入用）
+sudo cat /var/log/presence-logger/bridge.log | jq -r 'select(.event == "periodic") | [.ts, .inbox_count, .ntp_synced, .current_ssid] | @csv'
+
+# ENTER から ACK 受領までの round trip ヒストグラム
+sudo cat /var/log/presence-logger/detector.log | jq -r 'select(.event == "ack_received") | .round_trip_ms' | sort -n | uniq -c
+```
+
+### 機微情報のスクラブ
+
+`bridge.profile.resolve` などのログでも、**`password` / `wallet_password` フィールドは絶対に
+出力しない**。設定ロード時に「機微フィールド」マークが付き、ログ用 dump で `"***"` に置換される
+（`services/bridge/src/profile_resolver.py` の `redact_for_logging()` 参照）。
 
 ### よく使うコマンド
 
