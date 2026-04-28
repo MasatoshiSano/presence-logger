@@ -59,6 +59,16 @@ class TimeWatcher:
                 timeout=5.0,
                 check=False,
             )
-        except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        except FileNotFoundError:
+            # `timedatectl` not installed — trust the host clock (slim containers
+            # mount /etc/localtime from the host).
+            return True
+        except (subprocess.TimeoutExpired, OSError):
             return False
-        return r.stdout.strip().lower() == "yes"
+        out = r.stdout.strip().lower()
+        if out == "yes":
+            return True
+        if out == "no":
+            return False
+        # Unrecognized (e.g. "Failed to connect to bus") — trust host clock.
+        return True
