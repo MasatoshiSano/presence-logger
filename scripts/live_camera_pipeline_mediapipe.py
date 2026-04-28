@@ -16,6 +16,7 @@ Usage (inside detector image with /dev/video0 + /home/pi/oracle_wallet mounted):
 from __future__ import annotations
 
 import asyncio
+import os
 import shutil
 import signal
 import sys
@@ -59,9 +60,9 @@ PROFILES = {
             "auth_mode": "wallet",
             "dsn": "eqstatusdb_low",
             "user": "ADMIN",
-            "password": "***REDACTED***",
+            "password": os.environ.get("ORACLE_PASSWORD_ADB", ""),
             "wallet_dir": "/home/pi/oracle_wallet",
-            "wallet_password": "***REDACTED***",
+            "wallet_password": os.environ.get("WALLET_PASSWORD_ADB", ""),
             "table_name": "HF1RCM01",
         },
     }

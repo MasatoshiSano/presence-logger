@@ -17,6 +17,7 @@ only test markers.
 from __future__ import annotations
 
 import argparse
+import os
 import asyncio
 import json
 import shutil
@@ -60,9 +61,9 @@ PROFILES = {
             "auth_mode": "wallet",
             "dsn": "eqstatusdb_low",
             "user": "ADMIN",
-            "password": "***REDACTED***",
+            "password": os.environ.get("ORACLE_PASSWORD_ADB", ""),
             "wallet_dir": "/home/pi/oracle_wallet",
-            "wallet_password": "***REDACTED***",
+            "wallet_password": os.environ.get("WALLET_PASSWORD_ADB", ""),
             "table_name": "HF1RCM01",
         },
     }
