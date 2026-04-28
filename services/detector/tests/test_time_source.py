@@ -46,10 +46,30 @@ def test_is_synced_returns_false_when_no():
         assert ts.is_synced() is False
 
 
-def test_is_synced_returns_false_on_subprocess_error():
+def test_is_synced_trusts_host_when_timedatectl_missing():
+    """In slim containers without systemd, timedatectl raises FileNotFoundError.
+    We trust the host clock (mounted via /etc/localtime) rather than blocking."""
     ts = TimeSource()
     with patch("subprocess.run", side_effect=FileNotFoundError):
+        assert ts.is_synced() is True
+
+
+def test_is_synced_returns_false_on_subprocess_timeout():
+    ts = TimeSource()
+    with patch("subprocess.run", side_effect=subprocess.TimeoutExpired(cmd="x", timeout=2)):
         assert ts.is_synced() is False
+
+
+def test_is_synced_trusts_host_on_unrecognized_output():
+    """timedatectl present but stderr complains (e.g. 'Failed to connect to bus'
+    inside a container without systemd as PID 1) — stdout is empty/garbage,
+    fall back to trusting the host clock."""
+    ts = TimeSource()
+    with patch("subprocess.run") as run_mock:
+        run_mock.return_value = subprocess.CompletedProcess(
+            args=[], returncode=1, stdout="", stderr="Failed to connect to bus"
+        )
+        assert ts.is_synced() is True
 
 
 def test_now_returns_aware_datetime():
