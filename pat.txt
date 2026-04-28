@@ -1,0 +1,1 @@
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJP0yFipscGqD5vSfSDpbJJikRkDgwSrxK4qxm3nGYsT sano.masatoshi1021@gmail.com
