@@ -1,0 +1,48 @@
+version: "3.8"
+
+# Development-only Compose file. Production uses docker-compose.yml.
+# Purpose: run pytest / ruff inside the same Docker images that ship to production
+# so the host's Python version (3.13) doesn't need MediaPipe/etc. wheels.
+#
+# Usage:
+#   bash scripts/test.sh                           # full test + lint suite
+#   bash scripts/test.sh detector pytest -v -k fsm # forward args to one service
+#
+# Both services bind-mount their src/ and tests/ read-only so code changes are
+# visible without an image rebuild. Built artifacts (SQLite DBs, logs) live in
+# tmpfs inside the container — they don't leak to the host.
+
+services:
+  detector-dev:
+    build:
+      context: ./services/detector
+    image: presence-detector:dev
+    working_dir: /app
+    environment:
+      PYTHONPATH: /app
+      PYTHONDONTWRITEBYTECODE: "1"
+    volumes:
+      - ./services/detector/src:/app/services/detector/src:ro
+      - ./services/detector/tests:/app/services/detector/tests:ro
+      - ./tests:/app/tests:ro
+      - ./conftest.py:/app/conftest.py:ro
+      - ./pyproject.toml:/app/pyproject.toml:ro
+      - ./requirements-dev.txt:/app/requirements-dev.txt:ro
+
+  bridge-dev:
+    build:
+      context: ./services/bridge
+      args:
+        INSTANT_CLIENT_URL: ""        # Thin-only image for tests
+    image: presence-bridge:dev
+    working_dir: /app
+    environment:
+      PYTHONPATH: /app
+      PYTHONDONTWRITEBYTECODE: "1"
+    volumes:
+      - ./services/bridge/src:/app/services/bridge/src:ro
+      - ./services/bridge/tests:/app/services/bridge/tests:ro
+      - ./tests:/app/tests:ro
+      - ./conftest.py:/app/conftest.py:ro
+      - ./pyproject.toml:/app/pyproject.toml:ro
+      - ./requirements-dev.txt:/app/requirements-dev.txt:ro

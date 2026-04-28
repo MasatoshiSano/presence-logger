@@ -54,11 +54,31 @@ sudo systemctl enable --now presence-logger.service
 
 ## Development
 
+All development work runs inside the same Docker images that ship to production.
+No host-side Python virtualenv is required (and is in fact discouraged: the
+host's Python may be 3.13 which lacks MediaPipe wheels for aarch64).
+
 ```bash
-python3 -m venv .venv
-.venv/bin/pip install -r requirements-dev.txt -r services/detector/requirements.txt -r services/bridge/requirements.txt
-.venv/bin/pytest
+# Prerequisites: Docker installed and the user added to the `docker` group.
+#   sudo apt install docker.io docker-compose-plugin
+#   sudo usermod -aG docker $USER && newgrp docker
+
+# Run all tests + lint (first run builds the dev images):
+bash scripts/test.sh
+
+# Run only one service's tests:
+bash scripts/test.sh detector
+bash scripts/test.sh bridge
+bash scripts/test.sh integration
+
+# Forward args to pytest:
+bash scripts/test.sh detector -k fsm -v
 ```
+
+The dev images bind-mount `services/<name>/src` and `tests/` read-only, so code
+changes are reflected without rebuilding. The MediaPipe runtime dep is installed
+inside the detector image (Python 3.11 base) where its aarch64 wheels exist —
+the host machine never sees it.
 
 ## Operations
 
