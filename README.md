@@ -139,6 +139,81 @@ profiles:
 unknown_ssid_policy: "hold"                        # 未知 SSID 接続中はイベントを inbox に保留
 ```
 
+## 別の Pi に移行する / 秘密情報のバックアップ
+
+`.gitignore` で除外されているため、Git には**入っていない**ファイルがある。
+新しい Pi にセットアップする時は、これらを旧 Pi から手渡しする必要がある。
+
+### Git に入っていないファイル一覧
+
+| 種別 | パス | 入手元 | 備考 |
+|---|---|---|---|
+| パスワード | `/etc/presence-logger/secrets.env` | **手渡し必須** | Oracle / Wallet パスワード |
+| SSID マッピング | `/etc/presence-logger/profiles.yaml` | **手渡し必須** | サイトごとの DB 接続定義 |
+| Cloud ADB Wallet | `/etc/presence-logger/wallets/adb/*` | **手渡し必須** | `cwallet.sso` 等 9 ファイル |
+| MediaPipe モデル | `services/detector/models/efficientdet_lite0.tflite` | `curl` で自動取得 | 13 MB、URL は本番インストール手順参照 |
+| その他 yaml | `/etc/presence-logger/{device,detector,bridge}.yaml` | `scripts/install.sh` が雛形配置 | 編集が必要な場合のみ手渡し |
+| ログ・SQLite DB | `/var/log/...`, `/var/lib/.../*.db` | 持ち出し不要 | 移行後はゼロからやり直し |
+
+### 旧 Pi で:バックアップ tarball を作成
+
+```bash
+sudo tar -czf /tmp/presence-logger-secrets.tar.gz \
+  -C / \
+  etc/presence-logger/secrets.env \
+  etc/presence-logger/profiles.yaml \
+  etc/presence-logger/wallets
+
+ls -lh /tmp/presence-logger-secrets.tar.gz
+```
+
+USB メモリ等で物理コピーする(SSH/scp でも可、必ず暗号化経路で)。
+
+> ⚠️ **セキュリティ**: この tarball には Oracle パスワード・Wallet パスワードが入っている。Slack/メール本文に貼らない。USB なら LUKS、転送なら SCP を推奨。用が済んだら `shred -u` で確実に削除。
+
+### 新しい Pi で:展開 + 起動
+
+```bash
+# 1. リポジトリを取得
+sudo git clone https://github.com/MasatoshiSano/presence-logger.git /opt/presence-logger
+cd /opt/presence-logger
+
+# 2. MediaPipe モデルを取得（git 管理外）
+sudo curl -o services/detector/models/efficientdet_lite0.tflite \
+  https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/float32/latest/efficientdet_lite0.tflite
+
+# 3. インストーラで雛形を配置（既存ファイルは上書きしない）
+sudo bash scripts/install.sh
+
+# 4. 旧 Pi から持ち込んだ tarball を展開（secrets.env, profiles.yaml, Wallet を復元）
+sudo tar -xzf /path/to/presence-logger-secrets.tar.gz -C /
+
+# 5. 権限を再設定（tar は元の権限を保持するが、念のため）
+sudo chmod 640 /etc/presence-logger/secrets.env /etc/presence-logger/profiles.yaml
+sudo chmod 750 /etc/presence-logger/wallets /etc/presence-logger/wallets/adb
+sudo chmod 640 /etc/presence-logger/wallets/adb/*
+sudo chgrp -R docker \
+  /etc/presence-logger/wallets \
+  /etc/presence-logger/secrets.env \
+  /etc/presence-logger/profiles.yaml
+
+# 6. ビルド & 起動
+sudo docker compose --project-directory /opt/presence-logger build
+sudo systemctl enable --now presence-logger.service
+
+# 7. 動作確認（taden-ot-ap に接続中なら）
+bash scripts/verify-onprem.sh
+```
+
+### MAC アドレスについての注意
+
+`/etc/presence-logger/` を移植しても、**WiFi の MAC アドレスは Pi 本体のハードウェアごとに固有**(SD カード入れ替えでは変わらない)。WiFi 側で MAC 認証/DHCP 予約をしている場合は:
+
+```bash
+# 新しい Pi の WiFi MAC を確認 → ネットワーク管理者に登録依頼
+ip link show wlan0 | awk '/link\/ether/ {print $2}'
+```
+
 ## 開発
 
 開発作業はすべて、production と同じ Docker イメージ内で実行する。ホストの Python venv
