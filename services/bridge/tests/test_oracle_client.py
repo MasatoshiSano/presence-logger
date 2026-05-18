@@ -7,6 +7,7 @@ from services.bridge.src.oracle_client import (
     build_merge_statement,
     execute_merge,
     init_oracle_client_for_profiles,
+    open_and_merge,
     open_connection,
 )
 
@@ -109,6 +110,7 @@ def test_execute_merge_captures_ora_code_on_database_error():
     cursor = MagicMock()
     err = MagicMock()
     err.code = 942
+    err.full_code = "ORA-00942"
     err.message = "ORA-00942: table or view does not exist"
     db_error = type("DatabaseError", (Exception,), {})
     db_error_instance = db_error()
@@ -126,3 +128,103 @@ def test_execute_merge_captures_ora_code_on_database_error():
     assert result.rows_affected == 0
     assert result.ora_code == 942
     assert "ORA-00942" in result.error_message
+
+
+def test_execute_merge_maps_dpy_6001_to_ora_12514():
+    """DPY-6001 (thin-mode service-not-registered) should surface as ORA-12514
+    so the existing permanent_ora_codes list trips the circuit breaker."""
+    cursor = MagicMock()
+    err = MagicMock()
+    err.code = 0
+    err.full_code = "DPY-6001"
+    err.message = 'Service "x" is not registered with the listener'
+    db_error = type("DatabaseError", (Exception,), {})
+    db_error_instance = db_error()
+    db_error_instance.args = (err,)
+    cursor.execute.side_effect = db_error_instance
+    conn = MagicMock()
+    conn.cursor.return_value.__enter__.return_value = cursor
+
+    with patch("services.bridge.src.oracle_client.oracledb") as o:
+        o.DatabaseError = db_error
+        result = execute_merge(
+            conn, table_name="HF1RCM01",
+            mk_date="20260427120000", sta_no1="001", sta_no2="A", sta_no3="01", t1_status=1,
+        )
+    assert result.ora_code == 12514
+
+
+def test_open_and_merge_returns_merge_result_when_connection_fails():
+    """Bug fix: when Oracle ADB is stopped, open_connection raises DPY-6001;
+    bridge used to crash. open_and_merge must absorb the exception so the
+    sender can route it through the retry/circuit-breaker flow."""
+    cfg = {
+        "client_mode": "thin", "auth_mode": "wallet", "dsn": "x",
+        "user": "u", "password": "p", "wallet_dir": "/w",
+    }
+    err = MagicMock()
+    err.code = 0
+    err.full_code = "DPY-6001"
+    err.message = 'Service "x" is not registered with the listener'
+    db_error = type("DatabaseError", (Exception,), {})
+    db_error_instance = db_error()
+    db_error_instance.args = (err,)
+
+    with patch("services.bridge.src.oracle_client.oracledb") as o:
+        o.DatabaseError = db_error
+        o.connect.side_effect = db_error_instance
+        result = open_and_merge(
+            cfg, table_name="HF1RCM01",
+            mk_date="20260427120000", sta_no1="001", sta_no2="A", sta_no3="01", t1_status=1,
+        )
+    assert isinstance(result, MergeResult)
+    assert result.rows_affected == 0
+    assert result.ora_code == 12514
+    assert "not registered" in result.error_message
+
+
+def test_open_and_merge_calls_execute_merge_and_closes_connection_on_success():
+    cfg = {
+        "client_mode": "thin", "auth_mode": "basic", "host": "h", "port": 1521,
+        "service_name": "S", "user": "u", "password": "p",
+    }
+    conn = MagicMock()
+    cursor = MagicMock()
+    cursor.rowcount = 1
+    conn.cursor.return_value.__enter__.return_value = cursor
+
+    with patch("services.bridge.src.oracle_client.oracledb") as o:
+        o.makedsn.return_value = "DSN"
+        o.connect.return_value = conn
+        result = open_and_merge(
+            cfg, table_name="HF1RCM01",
+            mk_date="20260427120000", sta_no1="001", sta_no2="A", sta_no3="01", t1_status=1,
+        )
+    assert result.rows_affected == 1
+    assert result.ora_code is None
+    conn.close.assert_called_once()
+
+
+def test_open_and_merge_closes_connection_when_merge_raises():
+    """Connection must close even if execute_merge encounters a non-DatabaseError
+    (e.g. programmer error). Ensures no leaked Oracle connections under stress."""
+    cfg = {
+        "client_mode": "thin", "auth_mode": "basic", "host": "h", "port": 1521,
+        "service_name": "S", "user": "u", "password": "p",
+    }
+    conn = MagicMock()
+    cursor = MagicMock()
+    cursor.execute.side_effect = RuntimeError("boom")
+    conn.cursor.return_value.__enter__.return_value = cursor
+
+    db_error = type("DatabaseError", (Exception,), {})
+    with patch("services.bridge.src.oracle_client.oracledb") as o:
+        o.DatabaseError = db_error
+        o.makedsn.return_value = "DSN"
+        o.connect.return_value = conn
+        with pytest.raises(RuntimeError, match="boom"):
+            open_and_merge(
+                cfg, table_name="HF1RCM01",
+                mk_date="20260427120000", sta_no1="001", sta_no2="A", sta_no3="01", t1_status=1,
+            )
+    conn.close.assert_called_once()

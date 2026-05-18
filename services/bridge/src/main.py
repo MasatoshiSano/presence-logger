@@ -6,7 +6,6 @@ import signal
 import time
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
 
 from services.bridge.src import config as cfg_mod
 from services.bridge.src.circuit_breaker import CircuitBreaker
@@ -16,9 +15,8 @@ from services.bridge.src.mqtt_listener import BridgeMqttClient, EventPayload
 from services.bridge.src.network_watcher import NetworkWatcher
 from services.bridge.src.oracle_client import (
     MergeResult,
-    execute_merge,
     init_oracle_client_for_profiles,
-    open_connection,
+    open_and_merge,
 )
 from services.bridge.src.profile_resolver import ProfileResolver
 from services.bridge.src.retry import BackoffPolicy
@@ -33,10 +31,7 @@ DEFAULT_PROFILES_YAML = "/etc/presence-logger/profiles.yaml"
 
 
 class _OracleAdapter:
-    """Adapts open_connection + execute_merge into the SenderDeps oracle protocol."""
-
-    def __init__(self):
-        self._cache: dict[str, Any] = {}
+    """Adapts open_and_merge into the SenderDeps oracle protocol."""
 
     def execute_merge_for_profile(
         self,
@@ -49,23 +44,15 @@ class _OracleAdapter:
         t1_status: int,
     ) -> MergeResult:
         oracle_cfg = profile["oracle"]
-        # Connection per call is acceptable for INSERT-only workloads at 1-2 events/min.
-        conn = open_connection(oracle_cfg)
-        try:
-            return execute_merge(
-                conn,
-                table_name=oracle_cfg["table_name"],
-                mk_date=mk_date,
-                sta_no1=sta_no1,
-                sta_no2=sta_no2,
-                sta_no3=sta_no3,
-                t1_status=t1_status,
-            )
-        finally:
-            try:
-                conn.close()
-            except Exception:    # noqa: BLE001, S110
-                pass
+        return open_and_merge(
+            oracle_cfg,
+            table_name=oracle_cfg["table_name"],
+            mk_date=mk_date,
+            sta_no1=sta_no1,
+            sta_no2=sta_no2,
+            sta_no3=sta_no3,
+            t1_status=t1_status,
+        )
 
 
 def main() -> int:    # pragma: no cover

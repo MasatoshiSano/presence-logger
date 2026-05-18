@@ -9,12 +9,41 @@ _log = logging.getLogger("bridge.oracle")
 
 ClientMode = Literal["thin", "thick"]
 
+# Map python-oracledb (thin) "DPY-*" error codes to their ORA-* equivalents
+# so a single permanent_ora_codes list in bridge config can drive the circuit
+# breaker regardless of which client mode produced the failure.
+_DPY_TO_ORA: dict[str, int] = {
+    "DPY-6001": 12514,  # service not registered with listener (≈ ORA-12514)
+}
+
 
 @dataclass
 class MergeResult:
     rows_affected: int
     ora_code: int | None
     error_message: str
+
+
+def _extract_ora_code(e: oracledb.DatabaseError) -> tuple[int | None, str]:
+    if not e.args or not hasattr(e.args[0], "code"):
+        return None, str(e)
+    err = e.args[0]
+    raw_code = getattr(err, "code", 0) or 0
+    full_code = getattr(err, "full_code", "") or ""
+    message = str(getattr(err, "message", "") or str(e))
+    try:
+        ora_code: int | None = int(raw_code) if raw_code else None
+    except (TypeError, ValueError):
+        ora_code = None
+    if ora_code is None and full_code in _DPY_TO_ORA:
+        ora_code = _DPY_TO_ORA[full_code]
+    if ora_code is None:
+        cause = getattr(e, "__cause__", None)
+        if isinstance(cause, oracledb.DatabaseError):
+            nested, _ = _extract_ora_code(cause)
+            if nested is not None:
+                ora_code = nested
+    return ora_code, message
 
 
 def build_merge_statement(*, table_name: str) -> str:
@@ -92,9 +121,43 @@ def execute_merge(
         conn.commit()
         return MergeResult(rows_affected=rows, ora_code=None, error_message="")
     except oracledb.DatabaseError as e:
-        ora_code = None
-        message = str(e)
-        if e.args and hasattr(e.args[0], "code"):
-            ora_code = int(e.args[0].code)
-            message = str(getattr(e.args[0], "message", "") or message)
+        ora_code, message = _extract_ora_code(e)
         return MergeResult(rows_affected=0, ora_code=ora_code, error_message=message)
+
+
+def open_and_merge(
+    profile_oracle: dict[str, Any],
+    *,
+    table_name: str,
+    mk_date: str,
+    sta_no1: str,
+    sta_no2: str,
+    sta_no3: str,
+    t1_status: int,
+) -> MergeResult:
+    """Open a connection, run the merge, close — never raises.
+
+    Connection failures (e.g. DPY-6001 service-not-registered while Oracle is
+    stopped) are returned as a MergeResult so the sender can route them through
+    the normal retry / circuit-breaker flow instead of crashing the process.
+    """
+    try:
+        conn = open_connection(profile_oracle)
+    except oracledb.DatabaseError as e:
+        ora_code, message = _extract_ora_code(e)
+        return MergeResult(rows_affected=0, ora_code=ora_code, error_message=message)
+    try:
+        return execute_merge(
+            conn,
+            table_name=table_name,
+            mk_date=mk_date,
+            sta_no1=sta_no1,
+            sta_no2=sta_no2,
+            sta_no3=sta_no3,
+            t1_status=t1_status,
+        )
+    finally:
+        try:
+            conn.close()
+        except Exception:  # noqa: BLE001, S110
+            pass
