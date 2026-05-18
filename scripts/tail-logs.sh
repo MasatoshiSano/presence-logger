@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # Tail all presence-logger JSON logs and pretty-print key fields with jq.
-set -euo pipefail
+# `fromjson?` silently skips non-JSON lines (e.g. the `==> file <==` headers
+# tail emits when following multiple files).
+set -uo pipefail
 exec tail -F /var/log/presence-logger/*.log \
-  | jq -c '{ts, level, logger, event, event_id, message}'
+  | jq -Rc 'fromjson? | {ts, level, logger, event, event_id, message}'
