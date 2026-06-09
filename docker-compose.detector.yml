@@ -1,0 +1,33 @@
+# 2台目（見回り）用 compose ── detector だけを動かす。
+# broker(mosquitto)・oracle-jdbc・bridge は 1台目に集約するので、ここでは定義しない。
+#
+# 使い方（2台目で）:
+#   MQTT_HOST=<1台目のIP> sudo -E docker compose -f docker-compose.detector.yml up -d
+#
+# 必要なのは services/detector/ のビルド資材と、
+# /etc/presence-logger/{device.yaml,detector.yaml} だけ。
+# profiles.yaml / secrets.env / wallets は bridge 専用なので不要。
+services:
+  detector:
+    build: ./services/detector
+    container_name: presence-detector
+    restart: unless-stopped
+    devices:
+      - "/dev/video0:/dev/video0"
+    volumes:
+      - /etc/presence-logger/device.yaml:/etc/presence-logger/device.yaml:ro
+      - /etc/presence-logger/detector.yaml:/etc/presence-logger/detector.yaml:ro
+      - /etc/hostname:/etc/host_hostname:ro
+      - /var/lib/presence-logger:/var/lib/presence-logger
+      - /var/log/presence-logger:/var/log/presence-logger
+    environment:
+      # 1台目の broker を指す。未設定なら起動を止める（:? でガード）。
+      MQTT_HOST: "${MQTT_HOST:?2台目のIPではなく 1台目(broker)のIP を渡してください}"
+      LOG_LEVEL: INFO
+      TZ: Asia/Tokyo
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/detector.healthy"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
