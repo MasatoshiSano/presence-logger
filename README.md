@@ -104,6 +104,9 @@ docker compose ps                                  # 3コンテナ全部 healthy
 bash scripts/tail-logs.sh                          # JSON ログをライブ追跡
 ```
 
+> **`/etc/presence-logger/` の全ファイル仕様**（どのファイルがどの設定を
+> どんな形式・権限で持つか）は [`docs/etc-presence-logger.md`](docs/etc-presence-logger.md) を参照。
+
 ### `profiles.yaml` の例
 
 ```yaml
