@@ -1,0 +1,34 @@
+# SITE SNAPSHOT — HIME-H-REAP 拠点の実運用 profiles.yaml（本番値）
+# /etc/presence-logger/profiles.yaml の復元元。秘密は ${VAR} 参照のみ
+# （実値は secrets.env）。詳細は config/site/README.md を参照。
+profiles:
+  HIME-H-REAP:
+    description: "Factory internal Wi-Fi -> HHC001 via JDBC sidecar"
+    wifi:
+      psk: "${WIFI_PSK_HIMEREAP}"
+      hidden: true
+      static_ipv4:
+        address: "172.22.13.17/24"
+        gateway: "172.22.13.1"
+        dns: ["10.166.1.70", "10.166.1.17"]
+    station:
+      sta_no1: "996"
+      sta_no2: "995"
+      sta_no3: "994"
+    sntp:
+      servers: ["133.141.247.101"]
+    oracle:
+      client_mode: "jdbc"
+      auth_mode: "basic"
+      host: "10.166.5.93"
+      port: 1521
+      service_name: "HHC001"
+      user: "ZHH001"
+      password: "${ORACLE_PASSWORD_HHC}"
+      table_name: "HF1RCM01"
+      upcmpflg: 1
+
+# CHANGED from "hold" to "drop": events received while not on a known SSID
+# are discarded at receive time. The bridge no longer stores them in inbox,
+# so a future HIME-H-REAP visit does not flush "off-site" captures.
+unknown_ssid_policy: "drop"
