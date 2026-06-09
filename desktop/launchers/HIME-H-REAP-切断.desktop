@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=HIME-H-REAP を切断
+Name[ja]=HIME-H-REAP を切断
+Comment=工場WiFiを切断して元のWiFi(UFI_103134)に戻す
+Exec=lxterminal -t "HIME-H-REAP 切断" -e sudo bash /home/pi/Desktop/presence-tools/disconnect-hime-h-reap.sh --hold
+Icon=network-wireless-offline
+Terminal=false
+Categories=Network;
