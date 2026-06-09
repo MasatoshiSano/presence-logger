@@ -139,6 +139,50 @@ profiles:
 unknown_ssid_policy: "hold"                        # 未知 SSID 接続中はイベントを inbox に保留
 ```
 
+### HIME-H-REAP (HHC001) 用の `client_mode: jdbc` 経路
+
+旧パスワード検証子 (10G verifier, `0x939`) を残したまま運用されている DB
+(HHC001 の `ZHH001` など) は、`python-oracledb` の Thin mode が
+`DPY-3015` で拒否し、Thick mode は Pi 5 の 16KB ページ kernel で
+Instant Client ARM64 をロードできない。唯一動くのが **Pure Java の
+ojdbc11.jar** で、これを抱えた小さな Java サイドカー
+(`services/oracle-jdbc/`) が `presence-net` 上で `POST /merge` を提供する。
+bridge は profile の `client_mode: "jdbc"` 設定で自動的にこの経路に切替わる。
+
+```yaml
+profiles:
+  HIME-H-REAP:                                     # 社内 Cisco WLC の SSID
+    description: "Factory internal Wi-Fi -> HHC001 via JDBC sidecar"
+    sntp:
+      servers: ["10.166.1.70"]                     # 社内 NTP（HIME-H-REAP は閉域網）
+    oracle:
+      client_mode: "jdbc"                          # ← サイドカー経由
+      auth_mode: "basic"
+      host: "10.166.5.93"
+      port: 1521
+      service_name: "HHC001"
+      user: "ZHH001"
+      password: "${ORACLE_PASSWORD_HHC}"
+      table_name: "HF1RCM01"
+unknown_ssid_policy: "hold"
+```
+
+加えて `bridge.yaml` に下記セクションが必要 (JDBC profile が無くても
+required):
+
+```yaml
+oracle_jdbc:
+  url: "http://oracle-jdbc:8086"
+  connect_timeout_ms: 10000
+  read_timeout_ms: 30000
+```
+
+Wi-Fi 側の前提 (regdomain JP / 静的IP 172.22.13.17 / 隠れ SSID 扱い等) は
+`scripts/verify_himereap_oracle.sh` 内のコメントを参照。本番投入前に
+このスクリプトを一度走らせ、`MERGE` が `rows_affected=1, ora_code=` で
+帰ってくることを確認する。スクリプトは `trap cleanup EXIT` で UFI Wi-Fi
+に必ず復帰するため、SSH ごしや Claude セッションが切れても安全。
+
 ## 別の Pi に移行する / 秘密情報のバックアップ
 
 `.gitignore` で除外されているため、Git には**入っていない**ファイルがある。

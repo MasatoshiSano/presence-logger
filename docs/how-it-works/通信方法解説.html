@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>カメラの「見た」が DB に届くまで ── Presence Logger のしくみ</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Klee+One:wght@400;600&family=Zen+Maru+Gothic:wght@400;500;700&family=JetBrains+Mono:wght@400;500&family=Noto+Color+Emoji&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --paper:#faf6ea;
+    --paper-2:#f2ead4;
+    --ink:#2c2e44;
+    --ink-soft:#5a5d76;
+    --rule:#cfe0ef;
+    --red:#e24a37;
+    --red-soft:#f4a79c;
+    --yellow:#ffd84d;
+    --pink:#ff9ec4;
+    --blue:#86c8e6;
+    --mint:#9adfa9;
+    --lilac:#c3b4ec;
+    --bluepen:#2f6fb3;
+    --shadow:rgba(44,46,68,.16);
+    --maxw:1080px;
+    --emoji:"Apple Color Emoji","Segoe UI Emoji","Segoe UI Symbol","Noto Color Emoji";
+    --font-hand:"Klee One",serif,var(--emoji);
+    --font-body:"Zen Maru Gothic",sans-serif,var(--emoji);
+    --font-mono:"JetBrains Mono",monospace,var(--emoji);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  body{
+    font-family:var(--font-body);
+    color:var(--ink);
+    line-height:1.85;
+    background-color:var(--paper);
+    background-image:
+      repeating-linear-gradient(transparent 0 33px, rgba(120,160,200,.16) 33px 34px),
+      radial-gradient(circle at 12% 8%, rgba(255,216,77,.10), transparent 40%),
+      radial-gradient(circle at 88% 92%, rgba(134,200,230,.12), transparent 45%);
+    background-attachment:fixed;
+    -webkit-font-smoothing:antialiased;
+    overflow-x:hidden;
+  }
+  body::before{
+    content:"";position:fixed;inset:0;pointer-events:none;z-index:9999;opacity:.04;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    mix-blend-mode:multiply;
+  }
+  body::after{
+    content:"";position:fixed;top:0;bottom:0;left:max(18px, calc(50% - var(--maxw)/2 - 6px));
+    width:2px;background:rgba(226,74,55,.28);pointer-events:none;z-index:0;
+  }
+  @media(max-width:1140px){body::after{display:none}}
+
+  .wrap{max-width:var(--maxw);margin:0 auto;padding:0 26px;position:relative;z-index:1}
+  code{font-family:var(--font-mono);font-size:.84em;background:rgba(47,111,179,.10);
+    color:var(--bluepen);padding:.12em .42em;border-radius:5px;border:1px solid rgba(47,111,179,.18);white-space:nowrap}
+
+  header.hero{padding:84px 0 56px;text-align:center;position:relative}
+  .tape{position:absolute;width:148px;height:34px;background:rgba(255,216,77,.55);
+    box-shadow:0 2px 6px var(--shadow);backdrop-filter:saturate(1.2)}
+  .tape.t1{top:42px;left:50%;transform:translateX(-50%) rotate(-3deg)}
+  .eyebrow{font-family:var(--font-hand);font-size:1.05rem;color:var(--red);
+    letter-spacing:.18em;margin-bottom:10px}
+  .hero h1{font-family:var(--font-hand);font-weight:600;line-height:1.25;
+    font-size:clamp(2.3rem,6vw,4.1rem);letter-spacing:.01em}
+  .hero h1 .mark{position:relative;white-space:nowrap}
+  .hero h1 .mark::after{content:"";position:absolute;left:-4px;right:-4px;bottom:.08em;height:.42em;
+    background:var(--yellow);opacity:.55;z-index:-1;border-radius:3px;transform:rotate(-1deg)}
+  .hero .sub{font-size:1.12rem;color:var(--ink-soft);margin-top:22px;max-width:640px;
+    margin-left:auto;margin-right:auto}
+  .hero .meta{margin-top:30px;font-family:var(--font-mono);font-size:.78rem;color:var(--ink-soft);opacity:.8}
+
+  .circle-note{display:inline-block;position:relative;padding:0 .15em}
+  .circle-note::before{content:"";position:absolute;inset:-8px -12px;border:2.5px solid var(--red);
+    border-radius:55% 45% 50% 50%/55% 50% 50% 45%;transform:rotate(-2deg);opacity:.7}
+
+  section{padding:50px 0}
+  .sec-head{display:flex;align-items:baseline;gap:14px;margin-bottom:8px}
+  .num{font-family:var(--font-hand);font-weight:600;font-size:2.4rem;color:var(--red);
+    line-height:1;flex:none}
+  h2{font-family:var(--font-hand);font-weight:600;font-size:clamp(1.5rem,3.6vw,2.1rem);line-height:1.3}
+  .lead{font-size:1.05rem;color:var(--ink-soft);margin:14px 0 28px;max-width:700px}
+  p+p{margin-top:14px}
+  strong{font-weight:700;background:linear-gradient(transparent 62%, rgba(255,216,77,.5) 62%)}
+
+  .analogy{position:relative;background:var(--paper-2);border:2px dashed rgba(226,74,55,.4);
+    border-radius:14px;padding:22px 24px 22px 56px;margin:24px 0;font-size:1.02rem}
+  .analogy::before{content:"たとえ";position:absolute;top:-13px;left:20px;background:var(--red);
+    color:#fff;font-family:var(--font-hand);font-size:.78rem;padding:2px 12px;border-radius:20px;
+    letter-spacing:.08em;box-shadow:0 2px 5px var(--shadow)}
+  .analogy .ico{position:absolute;left:16px;top:20px;font-size:1.4rem}
+
+  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(248px,1fr));gap:26px;margin-top:14px}
+  .card{position:relative;background:#fffef9;border-radius:12px;padding:26px 22px 24px;
+    box-shadow:3px 5px 0 var(--shadow);border:1px solid rgba(44,46,68,.08);transition:transform .25s ease, box-shadow .25s ease}
+  .card:hover{transform:translateY(-5px) rotate(-.4deg);box-shadow:5px 10px 0 var(--shadow)}
+  .card .pin{position:absolute;top:-10px;left:50%;transform:translateX(-50%);width:18px;height:18px;
+    border-radius:50%;box-shadow:0 2px 4px var(--shadow);border:3px solid rgba(255,255,255,.7)}
+  .card .emoji{font-size:2.1rem;display:block;margin-bottom:8px}
+  .card h3{font-family:var(--font-hand);font-weight:600;font-size:1.22rem;margin-bottom:4px}
+  .card .role{font-size:.82rem;color:var(--red);font-weight:700;margin-bottom:10px;font-family:var(--font-hand)}
+  .card p{font-size:.93rem;color:var(--ink-soft)}
+  .card .real{margin-top:12px;font-family:var(--font-mono);font-size:.72rem;color:var(--bluepen);
+    background:rgba(47,111,179,.07);border-radius:6px;padding:7px 9px;line-height:1.5;word-break:break-all;white-space:normal}
+  .card.c-yellow .pin{background:var(--yellow)} .card.c-yellow{border-top:4px solid var(--yellow)}
+  .card.c-pink .pin{background:var(--pink)} .card.c-pink{border-top:4px solid var(--pink)}
+  .card.c-blue .pin{background:var(--blue)} .card.c-blue{border-top:4px solid var(--blue)}
+  .card.c-mint .pin{background:var(--mint)} .card.c-mint{border-top:4px solid var(--mint)}
+  .card.c-lilac .pin{background:var(--lilac)} .card.c-lilac{border-top:4px solid var(--lilac)}
+
+  .rule-pill{display:inline-block;background:var(--ink);color:var(--paper);font-size:.86rem;
+    padding:6px 14px;border-radius:20px;margin:6px 6px 0 0;font-family:var(--font-hand)}
+
+  .steps{counter-reset:s;margin-top:18px;display:grid;gap:14px}
+  .step{position:relative;background:#fffef9;border-radius:10px;padding:16px 18px 16px 60px;
+    box-shadow:2px 3px 0 var(--shadow);border:1px solid rgba(44,46,68,.07)}
+  .step::before{counter-increment:s;content:counter(s);position:absolute;left:14px;top:14px;
+    width:32px;height:32px;background:var(--red);color:#fff;border-radius:50%;display:grid;place-items:center;
+    font-family:var(--font-hand);font-weight:600;font-size:1.1rem;box-shadow:0 2px 4px var(--shadow)}
+  .step h4{font-family:var(--font-hand);font-weight:600;font-size:1.05rem;margin-bottom:2px}
+  .step p{font-size:.9rem;color:var(--ink-soft)}
+  .step .cmd{font-family:var(--font-mono);font-size:.76rem;color:var(--bluepen);margin-top:6px;display:block;word-break:break-all;white-space:normal}
+  .step .who{font-family:var(--font-hand);font-size:.74rem;font-weight:600;color:#fff;background:var(--bluepen);
+    border-radius:14px;padding:1px 10px;margin-left:8px;vertical-align:middle}
+  .step .who.det{background:var(--bluepen)} .step .who.mos{background:#b07d2f} .step .who.bri{background:#2f9e54}
+
+  .status{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px;margin-top:16px}
+  .st-item{background:#fffef9;border-radius:12px;padding:18px 20px;box-shadow:2px 3px 0 var(--shadow);
+    border-left:5px solid var(--mint)}
+  .st-item.warn{border-left-color:var(--red)}
+  .st-item .badge{font-family:var(--font-hand);font-size:.82rem;font-weight:600;display:inline-block;margin-bottom:6px}
+  .st-item.ok .badge{color:#2f9e54} .st-item.warn .badge{color:var(--red)}
+  .st-item h4{font-size:1rem;margin-bottom:4px}
+  .st-item p{font-size:.88rem;color:var(--ink-soft)}
+
+  .summary{background:var(--ink);color:var(--paper);border-radius:18px;padding:40px 34px;margin:40px 0;
+    box-shadow:5px 7px 0 var(--shadow);position:relative;overflow:hidden}
+  .summary::after{content:"📎";position:absolute;top:-10px;right:18px;font-size:3.4rem;opacity:.18;transform:rotate(18deg)}
+  .summary h2{color:var(--yellow)}
+  .summary .lead{color:rgba(250,246,234,.82)}
+  .summary ul{list-style:none;margin-top:18px;display:grid;gap:12px}
+  .summary li{padding-left:30px;position:relative;font-size:1rem}
+  .summary li::before{content:"✓";position:absolute;left:0;top:0;color:var(--mint);font-weight:700}
+  .summary strong{background:none;color:var(--yellow)}
+
+  footer{text-align:center;padding:30px 0 60px;color:var(--ink-soft);font-size:.82rem}
+  footer .hand{font-family:var(--font-hand);font-size:1rem;color:var(--red)}
+
+  html.js .reveal{opacity:0;transform:translateY(26px);transition:opacity .6s ease, transform .6s ease}
+  html.js .reveal.in{opacity:1;transform:none}
+  .cards .card,.spoke,.step,.st-item{transition:transform .25s ease, box-shadow .25s ease, opacity .5s ease}
+  .stagger.in>*{animation:pop .5s ease backwards}
+  .stagger.in>*:nth-child(2){animation-delay:.07s}
+  .stagger.in>*:nth-child(3){animation-delay:.14s}
+  .stagger.in>*:nth-child(4){animation-delay:.21s}
+  .stagger.in>*:nth-child(5){animation-delay:.28s}
+  .stagger.in>*:nth-child(6){animation-delay:.35s}
+  @keyframes pop{from{opacity:0;transform:translateY(18px) scale(.97)}to{opacity:1;transform:none}}
+  @media(prefers-reduced-motion:reduce){.reveal{opacity:1;transform:none}.stagger.in>*{animation:none}}
+
+  .topnav{position:sticky;top:0;z-index:50;background:rgba(250,246,234,.88);
+    backdrop-filter:blur(8px) saturate(1.1);border-bottom:2px solid rgba(226,74,55,.22)}
+  .topnav .inner{max-width:var(--maxw);margin:0 auto;padding:9px 22px;display:flex;align-items:center;gap:9px;overflow-x:auto}
+  .topnav .inner::-webkit-scrollbar{height:0}
+  .topnav .brand{font-family:var(--font-hand);font-weight:600;color:var(--red);font-size:.95rem;white-space:nowrap;flex:none}
+  .topnav a{flex:none;text-decoration:none;color:var(--ink-soft);font-size:.84rem;
+    padding:5px 11px;border-radius:18px;white-space:nowrap;border:1px solid transparent;
+    transition:background .2s,color .2s,border-color .2s}
+  .topnav a:hover{color:var(--ink);background:rgba(47,111,179,.09)}
+  .topnav a.active{color:#fff;background:var(--red);border-color:var(--red)}
+  .topnav a .n{font-family:var(--font-hand);font-weight:600;margin-right:3px}
+  section,.summary{scroll-margin-top:66px}
+
+  /* データの流れ図 */
+  .flow{display:grid;grid-template-columns:1fr;gap:0;margin:26px 0 8px}
+  .flow-rail{display:flex;flex-wrap:wrap;align-items:stretch;justify-content:center;gap:10px}
+  .node{background:#fffef9;border-radius:12px;padding:14px 16px;box-shadow:3px 4px 0 var(--shadow);
+    border:1px solid rgba(44,46,68,.08);min-width:150px;text-align:center;position:relative}
+  .node .ne{font-size:1.7rem;display:block;line-height:1.1}
+  .node .nt{font-family:var(--font-hand);font-weight:600;font-size:1.04rem;margin-top:4px}
+  .node .nd{font-size:.78rem;color:var(--ink-soft);margin-top:2px}
+  .node.det{border-top:4px solid var(--bluepen)}
+  .node.mos{border-top:4px solid #c9952f}
+  .node.bri{border-top:4px solid #2f9e54}
+  .node.jdbc{border-top:4px solid var(--pink)}
+  .node.db{border-top:4px solid var(--lilac)}
+  .flow-arrow{display:grid;place-items:center;color:var(--red);font-size:1.5rem;font-weight:700;min-width:30px}
+  .flow-arrow small{display:block;font-family:var(--font-mono);font-size:.6rem;color:var(--ink-soft);font-weight:400;margin-top:-4px}
+  @media(max-width:760px){.flow-arrow{transform:rotate(90deg);min-height:24px}}
+
+  .codecard{background:var(--ink);border-radius:12px;margin:14px 0;box-shadow:3px 5px 0 var(--shadow);overflow:hidden}
+  .codecard .ttl{font-family:var(--font-hand);font-size:.8rem;color:var(--ink);background:var(--yellow);
+    padding:6px 14px;display:flex;align-items:center;gap:6px;letter-spacing:.02em}
+  .codecard pre{margin:0;padding:15px 18px;overflow-x:auto;font-family:var(--font-mono);font-size:.77rem;
+    line-height:1.75;color:#e7ecf5;white-space:pre}
+  .codecard pre .cm{color:#8fa6c4}
+  .codecard pre .k{color:#ffd84d}
+
+  .callout{position:relative;border-radius:14px;padding:20px 22px 20px 56px;margin:24px 0;font-size:1rem}
+  .callout .ico{position:absolute;left:17px;top:19px;font-size:1.4rem}
+  .callout .lbl{position:absolute;top:-13px;left:20px;color:#fff;font-family:var(--font-hand);
+    font-size:.78rem;padding:2px 12px;border-radius:20px;letter-spacing:.08em;box-shadow:0 2px 5px var(--shadow)}
+  .callout.warn{background:#fdeeea;border:2px solid rgba(226,74,55,.45)}
+  .callout.warn .lbl{background:var(--red)}
+  .callout.tip{background:#eef7ee;border:2px solid rgba(47,158,84,.4)}
+  .callout.tip .lbl{background:#2f9e54}
+
+  .checks{display:grid;gap:12px;margin-top:16px}
+  .check{display:grid;grid-template-columns:36px 1fr;gap:13px;background:#fffef9;border-radius:10px;
+    padding:14px 16px;box-shadow:2px 3px 0 var(--shadow);border-left:5px solid var(--mint)}
+  .check.risk{border-left-color:var(--red)}
+  .check .mk{font-family:var(--font-hand);font-weight:600;font-size:1.35rem;color:#2f9e54;text-align:center;line-height:1.2}
+  .check.risk .mk{color:var(--red)}
+  .check h4{font-size:.98rem;margin-bottom:2px;font-family:var(--font-hand);font-weight:600}
+  .check p{font-size:.88rem;color:var(--ink-soft)}
+
+  .insight{background:var(--paper-2);border:2px solid rgba(226,74,55,.28);border-radius:16px;
+    padding:24px 26px;margin-top:26px;position:relative}
+  .insight .ih{font-family:var(--font-hand);font-weight:600;font-size:1.22rem;color:var(--red);
+    margin-bottom:10px;display:flex;align-items:center;gap:8px}
+  .insight p{font-size:.98rem;color:var(--ink)}
+  .voices{display:flex;flex-wrap:wrap;gap:9px;margin:16px 0}
+  .voice{background:#fffef9;border-radius:18px;padding:7px 14px;font-size:.86rem;
+    box-shadow:1px 2px 0 var(--shadow);border:1px solid rgba(44,46,68,.1)}
+  .voice b{color:var(--red);font-family:var(--font-hand)}
+  .insight .arrow-down{text-align:center;color:var(--red);font-size:1.5rem;line-height:1}
+  .insight .conclusion{background:var(--ink);color:var(--paper);border-radius:10px;padding:14px 18px;
+    margin-top:6px;font-size:.96rem}
+  .insight .conclusion b{color:var(--yellow)}
+</style>
+</head>
+<body>
+
+<nav class="topnav">
+  <div class="inner">
+    <span class="brand">📑 もくじ</span>
+    <a href="#s1"><span class="n">①</span>何がしたい？</a>
+    <a href="#s2"><span class="n">②</span>登場人物</a>
+    <a href="#s3"><span class="n">③</span>データの旅</a>
+    <a href="#s4"><span class="n">④</span>ちょうど1回の魔法</a>
+    <a href="#s5"><span class="n">⑤</span>止まらない工夫</a>
+    <a href="#s6"><span class="n">⑥</span>郵便局が無いと？</a>
+    <a href="#summary">まとめ</a>
+  </div>
+</nav>
+
+<header class="hero">
+  <span class="tape t1"></span>
+  <div class="wrap">
+    <div class="eyebrow reveal">― Presence Logger のしくみ ―</div>
+    <h1 class="reveal"><span class="mark">カメラが「見た」</span>は<br>どうやって<span class="circle-note">DB</span>に届くの？</h1>
+    <p class="sub reveal">カメラに人が映ってから、それが Oracle のデータベースに記録されるまで。途中に出てくる <code>mosquitto</code> や、なぜ二重登録されないのかを、絵で追いかけます。</p>
+    <div class="meta reveal">所要 6分 / 中学生でも読めるように書いてあります</div>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <!-- ============ ① 何がしたい？ ============ -->
+  <section id="s1">
+    <div class="sec-head reveal"><span class="num">①</span><h2>そもそも、何がしたいの？</h2></div>
+    <p class="lead reveal">USB カメラで「人がいる／いない」を見張って、<strong>入った（ENTER）</strong>と<strong>出た（EXIT）</strong>の瞬間だけをデータベースに記録したい。ただし条件がひとつ、とても厳しい。</p>
+    <div class="reveal">
+      <p>それは「<strong>ちょうど1回だけ</strong>書く」こと。途中で電源が落ちても、WiFi が切れても、データベースが一時停止していても ── 復旧したあとに、同じ出来事を <strong>2回書いてもダメ、0回（消える）でもダメ</strong>。きっかり1回だけ残す。専門用語で <code>Exactly-once</code>（イグザクトリー・ワンス）と言います。</p>
+    </div>
+
+    <div class="analogy reveal"><span class="ico">📮</span>
+      これは「<strong>大事な手紙を、確実に1通だけ届ける</strong>」のと同じ問題。届いたか不安で何度も同じ手紙を送ると、相手は同じ手紙を何通も受け取る。かといって送らなければ届かない。<strong>「届いたよ」という返事（受領確認）</strong>が来るまで送り続けつつ、受け取る側が「これは前にもらった手紙だ」と気づいて<strong>2通目は捨てる</strong> ── この仕組みがこのアプリの心臓部です。
+    </div>
+  </section>
+
+  <!-- ============ ② 登場人物 ============ -->
+  <section id="s2">
+    <div class="sec-head reveal"><span class="num">②</span><h2>登場するのは、この7人</h2></div>
+    <p class="lead reveal">このアプリは1個の大きなプログラムではなく、役割の違う小さな部品が協力して動いています。4つは Docker コンテナ（独立した小部屋）、2つはメモ帳（SQLite）、最後がゴール。</p>
+
+    <div class="cards stagger reveal">
+      <div class="card c-blue"><span class="pin"></span>
+        <span class="emoji">👁️</span>
+        <div class="role">見張り番</div>
+        <h3>detector</h3>
+        <p>USBカメラの映像を AI（MediaPipe）で見て「人がいるか」を判定。3秒の様子見をして ENTER / EXIT を確定する。</p>
+        <div class="real">services/detector/ ・ Python + MediaPipe</div>
+      </div>
+      <div class="card c-yellow"><span class="pin"></span>
+        <span class="emoji">📮</span>
+        <div class="role">郵便局</div>
+        <h3>mosquitto</h3>
+        <p>detector と bridge の間に立つ伝言役（MQTTブローカー）。メッセージを預かって、宛先に確実に配達する。</p>
+        <div class="real">MQTT broker ・ topic: presence/event</div>
+      </div>
+      <div class="card c-mint"><span class="pin"></span>
+        <span class="emoji">🏭</span>
+        <div class="role">配達＆記録係</div>
+        <h3>bridge</h3>
+        <p>郵便局から出来事を受け取り、いまの WiFi に合った Oracle を選んで書き込みを手配する。終わったら「書けたよ」と返事する。</p>
+        <div class="real">services/bridge/ ・ Python + oracledb / JDBC通訳</div>
+      </div>
+      <div class="card c-blue"><span class="pin"></span>
+        <span class="emoji">🗒️</span>
+        <div class="role">detectorのメモ帳</div>
+        <h3>detector buffer</h3>
+        <p>送った出来事を「返事が来るまで」覚えておく SQLite。電源が落ちても消えない＝再起動後に再送できる。</p>
+        <div class="real">/var/lib/presence-logger/detector_buf.db</div>
+      </div>
+      <div class="card c-mint"><span class="pin"></span>
+        <span class="emoji">📥</span>
+        <div class="role">bridgeのメモ帳</div>
+        <h3>bridge inbox</h3>
+        <p>受け取った出来事を「DBに書き終わるまで」覚えておく SQLite。これがあるから DB が止まっていても忘れない。</p>
+        <div class="real">/var/lib/presence-logger/bridge_buf.db</div>
+      </div>
+      <div class="card c-pink"><span class="pin"></span>
+        <span class="emoji">🪄</span>
+        <div class="role">Java通訳係</div>
+        <h3>oracle-jdbc</h3>
+        <p>本番の Oracle は古い暗号方式で、Pi の仕組みとも相性が悪く、Python からは繋げない。そこで Java(JVM)が「通訳」として代わりに書き込む小さなコンテナ。</p>
+        <div class="real">services/oracle-jdbc/ ・ Java + ojdbc11.jar ・ POST /merge</div>
+      </div>
+      <div class="card c-lilac"><span class="pin"></span>
+        <span class="emoji">🗄️</span>
+        <div class="role">ゴール</div>
+        <h3>Oracle DB</h3>
+        <p>本物のデータベース。既存テーブル <code>HF1RCM01</code> に1行ずつ記録される。接続先は WiFi で自動的に切り替わる。</p>
+        <div class="real">table: HF1RCM01 (MK_DATE, STA_NO1〜3, T1_STATUS)</div>
+      </div>
+    </div>
+
+    <div class="callout tip reveal"><span class="lbl">ポイント</span><span class="ico">💡</span>
+      なぜ <code>mosquitto</code> をわざわざ間に挟む？ detector が bridge を直接呼ぶと、<strong>片方が再起動しただけで連絡が途切れます</strong>。郵便局を間に置くと、相手が一瞬いなくても郵便局がメッセージを預かってくれる。さらに「届くまで再送」「重複なし」といった配達ルール（QoS）も郵便局が保証してくれます。
+    </div>
+  </section>
+
+  <!-- ============ ③ データの旅 ============ -->
+  <section id="s3">
+    <div class="sec-head reveal"><span class="num">③</span><h2>1つの出来事が、DBに届くまでの旅</h2></div>
+    <p class="lead reveal">人がカメラの前に立った瞬間（ENTER）を例に、データが7人の手をどう渡っていくかを順に追います。まずは全体の地図から。</p>
+
+    <div class="flow reveal">
+      <div class="flow-rail">
+        <div class="node det"><span class="ne">👁️</span><div class="nt">detector</div><div class="nd">見て・確定・記録</div></div>
+        <div class="flow-arrow">→<small>QoS2</small></div>
+        <div class="node mos"><span class="ne">📮</span><div class="nt">mosquitto</div><div class="nd">配達</div></div>
+        <div class="flow-arrow">→</div>
+        <div class="node bri"><span class="ne">🏭</span><div class="nt">bridge</div><div class="nd">記録・手配</div></div>
+        <div class="flow-arrow">→<small>HTTP</small></div>
+        <div class="node jdbc"><span class="ne">🪄</span><div class="nt">oracle-jdbc</div><div class="nd">Java通訳</div></div>
+        <div class="flow-arrow">→<small>MERGE</small></div>
+        <div class="node db"><span class="ne">🗄️</span><div class="nt">Oracle</div><div class="nd">保存</div></div>
+      </div>
+    </div>
+    <p class="reveal" style="text-align:center;color:var(--ink-soft);font-size:.86rem">そして<strong>逆向き</strong>に「書けたよ」の返事（ACK）が 🗄️→🪄→🏭→📮→👁️ と戻ってきて、ようやく1件が完了します。<br>※本番DB（HIME-H-REAP）はこの Java通訳 経由。Thin 対応の DB なら 🏭 が直接 🗄️ に書く構成もあり、bridge は<strong>両対応</strong>です。</p>
+
+    <div class="steps stagger reveal">
+      <div class="step"><h4>カメラを1枚ずつ見る<span class="who det">detector</span></h4><p>毎秒数フレーム、映像を1枚ずつ AI に渡して「人が写っているか」とスコアを得る。この時点ではまだ何も記録しない。</p><span class="cmd">camera.read() → PersonDetector.detect(frame)</span></div>
+
+      <div class="step"><h4>3秒の「様子見」で本物だけ確定<span class="who det">detector</span></h4><p>一瞬の誤検知で記録すると ENTER/EXIT が乱れる。そこで状態機械(FSM)が「人がいる状態が <strong>3秒続いたら</strong> 本当に ENTER」と判断。チラついた候補は取り消す（デバウンス）。</p><span class="cmd">PresenceFSM.observe() → Transition(ENTER)</span></div>
+
+      <div class="step"><h4>出来事に「背番号」を付けてメモ帳に書く<span class="who det">detector</span></h4><p>確定した瞬間、世界で1つだけの ID（<code>event_id</code>＝UUID）を発行。これが手紙の追跡番号になる。先に自分のメモ帳(SQLite)に保存してから送る ＝ <strong>送る前に必ず記録</strong>。</p><span class="cmd">buffer.insert_pending(event_id=…) → 永続化</span></div>
+
+      <div class="step"><h4>郵便局へ投函（QoS=2 で）<span class="who det">detector</span></h4><p>出来事を JSON にして mosquitto の <code>presence/event</code> という宛先（topic）へ publish。配達品質は最高ランクの <strong>QoS=2</strong>＝「重複なく、ちょうど1回配達」を指定する。</p><span class="cmd">mqtt.publish_event(topic, payload, qos=2)</span></div>
+
+      <div class="step"><h4>郵便局が bridge へ確実に配達<span class="who mos">mosquitto</span></h4><p>mosquitto は宛先を購読(subscribe)している bridge へメッセージを渡す。bridge が一瞬落ちていても、QoS=2 の約束のもとで配達を完了させる。</p><span class="cmd">presence/event ── 内部ネットワーク presence-net のみ</span></div>
+
+      <div class="step"><h4>受け取ったら、まず自分のメモ帳へ<span class="who bri">bridge</span></h4><p>bridge は中身を検証して、すぐ inbox(SQLite)に <code>status=received</code> で保存。<strong>ここでも DB より先にメモ帳</strong>。だから直後に停電しても出来事は消えない。同じ event_id は2度書かない（重複防止の1つ目）。</p><span class="cmd">inbox.insert_received(...) ON CONFLICT DO NOTHING</span></div>
+
+      <div class="step"><h4>いまの WiFi から「書き込む先」を選ぶ<span class="who bri">bridge</span></h4><p>bridge は <code>nmcli</code> で接続中の WiFi の SSID を読み取り、<code>profiles.yaml</code> から対応する Oracle（工場A直接 / 工場B Wallet など）を解決。未知の SSID なら送らずに保留する。</p><span class="cmd">network.get_current_ssid() → resolver.resolve(ssid)</span></div>
+
+      <div class="step"><h4>Oracle に MERGE で書き込む（本番は Java通訳経由）<span class="who bri">bridge</span><span class="who" style="background:var(--pink);color:var(--ink)">oracle-jdbc</span></h4><p>普通の INSERT ではなく <strong>MERGE</strong> を使うのがキモ。「同じ内容が既にあれば何もしない、無ければ入れる」。だから万一同じ出来事が2回届いても、2回目は<strong>0行追加＝無視</strong>される（重複防止の2つ目）。本番DBには Python から直接繋げないので、bridge は <code>POST /merge</code> で <strong>Java通訳(oracle-jdbc)に依頼</strong>し、通訳が JDBC で実際の MERGE を実行する。MERGE の中身も冪等性も変わらない。</p><span class="cmd">client_mode=jdbc → POST /merge → JDBC MERGE → rows_affected = 1 or 0</span></div>
+
+      <div class="step"><h4>「書けたよ」を返信し、完了マーク<span class="who bri">bridge</span></h4><p>MERGE 成功で inbox を <code>sent</code> に更新し、mosquitto 経由で detector に ACK（受領確認）を返す。detector は ACK を受けて初めて自分のメモ帳を <code>acked</code> にし、その出来事の旅が終わる。</p><span class="cmd">mqtt.publish_ack(event_id, mk_date_committed) → buffer.mark_acked()</span></div>
+    </div>
+
+    <p class="reveal" style="margin-top:22px">実際に流れる JSON は、こんな1行です（追跡番号 <code>event_id</code> が detector→bridge→ACK まで<strong>ずっと同じ</strong>なのがポイント）：</p>
+    <div class="codecard reveal"><div class="ttl">💻 detector が郵便局へ投函するメッセージ</div><pre><span class="cm">// presence/event に publish される中身（一部）</span>
+{
+  <span class="k">"event_id"</span>: "e6ed87d4-1a92-4aa6-bbb2-129dc66c327b",  <span class="cm">// 追跡番号</span>
+  <span class="k">"event"</span>: "ENTER",                 <span class="cm">// 入った / 出た</span>
+  <span class="k">"event_time"</span>: "20260428113337",  <span class="cm">// MK_DATE になる時刻</span>
+  <span class="k">"monotonic_ns"</span>: 1456585470085,   <span class="cm">// 時計ズレ補正用の単調時間</span>
+  <span class="k">"wall_clock_synced"</span>: true,        <span class="cm">// NTP同期できてるか</span>
+  <span class="k">"device_id"</span>: "raspberrypi5"
+}</pre></div>
+  </section>
+
+  <!-- ============ ④ ちょうど1回の魔法 ============ -->
+  <section id="s4">
+    <div class="sec-head reveal"><span class="num">④</span><h2>なぜ「ちょうど1回」になるの？</h2></div>
+    <p class="lead reveal">秘密は、たった3つの仕掛けの合わせ技です。1つでも欠けると二重登録や取りこぼしが起きます。</p>
+
+    <div class="checks stagger reveal">
+      <div class="check"><div class="mk">1</div><div><h4>QoS=2 ── 郵便局の「重複なし配達」</h4><p>MQTT の最高品質。ネットワークがどれだけ不安定でも、メッセージは <strong>欠落せず・重複せず</strong> ちょうど1回 bridge に届く。配達途中の信頼性をここで担保。</p></div></div>
+      <div class="check"><div class="mk">2</div><div><h4>SQLite に「送る前」「書く前」必ず記録</h4><p>detector も bridge も、行動の<strong>前に</strong>メモ帳へ書く。だから途中で電源が落ちても出来事は生き残り、再起動後に「まだ返事が来ていないもの」を<strong>自動で再送</strong>できる（取りこぼし防止）。</p></div></div>
+      <div class="check"><div class="mk">3</div><div><h4>Oracle MERGE ── 同じ内容なら「何もしない」</h4><p>再送で同じ出来事が2回届いても、MERGE は既存行を見つけて <strong>0行追加で素通り</strong>。テーブルにユニークキーを足さなくても重複が入らない（二重登録防止の最後の砦）。</p></div></div>
+    </div>
+
+    <p class="reveal" style="margin-top:22px">3つ目の MERGE は、実際にはこんな SQL です。「キーが一致する行が無いときだけ INSERT」＝何度流しても結果が変わらない（これを<strong>冪等＝べきとう</strong>と言います）：</p>
+    <div class="codecard reveal"><div class="ttl">💻 冪等な書き込み（Python: oracle_client.py / Java通訳: Main.java 共通）</div><pre><span class="k">MERGE INTO</span> HF1RCM01 t
+<span class="k">USING</span> (<span class="k">SELECT</span> :1 <span class="k">AS</span> MK_DATE, :2 <span class="k">AS</span> STA_NO1, … <span class="k">FROM</span> dual) s
+<span class="k">ON</span> (t.MK_DATE = s.MK_DATE <span class="k">AND</span> t.STA_NO1 = s.STA_NO1
+    <span class="k">AND</span> t.STA_NO2 = s.STA_NO2 <span class="k">AND</span> t.STA_NO3 = s.STA_NO3
+    <span class="k">AND</span> t.T1_STATUS = s.T1_STATUS)
+<span class="k">WHEN NOT MATCHED THEN</span>                <span class="cm">-- 一致する行が無いときだけ</span>
+  <span class="k">INSERT</span> (MK_DATE, STA_NO1, …, T1_STATUS, UPCMPFLG)
+  <span class="k">VALUES</span> (s.MK_DATE, s.STA_NO1, …, 1)   <span class="cm">-- 2回目以降は 0 行 = 無視</span></pre></div>
+
+    <div class="insight reveal">
+      <div class="ih">🔭 点が線になる瞬間</div>
+      <p>3つの仕掛けは、それぞれ別の不安に答えています。</p>
+      <div class="voices">
+        <div class="voice"><b>QoS=2</b>「配達中に消えたり増えたりしない？」</div>
+        <div class="voice"><b>SQLite</b>「途中で停電したら忘れない？」</div>
+        <div class="voice"><b>MERGE</b>「再送で二重に入らない？」</div>
+      </div>
+      <div class="arrow-down">↓ 3つを重ねると</div>
+      <div class="conclusion">どこで何が止まっても、復旧後に <b>「ちょうど1回」</b> が成立する ── これが Exactly-once の正体。</div>
+    </div>
+  </section>
+
+  <!-- ============ ⑤ 止まらない工夫 ============ -->
+  <section id="s5">
+    <div class="sec-head reveal"><span class="num">⑤</span><h2>トラブルが起きても、止まらない</h2></div>
+    <p class="lead reveal">現場では Oracle が落ちたり、WiFi が圏外になったり、時計がズレたりします。bridge はそれぞれに「待つ」「保留する」「補正する」で対応し、出来事は inbox に溜めたまま失いません。</p>
+
+    <div class="status stagger reveal">
+      <div class="st-item ok"><div class="badge">✓ 対応</div><h4>DBが一時停止</h4><p>書き込み失敗を再試行（間隔を 5秒→15秒→…と伸ばす指数バックオフ）。出来事は inbox に <code>received</code> のまま残る。</p></div>
+      <div class="st-item warn"><div class="badge">⚠ 守る</div><h4>DBが恒久エラー（表が無い等）</h4><p>サーキットブレーカが OPEN になり、無駄打ちを止めて15分後に再挑戦。CRITICAL ログで人に知らせる。</p></div>
+      <div class="st-item ok"><div class="badge">✓ 対応</div><h4>知らないWiFiに繋がった</h4><p>宛先が分からないので送らず保留(<code>hold</code>)。正しい SSID に戻ると、溜めた分をまとめて送る。</p></div>
+      <div class="st-item ok"><div class="badge">✓ 対応</div><h4>時計がまだ合っていない</h4><p>NTP同期前の出来事は「ブレない単調時間」で記録し、同期できた瞬間に正しい時刻へ<strong>後から補正</strong>して書く。</p></div>
+    </div>
+
+    <div class="callout warn reveal"><span class="lbl">そして</span><span class="ico">🔁</span>
+      どのトラブルでも共通するのは「<strong>出来事は消えず inbox に残り続ける</strong>」こと。detector 側も ACK が来るまで再送し続けます。だから一時的な障害は、回復すれば<strong>自動で巻き戻されて続きから完了</strong>します ── 人が手で直す必要はありません。
+    </div>
+  </section>
+
+  <!-- ============ ⑥ もし郵便局が無かったら？ ============ -->
+  <section id="s6">
+    <div class="sec-head reveal"><span class="num">⑥</span><h2>もし郵便局が無かったら？</h2></div>
+    <p class="lead reveal">よくある疑問 ──「mosquitto を消したら全部壊れる？」。答えは半分だけ Yes です。<strong>正しさ</strong>と<strong>ラクさ</strong>を分けて考えると、何が残って何が消えるかがはっきりします。</p>
+
+    <div class="reveal">
+      <p>まず大事な結論から。<strong>「ちょうど1回」という“正しさ”は、郵便局が無くても保たれます。</strong>それを守っているのは郵便局ではなく、両端と DB に仕込んだ仕掛け ── <strong>背番号(event_id)＋控え(SQLite)＋ACK再送＋MERGE</strong> ── だからです。</p>
+    </div>
+
+    <div class="analogy reveal"><span class="ico">✉️</span>
+      手紙に「<strong>No.7</strong>」と書いて控えをノートに残す。「No.7 届いた」の返事が来るまで同じ No.7 を何度でも送る。受け手は「No.7 はもう受け取った」と気づけば<strong>2通目を捨てる</strong>。── 途中で消えても再送、二重に届いても捨てる。だから運び役が郵便局でも雑な土管でも、記録に残る No.7 は<strong>ちょうど1回</strong>。
+    </div>
+
+    <div class="callout tip reveal"><span class="lbl">等式</span><span class="ico">🧮</span>
+      <strong>最低1回は届ける（at-least-once）＋ 重複は捨てる（冪等）＝ 実質ちょうど1回（exactly-once）</strong>。運び役には「いつかは届く」だけを求め、「重複させるな」は受け手の背番号チェックと MERGE が吸収する。だから MQTT の QoS=2 は“配達区間の上乗せの安心”であって、正しさの土台ではありません。
+    </div>
+
+    <p class="lead reveal" style="margin-top:34px">では、郵便局を消すと何を失う？ ── 失うのは「正しさ」ではなく <strong>“ラクさ”</strong>。「ポストに入れるだけ」だった毎日が、ぜんぶ手作業に変わります。</p>
+
+    <div class="jobs reveal">
+      <div class="job">
+        <div class="jhead"><span class="jemoji">🏠</span><span class="jttl">① 相手の居場所</span></div>
+        <div class="ba">
+          <div class="col before"><span class="tag">🚫 郵便局ナシ</span>相手の住所も、いま起動しているかも自分で把握。相手が<strong>再起動中だと接続拒否</strong>。</div>
+          <div class="mid">↔</div>
+          <div class="col after"><span class="tag">📮 郵便局アリ</span>ポスト（topic）に入れるだけ。<strong>相手が誰でも・どこでも・寝ていてもOK</strong>。</div>
+        </div>
+      </div>
+      <div class="job">
+        <div class="jhead"><span class="jemoji">📨</span><span class="jttl">② 返事（ACK）の受け取り</span></div>
+        <div class="ba">
+          <div class="col before"><span class="tag">🚫 郵便局ナシ</span>返事を受けるため、<strong>自分の家にも受付窓口を常駐</strong>。出す側なのに受ける設備まで持つ。</div>
+          <div class="mid">↔</div>
+          <div class="col after"><span class="tag">📮 郵便局アリ</span>返事も同じ郵便局が運ぶ。<strong>出すだけ・購読するだけ</strong>でいい。</div>
+        </div>
+      </div>
+      <div class="job">
+        <div class="jhead"><span class="jemoji">🚚</span><span class="jttl">③ 配達そのものの信頼性</span></div>
+        <div class="ba">
+          <div class="col before"><span class="tag">🚫 郵便局ナシ</span>再送の間隔・重複の弾き方・順序を<strong>自分で実装</strong>（バグの温床）。</div>
+          <div class="mid">↔</div>
+          <div class="col after"><span class="tag">📮 郵便局アリ</span>QoS=2 が肩代わり。<strong>書留と同じ安心</strong>を最初から。</div>
+        </div>
+      </div>
+      <div class="job">
+        <div class="jhead"><span class="jemoji">🔌</span><span class="jttl">④ 受け手を増やす</span></div>
+        <div class="ba">
+          <div class="col before"><span class="tag">🚫 郵便局ナシ</span>出し手×受け手の数だけ<strong>専用ホットライン</strong>。1人増えると全員が配線変更。</div>
+          <div class="mid">↔</div>
+          <div class="col after"><span class="tag">📮 郵便局アリ</span>topic を<strong>購読するだけ</strong>。監視ツールが横から覗くのも自由。</div>
+        </div>
+      </div>
+      <div class="job">
+        <div class="jhead"><span class="jemoji">📦</span><span class="jttl">⑤ 別マシンへ引っ越し</span></div>
+        <div class="ba">
+          <div class="col before"><span class="tag">🚫 郵便局ナシ</span>配置が変わるたび<strong>つなぎ方を全部書き直し</strong>。</div>
+          <div class="mid">↔</div>
+          <div class="col after"><span class="tag">📮 郵便局アリ</span>ポストに入れる動作は同じ。<strong>K3s で分散</strong>してもラク。</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="insight reveal">
+      <div class="ih">🧭 「正しさ」と「ラクさ」は別の係</div>
+      <p>この2つを混ぜて考えると「郵便局を消したら全部壊れる」と誤解しがち。実は担当が違います。</p>
+      <div class="voices">
+        <div class="voice"><b>正しさ係</b>「背番号＋控え(SQLite)＋ACK再送＋MERGE」</div>
+        <div class="voice"><b>ラクさ係</b>「mosquitto」</div>
+      </div>
+      <div class="arrow-down">↓ だから</div>
+      <div class="conclusion">郵便局を消しても <b>“ちょうど1回”は守られる</b>。失うのは“ラクさ”だけ ── でも本気で作り直すと、<b>結局もう一度 mosquitto ができあがる</b>。</div>
+    </div>
+  </section>
+
+  <!-- ============ まとめ ============ -->
+  <div class="summary reveal" id="summary">
+    <h2>ひとことで言うと</h2>
+    <p class="lead">カメラの「見た」は、<strong>郵便局(mosquitto)</strong>を経由し、両側の<strong>メモ帳(SQLite)</strong>に守られながら、<strong>冪等な書き込み(MERGE)</strong>で Oracle にちょうど1回だけ届く。</p>
+    <ul>
+      <li><strong>detector</strong> が見て・3秒様子見して ENTER/EXIT を確定し、追跡番号付きで投函する</li>
+      <li><strong>mosquitto</strong> が QoS=2 で「重複なく確実に」bridge へ配達する</li>
+      <li><strong>bridge</strong> が inbox に記録 → WiFi で宛先を選び → MERGE で Oracle に書く → ACK を返す</li>
+      <li>「ちょうど1回」は <strong>QoS=2 ＋ SQLite永続化 ＋ MERGE冪等</strong> の3点セットで成立する</li>
+      <li>障害が起きても出来事は inbox に残り、回復後に<strong>自動で続きから完了</strong>する</li>
+      <li><strong>正しさ</strong>（ちょうど1回）は SQLite＋ACK＋MERGE が守るので郵便局に依存しない。mosquitto が守るのは<strong>ラクさ</strong>（疎結合・双方向・拡張・分散）</li>
+    </ul>
+  </div>
+
+</main>
+
+<footer>
+  <div class="hand">― おわり ―</div>
+  <div style="margin-top:8px">出典: Presence Logger リポジトリ（services/detector・services/bridge）／ このページは docs/how-it-works/index.html</div>
+</footer>
+
+<script>
+  document.documentElement.classList.add('js');
+  const io = new IntersectionObserver((entries)=>{
+    entries.forEach(e=>{ if(e.isIntersecting){ e.target.classList.add('in'); io.unobserve(e.target);} });
+  },{threshold:.12});
+  document.querySelectorAll('.reveal,.stagger').forEach(el=>io.observe(el));
+
+  const links = [...document.querySelectorAll('.topnav a')];
+  const navMap = new Map(links.map(a=>[a.getAttribute('href').slice(1), a]));
+  const navObserver = new IntersectionObserver((entries)=>{
+    entries.forEach(e=>{
+      if(e.isIntersecting){
+        links.forEach(a=>a.classList.remove('active'));
+        const a = navMap.get(e.target.id);
+        if(a) a.classList.add('active');
+      }
+    });
+  },{rootMargin:'-58px 0px -68% 0px',threshold:0});
+  document.querySelectorAll('section[id], #summary').forEach(s=>navObserver.observe(s));
+</script>
+</body>
+</html>

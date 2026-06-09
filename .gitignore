@@ -38,3 +38,10 @@ Thumbs.db
 .vscode/
 .idea/
 *.swp
+
+# Tooling artifacts (local only)
+.omc/
+.git.backup-*/
+AGENTS.md
+**/AGENTS.md
+scripts/_diag_frame.jpg

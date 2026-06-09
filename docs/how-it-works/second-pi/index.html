@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<!--
+  presence-logger ── 2台目のラズパイをつなぐには？
+  explainer-html テンプレートをベースに中身だけ差し替え。デザインCSSは不変。
+-->
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>2台目のラズパイ、どうつなぐ？ ── presence-logger を増やすときの手引き</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Klee+One:wght@400;600&family=Zen+Maru+Gothic:wght@400;500;700&family=JetBrains+Mono:wght@400;500&family=Noto+Color+Emoji&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --paper:#faf6ea;
+    --paper-2:#f2ead4;
+    --ink:#2c2e44;
+    --ink-soft:#5a5d76;
+    --rule:#cfe0ef;
+    --red:#e24a37;
+    --red-soft:#f4a79c;
+    --yellow:#ffd84d;
+    --pink:#ff9ec4;
+    --blue:#86c8e6;
+    --mint:#9adfa9;
+    --lilac:#c3b4ec;
+    --bluepen:#2f6fb3;
+    --shadow:rgba(44,46,68,.16);
+    --maxw:1080px;
+    --emoji:"Apple Color Emoji","Segoe UI Emoji","Segoe UI Symbol","Noto Color Emoji";
+    --font-hand:"Klee One",serif,var(--emoji);
+    --font-body:"Zen Maru Gothic",sans-serif,var(--emoji);
+    --font-mono:"JetBrains Mono",monospace,var(--emoji);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  body{
+    font-family:var(--font-body);
+    color:var(--ink);
+    line-height:1.85;
+    background-color:var(--paper);
+    background-image:
+      repeating-linear-gradient(transparent 0 33px, rgba(120,160,200,.16) 33px 34px),
+      radial-gradient(circle at 12% 8%, rgba(255,216,77,.10), transparent 40%),
+      radial-gradient(circle at 88% 92%, rgba(134,200,230,.12), transparent 45%);
+    background-attachment:fixed;
+    -webkit-font-smoothing:antialiased;
+    overflow-x:hidden;
+  }
+  body::before{
+    content:"";position:fixed;inset:0;pointer-events:none;z-index:9999;opacity:.04;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    mix-blend-mode:multiply;
+  }
+  body::after{
+    content:"";position:fixed;top:0;bottom:0;left:max(18px, calc(50% - var(--maxw)/2 - 6px));
+    width:2px;background:rgba(226,74,55,.28);pointer-events:none;z-index:0;
+  }
+  @media(max-width:1140px){body::after{display:none}}
+
+  .wrap{max-width:var(--maxw);margin:0 auto;padding:0 26px;position:relative;z-index:1}
+  code{font-family:var(--font-mono);font-size:.84em;background:rgba(47,111,179,.10);
+    color:var(--bluepen);padding:.12em .42em;border-radius:5px;border:1px solid rgba(47,111,179,.18);white-space:nowrap}
+
+  header.hero{padding:84px 0 56px;text-align:center;position:relative}
+  .tape{position:absolute;width:148px;height:34px;background:rgba(255,216,77,.55);
+    box-shadow:0 2px 6px var(--shadow);backdrop-filter:saturate(1.2)}
+  .tape.t1{top:42px;left:50%;transform:translateX(-50%) rotate(-3deg)}
+  .eyebrow{font-family:var(--font-hand);font-size:1.05rem;color:var(--red);
+    letter-spacing:.18em;margin-bottom:10px}
+  .hero h1{font-family:var(--font-hand);font-weight:600;line-height:1.25;
+    font-size:clamp(2.3rem,6vw,4.1rem);letter-spacing:.01em}
+  .hero h1 .mark{position:relative;white-space:nowrap}
+  .hero h1 .mark::after{content:"";position:absolute;left:-4px;right:-4px;bottom:.08em;height:.42em;
+    background:var(--yellow);opacity:.55;z-index:-1;border-radius:3px;transform:rotate(-1deg)}
+  .hero .sub{font-size:1.12rem;color:var(--ink-soft);margin-top:22px;max-width:620px;
+    margin-left:auto;margin-right:auto}
+  .hero .meta{margin-top:30px;font-family:var(--font-mono);font-size:.78rem;color:var(--ink-soft);opacity:.8}
+
+  .circle-note{display:inline-block;position:relative;padding:0 .15em}
+  .circle-note::before{content:"";position:absolute;inset:-8px -12px;border:2.5px solid var(--red);
+    border-radius:55% 45% 50% 50%/55% 50% 50% 45%;transform:rotate(-2deg);opacity:.7}
+
+  section{padding:50px 0}
+  .sec-head{display:flex;align-items:baseline;gap:14px;margin-bottom:8px}
+  .num{font-family:var(--font-hand);font-weight:600;font-size:2.4rem;color:var(--red);
+    line-height:1;flex:none}
+  h2{font-family:var(--font-hand);font-weight:600;font-size:clamp(1.5rem,3.6vw,2.1rem);line-height:1.3}
+  .lead{font-size:1.05rem;color:var(--ink-soft);margin:14px 0 28px;max-width:680px}
+  p+p{margin-top:14px}
+  strong{font-weight:700;background:linear-gradient(transparent 62%, rgba(255,216,77,.5) 62%)}
+
+  .analogy{position:relative;background:var(--paper-2);border:2px dashed rgba(226,74,55,.4);
+    border-radius:14px;padding:22px 24px 22px 56px;margin:24px 0;font-size:1.02rem}
+  .analogy::before{content:"たとえ";position:absolute;top:-13px;left:20px;background:var(--red);
+    color:#fff;font-family:var(--font-hand);font-size:.78rem;padding:2px 12px;border-radius:20px;
+    letter-spacing:.08em;box-shadow:0 2px 5px var(--shadow)}
+  .analogy .ico{position:absolute;left:16px;top:20px;font-size:1.4rem}
+
+  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(248px,1fr));gap:26px;margin-top:14px}
+  .card{position:relative;background:#fffef9;border-radius:12px;padding:26px 22px 24px;
+    box-shadow:3px 5px 0 var(--shadow);border:1px solid rgba(44,46,68,.08);transition:transform .25s ease, box-shadow .25s ease}
+  .card:hover{transform:translateY(-5px) rotate(-.4deg);box-shadow:5px 10px 0 var(--shadow)}
+  .card .pin{position:absolute;top:-10px;left:50%;transform:translateX(-50%);width:18px;height:18px;
+    border-radius:50%;box-shadow:0 2px 4px var(--shadow);border:3px solid rgba(255,255,255,.7)}
+  .card .emoji{font-size:2.1rem;display:block;margin-bottom:8px}
+  .card h3{font-family:var(--font-hand);font-weight:600;font-size:1.22rem;margin-bottom:4px}
+  .card .role{font-size:.82rem;color:var(--red);font-weight:700;margin-bottom:10px;font-family:var(--font-hand)}
+  .card p{font-size:.93rem;color:var(--ink-soft)}
+  .card .real{margin-top:12px;font-family:var(--font-mono);font-size:.72rem;color:var(--bluepen);
+    background:rgba(47,111,179,.07);border-radius:6px;padding:7px 9px;line-height:1.5;word-break:break-all;white-space:normal}
+  .card.c-yellow .pin{background:var(--yellow)} .card.c-yellow{border-top:4px solid var(--yellow)}
+  .card.c-pink .pin{background:var(--pink)} .card.c-pink{border-top:4px solid var(--pink)}
+  .card.c-blue .pin{background:var(--blue)} .card.c-blue{border-top:4px solid var(--blue)}
+  .card.c-mint .pin{background:var(--mint)} .card.c-mint{border-top:4px solid var(--mint)}
+  .card.c-lilac .pin{background:var(--lilac)} .card.c-lilac{border-top:4px solid var(--lilac)}
+
+  .rule-pill{display:inline-block;background:var(--ink);color:var(--paper);font-size:.86rem;
+    padding:6px 14px;border-radius:20px;margin:6px 6px 0 0;font-family:var(--font-hand)}
+
+  .dist{display:grid;grid-template-columns:1fr;gap:0;margin-top:20px;position:relative}
+  .hub{background:var(--ink);color:var(--paper);border-radius:14px;padding:22px 24px;max-width:430px;
+    margin:0 auto;text-align:center;box-shadow:4px 6px 0 var(--shadow);position:relative;z-index:2}
+  .hub .label{font-family:var(--font-hand);font-size:1.25rem;color:var(--yellow)}
+  .hub .path{font-family:var(--font-mono);font-size:.74rem;opacity:.85;margin-top:6px;word-break:break-all}
+  .spokes{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin-top:30px;position:relative}
+  .spokes::before{content:"";position:absolute;top:-22px;left:50%;width:2px;height:22px;background:var(--ink-soft)}
+  .spoke{background:#fffef9;border:2px dashed var(--bluepen);border-radius:10px;padding:14px;text-align:center;
+    box-shadow:2px 3px 0 var(--shadow)}
+  .spoke .t{font-family:var(--font-hand);font-size:1rem}
+  .spoke .p{font-family:var(--font-mono);font-size:.68rem;color:var(--bluepen);margin-top:4px;word-break:break-all}
+  .spoke .tag{font-size:.7rem;color:var(--ink-soft);margin-top:6px}
+
+  .steps{counter-reset:s;margin-top:18px;display:grid;gap:14px}
+  .step{position:relative;background:#fffef9;border-radius:10px;padding:16px 18px 16px 60px;
+    box-shadow:2px 3px 0 var(--shadow);border:1px solid rgba(44,46,68,.07)}
+  .step::before{counter-increment:s;content:counter(s);position:absolute;left:14px;top:14px;
+    width:32px;height:32px;background:var(--red);color:#fff;border-radius:50%;display:grid;place-items:center;
+    font-family:var(--font-hand);font-weight:600;font-size:1.1rem;box-shadow:0 2px 4px var(--shadow)}
+  .step h4{font-family:var(--font-hand);font-weight:600;font-size:1.05rem;margin-bottom:2px}
+  .step p{font-size:.9rem;color:var(--ink-soft)}
+  .step .cmd{font-family:var(--font-mono);font-size:.76rem;color:var(--bluepen);margin-top:6px;display:block}
+
+  .status{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px;margin-top:16px}
+  .st-item{background:#fffef9;border-radius:12px;padding:18px 20px;box-shadow:2px 3px 0 var(--shadow);
+    border-left:5px solid var(--mint)}
+  .st-item.warn{border-left-color:var(--red)}
+  .st-item .badge{font-family:var(--font-hand);font-size:.82rem;font-weight:600;display:inline-block;margin-bottom:6px}
+  .st-item.ok .badge{color:#2f9e54} .st-item.warn .badge{color:var(--red)}
+  .st-item h4{font-size:1rem;margin-bottom:4px}
+  .st-item p{font-size:.88rem;color:var(--ink-soft)}
+
+  .summary{background:var(--ink);color:var(--paper);border-radius:18px;padding:40px 34px;margin:40px 0;
+    box-shadow:5px 7px 0 var(--shadow);position:relative;overflow:hidden}
+  .summary::after{content:"📎";position:absolute;top:-10px;right:18px;font-size:3.4rem;opacity:.18;transform:rotate(18deg)}
+  .summary h2{color:var(--yellow)}
+  .summary .lead{color:rgba(250,246,234,.82)}
+  .summary ul{list-style:none;margin-top:18px;display:grid;gap:12px}
+  .summary li{padding-left:30px;position:relative;font-size:1rem}
+  .summary li::before{content:"✓";position:absolute;left:0;top:0;color:var(--mint);font-weight:700}
+  .summary strong{background:none;color:var(--yellow)}
+
+  footer{text-align:center;padding:30px 0 60px;color:var(--ink-soft);font-size:.82rem}
+  footer .hand{font-family:var(--font-hand);font-size:1rem;color:var(--red)}
+
+  html.js .reveal{opacity:0;transform:translateY(26px);transition:opacity .6s ease, transform .6s ease}
+  html.js .reveal.in{opacity:1;transform:none}
+  .cards .card,.spoke,.step,.st-item{transition:transform .25s ease, box-shadow .25s ease, opacity .5s ease}
+  .stagger.in>*{animation:pop .5s ease backwards}
+  .stagger.in>*:nth-child(2){animation-delay:.07s}
+  .stagger.in>*:nth-child(3){animation-delay:.14s}
+  .stagger.in>*:nth-child(4){animation-delay:.21s}
+  .stagger.in>*:nth-child(5){animation-delay:.28s}
+  .stagger.in>*:nth-child(6){animation-delay:.35s}
+  @keyframes pop{from{opacity:0;transform:translateY(18px) scale(.97)}to{opacity:1;transform:none}}
+  @media(prefers-reduced-motion:reduce){.reveal{opacity:1;transform:none}.stagger.in>*{animation:none}}
+
+  .topnav{position:sticky;top:0;z-index:50;background:rgba(250,246,234,.88);
+    backdrop-filter:blur(8px) saturate(1.1);border-bottom:2px solid rgba(226,74,55,.22)}
+  .topnav .inner{max-width:var(--maxw);margin:0 auto;padding:9px 22px;display:flex;align-items:center;gap:9px;overflow-x:auto}
+  .topnav .inner::-webkit-scrollbar{height:0}
+  .topnav .brand{font-family:var(--font-hand);font-weight:600;color:var(--red);font-size:.95rem;white-space:nowrap;flex:none}
+  .topnav a{flex:none;text-decoration:none;color:var(--ink-soft);font-size:.84rem;
+    padding:5px 11px;border-radius:18px;white-space:nowrap;border:1px solid transparent;
+    transition:background .2s,color .2s,border-color .2s}
+  .topnav a:hover{color:var(--ink);background:rgba(47,111,179,.09)}
+  .topnav a.active{color:#fff;background:var(--red);border-color:var(--red)}
+  .topnav a .n{font-family:var(--font-hand);font-weight:600;margin-right:3px}
+  section,.summary{scroll-margin-top:66px}
+
+  .codecard{background:var(--ink);border-radius:12px;margin:14px 0;box-shadow:3px 5px 0 var(--shadow);overflow:hidden}
+  .codecard .ttl{font-family:var(--font-hand);font-size:.8rem;color:var(--ink);background:var(--yellow);
+    padding:6px 14px;display:flex;align-items:center;gap:6px;letter-spacing:.02em}
+  .codecard pre{margin:0;padding:15px 18px;overflow-x:auto;font-family:var(--font-mono);font-size:.77rem;
+    line-height:1.75;color:#e7ecf5;white-space:pre}
+  .codecard pre .cm{color:#8fa6c4}
+
+  .callout{position:relative;border-radius:14px;padding:20px 22px 20px 56px;margin:24px 0;font-size:1rem}
+  .callout .ico{position:absolute;left:17px;top:19px;font-size:1.4rem}
+  .callout .lbl{position:absolute;top:-13px;left:20px;color:#fff;font-family:var(--font-hand);
+    font-size:.78rem;padding:2px 12px;border-radius:20px;letter-spacing:.08em;box-shadow:0 2px 5px var(--shadow)}
+  .callout.warn{background:#fdeeea;border:2px solid rgba(226,74,55,.45)}
+  .callout.warn .lbl{background:var(--red)}
+  .callout.tip{background:#eef7ee;border:2px solid rgba(47,158,84,.4)}
+  .callout.tip .lbl{background:#2f9e54}
+
+  .checks{display:grid;gap:12px;margin-top:16px}
+  .check{display:grid;grid-template-columns:36px 1fr;gap:13px;background:#fffef9;border-radius:10px;
+    padding:14px 16px;box-shadow:2px 3px 0 var(--shadow);border-left:5px solid var(--mint)}
+  .check.risk{border-left-color:var(--red)}
+  .check .mk{font-family:var(--font-hand);font-weight:600;font-size:1.35rem;color:#2f9e54;text-align:center;line-height:1.2}
+  .check.risk .mk{color:var(--red)}
+  .check h4{font-size:.98rem;margin-bottom:2px;font-family:var(--font-hand);font-weight:600}
+  .check p{font-size:.88rem;color:var(--ink-soft)}
+</style>
+</head>
+<body>
+
+<!-- ============ NAV（目次） ============ -->
+<nav class="topnav">
+  <div class="inner">
+    <span class="brand">📑 もくじ</span>
+    <a href="#s1"><span class="n">①</span>何を増やすの？</a>
+    <a href="#s2"><span class="n">②</span>登場人物</a>
+    <a href="#s3"><span class="n">③</span>守る3つの約束</a>
+    <a href="#s4"><span class="n">④</span>手順</a>
+    <a href="#s5"><span class="n">⑤</span>安全のために</a>
+    <a href="#summary">まとめ</a>
+  </div>
+</nav>
+
+<!-- ============ HERO ============ -->
+<header class="hero">
+  <span class="tape t1"></span>
+  <div class="wrap">
+    <div class="eyebrow reveal">― presence-logger を 2 台に ―</div>
+    <h1 class="reveal"><span class="mark">2台目のラズパイ</span>は<br>どうやって<span class="circle-note">つなぐ</span>？</h1>
+    <p class="sub reveal">カメラをもう1台増やしたい。でも「データベースに二重で書いたり、片方のイベントが消えたりしない？」が心配。その不安を順番にほどきます。</p>
+    <div class="meta reveal">所要 5分 / 中学生でも読めるように書いてあります</div>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <!-- ============ ① 何を増やすの？ ============ -->
+  <section id="s1">
+    <div class="sec-head reveal"><span class="num">①</span><h2>増やすのは「目」だけ。「事務所」は1つのまま</h2></div>
+    <p class="lead reveal">presence-logger は中で 4 つの部品が動いています。2台目で増やすのは、そのうち <strong>カメラを見張る部分（detector）だけ</strong>です。</p>
+    <div class="reveal">
+      <p>1台目はこれまで通り全部入りで動かします。データベース（Oracle）に書き込む係＝<strong>bridge は、ぜったいに1つだけ</strong>。2台目には目（detector）だけを置いて、1台目の事務所へ報告を送らせます。</p>
+    </div>
+
+    <!-- たとえ話ボックス -->
+    <div class="analogy reveal"><span class="ico">🏢</span>
+      会社で考えると、<strong>事務所（bridge＋DB）は本店に1つ</strong>。新しく見回りスタッフ（2台目のカメラ）を雇っても、報告書を出す窓口は本店のまま。スタッフが2人になっても、台帳に記入する人を2人にしてはいけません。<strong>記入係が2人いると同じ台帳を取り合って混乱する</strong>からです。
+    </div>
+  </section>
+
+  <!-- ============ ② 登場人物 ============ -->
+  <section id="s2">
+    <div class="sec-head reveal"><span class="num">②</span><h2>登場人物（だれが何を持つか）</h2></div>
+    <p class="lead reveal">2台構成になると、こういう役割分担になります。色つきカードで確認しましょう。</p>
+
+    <div class="cards stagger reveal">
+      <div class="card c-yellow"><span class="pin"></span>
+        <span class="emoji">🏠</span>
+        <div class="role">1台目 ＝ 本店</div>
+        <h3>フル装備</h3>
+        <p>mosquitto（窓口）・detector・oracle-jdbc・bridge の4つ全部。DBに書くのはここの bridge だけ。</p>
+        <div class="real">mosquitto + detector + oracle-jdbc + bridge</div>
+      </div>
+      <div class="card c-blue"><span class="pin"></span>
+        <span class="emoji">📷</span>
+        <div class="role">2台目 ＝ 見回り</div>
+        <h3>detector だけ</h3>
+        <p>カメラを見張って ENTER/EXIT を見つけ、1台目の窓口へ送るだけ。DB には触らない。</p>
+        <div class="real">detector のみ（MQTT_HOST=1台目のIP）</div>
+      </div>
+      <div class="card c-mint"><span class="pin"></span>
+        <span class="emoji">📮</span>
+        <div class="role">共有の窓口</div>
+        <h3>mosquitto</h3>
+        <p>1台目で動く1つの broker。2台のカメラが同じ <code>presence/event</code> に投函し、ACKを受け取る。</p>
+        <div class="real">presence/event ・ presence/event/ack</div>
+      </div>
+    </div>
+
+    <!-- ハブ＆スポーク図 -->
+    <div class="dist reveal">
+      <div class="hub">
+        <div class="label">📮 窓口は1つ（1台目の mosquitto）</div>
+        <div class="path">tcp://&lt;1台目のIP&gt;:1883</div>
+      </div>
+      <div class="spokes stagger">
+        <div class="spoke"><div class="t">📷 1台目 detector</div><div class="p">station = 996/995/994</div><div class="tag">→ 同じ窓口へ投函</div></div>
+        <div class="spoke"><div class="t">📷 2台目 detector</div><div class="p">station = 別の番号</div><div class="tag">→ 同じ窓口へ投函</div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ ③ 守る3つの約束 ============ -->
+  <section id="s3">
+    <div class="sec-head reveal"><span class="num">③</span><h2>壊さないための「3つの約束」</h2></div>
+    <p class="lead reveal">この設計はもともと複数カメラを想定しています。安全に増やせるかは、次の3点だけで決まります。</p>
+
+    <div class="checks stagger reveal">
+      <div class="check"><div class="mk">A</div><div><h4>station 番号を必ず別にする</h4><p>DBの行の見分けは <code>MK_DATE+STA_NO1/2/3</code> の組。2台が<strong>同じ番号だと同じ行を取り合って上書き</strong>します。2台目は <code>device.yaml</code> で別の三つ組にする。これが一番大事。</p></div></div>
+      <div class="check"><div class="mk">✓</div><div><h4>event_id の重複 ── 何もしなくてOK</h4><p>イベントIDは <code>uuid.uuid4()</code> で作られます。世界中で被らない乱数なので、<strong>2台でも自動的に一意</strong>。ACKを取り違える心配はありません。</p></div></div>
+      <div class="check risk"><div class="mk">!</div><div><h4>bridge は増やさない</h4><p>2台目で bridge を動かすと、<strong>DBへの書き込み係が2人</strong>になり二重書き込みの原因に。2台目は detector だけ起動する。</p></div></div>
+    </div>
+
+    <!-- なぜ event_id は大丈夫か（補足） -->
+    <div class="callout tip reveal"><span class="lbl">ヒント</span><span class="ico">💡</span>
+      ACK（受領通知）は共有の <code>presence/event/ack</code> に流れ、各 detector は<strong>自分のIDのACQだけ拾う</strong>仕組みです。IDが乱数で被らないので、2台目のACKを1台目が誤って消す、といった事故は起きません。
+    </div>
+  </section>
+
+  <!-- ============ ④ 手順 ============ -->
+  <section id="s4">
+    <div class="sec-head reveal"><span class="num">④</span><h2>実際の手順</h2></div>
+    <p class="lead reveal">「1台目を少し開ける → 2台目に detector だけ置く」の2部構成です。</p>
+
+    <div class="steps stagger reveal">
+      <div class="step"><h4>1台目：窓口をLANに開ける</h4><p>いまの mosquitto はホストにポート非公開（コンテナ内だけ）。2台目から届くよう <code>docker-compose.yml</code> の mosquitto に <code>ports</code> を足して再起動します。</p><span class="cmd">ports: ["1883:1883"] を追加 → sudo docker compose up -d mosquitto</span></div>
+      <div class="step"><h4>1台目：1台目のIPを確認</h4><p>2台目から指す宛先。固定IP推奨。</p><span class="cmd">hostname -I  # 例: 192.168.10.20</span></div>
+      <div class="step"><h4>2台目：リポジトリを置いて install</h4><p>1台目と同じ手順でセットアップ。設定ファイルが <code>/etc/presence-logger/</code> に作られます。</p><span class="cmd">sudo scripts/install.sh</span></div>
+      <div class="step"><h4>2台目：station 番号を別にする</h4><p><code>device.yaml</code> の station 三つ組を1台目と違う値に。これが約束Aです。</p><span class="cmd">sudo $EDITOR /etc/presence-logger/device.yaml</span></div>
+      <div class="step"><h4>2台目：detector だけ起動（宛先は1台目）</h4><p><strong>2台目専用の compose ファイル</strong>を使う。これには detector しか定義していないので、bridge等が連れて起動する心配がありません。<code>MQTT_HOST</code> に1台目のIPを渡します。</p><span class="cmd">MQTT_HOST=192.168.10.20 sudo -E docker compose -f docker-compose.detector.yml up -d</span></div>
+      <div class="step"><h4>確認：本店の台帳に届いたか</h4><p>1台目の bridge ログに2台目のイベントが出て、DBに<strong>別stationの行</strong>が増えればOK。</p><span class="cmd">sudo cat /var/log/presence-logger/bridge.log | grep merge_committed</span></div>
+    </div>
+
+    <!-- 2台目の設定の要点コード -->
+    <div class="codecard reveal"><div class="ttl">💻 2台目だけ変える2か所</div><pre><span class="cm"># /etc/presence-logger/device.yaml ── station を別番号に（約束A）</span>
+station:
+  sta_no1: "886"   <span class="cm"># 1台目(996)と別にする</span>
+  sta_no2: "885"
+  sta_no3: "884"
+
+<span class="cm"># 起動 ── 2台目専用 compose（detectorのみ定義）＋ 1台目IPを MQTT_HOST に</span>
+MQTT_HOST=192.168.10.20 sudo -E docker compose -f docker-compose.detector.yml up -d
+<span class="cm"># topic は触らない: presence/event / presence/event/ack のまま共有</span></pre></div>
+
+    <!-- 状態グリッド -->
+    <div class="status stagger reveal">
+      <div class="st-item ok"><div class="badge">✓ 2台目で動かす</div><h4>detector</h4><p>カメラ監視＋イベント送信。SQLite outbox も2台目ローカルに持つ。</p></div>
+      <div class="st-item warn"><div class="badge">⚠ 2台目では動かさない</div><h4>bridge / oracle-jdbc / mosquitto</h4><p>DB書き込みと窓口は1台目に集約。2台目で起動しないこと。</p></div>
+    </div>
+  </section>
+
+  <!-- ============ ⑤ 安全のために ============ -->
+  <section id="s5">
+    <div class="sec-head reveal"><span class="num">⑤</span><h2>ポートを開ける前に ── 安全のために</h2></div>
+    <p class="lead reveal">窓口をLANに開けるということは、その線につながれる人なら誰でも投函できる、ということ。1点だけ必ず手当てします。</p>
+
+    <div class="callout warn reveal"><span class="lbl">注意</span><span class="ico">⚠️</span>
+      mosquitto は今 <code>allow_anonymous true</code>（<strong>認証なし</strong>）。コンテナ内だけだから許されていた設定です。LANに公開するなら、<strong>パスワード認証を足す</strong>か、<strong>信頼できる閉じたネットワーク/VLANに限定</strong>してから開けてください。無認証のまま広いネットに晒すと、偽のENTER/EXITをDBに入れられます。
+    </div>
+
+    <div class="reveal" style="margin-top:8px">
+      <span class="rule-pill">password_file を足す</span>
+      <span class="rule-pill">または閉域/VLAN限定</span>
+      <span class="rule-pill">できればTLS</span>
+      <span class="rule-pill">広いネットに無認証で晒さない</span>
+    </div>
+  </section>
+
+  <!-- ============ まとめ ============ -->
+  <div class="summary reveal" id="summary">
+    <h2>ひとことで言うと</h2>
+    <p class="lead">2台目には <strong>detector だけ</strong>を置き、<strong>station 番号を別にして</strong>、1台目の窓口（broker）へ報告させる。それだけで安全に増やせます。</p>
+    <ul>
+      <li><strong>増やすのは目（detector）だけ</strong>。bridgeとDBは1台目に1つのまま。</li>
+      <li><strong>station 三つ組を必ず別に</strong>する（同じだとDBの行を取り合う）。</li>
+      <li><strong>event_id は uuid4 で自動的に一意</strong>。ここは何もしなくてよい。</li>
+      <li>1台目で <strong>broker のポートを開ける前に認証 or 閉域</strong>を用意する。</li>
+    </ul>
+  </div>
+
+</main>
+
+<footer>
+  <div class="hand">― おわり ―</div>
+  <div style="margin-top:8px">presence-logger / 2台目セットアップの手引き ・ 出典: docker-compose.yml, config/, services/detector, services/bridge</div>
+</footer>
+
+<script>
+  document.documentElement.classList.add('js');
+  const io = new IntersectionObserver((entries)=>{
+    entries.forEach(e=>{ if(e.isIntersecting){ e.target.classList.add('in'); io.unobserve(e.target);} });
+  },{threshold:.12});
+  document.querySelectorAll('.reveal,.stagger').forEach(el=>io.observe(el));
+
+  const links = [...document.querySelectorAll('.topnav a')];
+  const navMap = new Map(links.map(a=>[a.getAttribute('href').slice(1), a]));
+  const navObserver = new IntersectionObserver((entries)=>{
+    entries.forEach(e=>{
+      if(e.isIntersecting){
+        links.forEach(a=>a.classList.remove('active'));
+        const a = navMap.get(e.target.id);
+        if(a) a.classList.add('active');
+      }
+    });
+  },{rootMargin:'-58px 0px -68% 0px',threshold:0});
+  document.querySelectorAll('section[id], #summary').forEach(s=>navObserver.observe(s));
+</script>
+</body>
+</html>
