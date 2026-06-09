@@ -12,11 +12,25 @@ from services.bridge.src.oracle_client import (
 )
 
 
-def test_build_merge_statement_targets_correct_table():
+def test_build_merge_statement_without_upcmpflg_default():
     sql = build_merge_statement(table_name="HF1RCM01")
     assert "MERGE INTO HF1RCM01" in sql
-    assert "WHEN NOT MATCHED THEN" in sql
     assert "INSERT (MK_DATE, STA_NO1, STA_NO2, STA_NO3, T1_STATUS)" in sql
+    # UPCMPFLG must NOT appear at all when the profile omits the upcmpflg key.
+    assert "UPCMPFLG" not in sql
+    # No WHEN MATCHED clause -- existing rows must be left untouched.
+    assert "WHEN MATCHED" not in sql
+
+
+def test_build_merge_statement_with_upcmpflg_uses_bind_variable():
+    sql = build_merge_statement(table_name="HF1RCM01", include_upcmpflg=True)
+    assert "MERGE INTO HF1RCM01" in sql
+    assert "INSERT (MK_DATE, STA_NO1, STA_NO2, STA_NO3, T1_STATUS, UPCMPFLG)" in sql
+    # 6th bind variable is the UPCMPFLG value -- never a literal, so the same
+    # template works for profiles wanting UPCMPFLG=0, 1, 2, ...
+    assert ":6 AS UPCMPFLG" in sql
+    assert "s.T1_STATUS, s.UPCMPFLG)" in sql
+    assert "WHEN MATCHED" not in sql
 
 
 def test_init_oracle_client_skips_when_all_thin():
@@ -103,7 +117,43 @@ def test_execute_merge_returns_rows_affected_and_no_error():
     assert result.rows_affected == 1
     assert result.ora_code is None
     cursor.execute.assert_called_once()
+    # No upcmpflg passed -> 5 binds only, no UPCMPFLG in SQL.
+    sql_arg, binds_arg = cursor.execute.call_args.args
+    assert "UPCMPFLG" not in sql_arg
+    assert binds_arg == ("20260427120000", "001", "A", "01", 1)
     conn.commit.assert_called_once()
+
+
+def test_execute_merge_binds_upcmpflg_value_when_provided():
+    cursor = MagicMock()
+    cursor.rowcount = 1
+    conn = MagicMock()
+    conn.cursor.return_value.__enter__.return_value = cursor
+    execute_merge(
+        conn, table_name="HF1RCM01",
+        mk_date="20260427120000", sta_no1="001", sta_no2="A", sta_no3="01", t1_status=1,
+        upcmpflg=1,
+    )
+    sql_arg, binds_arg = cursor.execute.call_args.args
+    assert "INSERT (MK_DATE, STA_NO1, STA_NO2, STA_NO3, T1_STATUS, UPCMPFLG)" in sql_arg
+    # 6 binds, with UPCMPFLG value last.
+    assert binds_arg == ("20260427120000", "001", "A", "01", 1, 1)
+
+
+def test_execute_merge_upcmpflg_zero_is_distinct_from_none():
+    """upcmpflg=0 must include the column (with value 0), NOT be treated as 'omit'."""
+    cursor = MagicMock()
+    cursor.rowcount = 1
+    conn = MagicMock()
+    conn.cursor.return_value.__enter__.return_value = cursor
+    execute_merge(
+        conn, table_name="HF1RCM01",
+        mk_date="m", sta_no1="1", sta_no2="2", sta_no3="3", t1_status=1,
+        upcmpflg=0,
+    )
+    sql_arg, binds_arg = cursor.execute.call_args.args
+    assert "UPCMPFLG" in sql_arg
+    assert binds_arg[-1] == 0
 
 
 def test_execute_merge_captures_ora_code_on_database_error():

@@ -18,6 +18,7 @@ from services.bridge.src.oracle_client import (
     init_oracle_client_for_profiles,
     open_and_merge,
 )
+from services.bridge.src.oracle_jdbc_client import execute_merge_via_jdbc
 from services.bridge.src.profile_resolver import ProfileResolver
 from services.bridge.src.retry import BackoffPolicy
 from services.bridge.src.sender import Sender, SenderDeps
@@ -31,7 +32,13 @@ DEFAULT_PROFILES_YAML = "/etc/presence-logger/profiles.yaml"
 
 
 class _OracleAdapter:
-    """Adapts open_and_merge into the SenderDeps oracle protocol."""
+    """Dispatches each MERGE to either python-oracledb (thin/thick) or the
+    oracle-jdbc sidecar, based on the profile's client_mode."""
+
+    def __init__(self, *, jdbc_cfg: dict):
+        self._jdbc_proxy_url = jdbc_cfg["url"]
+        self._jdbc_connect_timeout_ms = int(jdbc_cfg["connect_timeout_ms"])
+        self._jdbc_read_timeout_ms = int(jdbc_cfg["read_timeout_ms"])
 
     def execute_merge_for_profile(
         self,
@@ -44,6 +51,23 @@ class _OracleAdapter:
         t1_status: int,
     ) -> MergeResult:
         oracle_cfg = profile["oracle"]
+        upcmpflg = oracle_cfg.get("upcmpflg")
+        if upcmpflg is not None:
+            upcmpflg = int(upcmpflg)
+        if oracle_cfg.get("client_mode") == "jdbc":
+            return execute_merge_via_jdbc(
+                oracle_cfg,
+                proxy_url=self._jdbc_proxy_url,
+                table_name=oracle_cfg["table_name"],
+                mk_date=mk_date,
+                sta_no1=sta_no1,
+                sta_no2=sta_no2,
+                sta_no3=sta_no3,
+                t1_status=t1_status,
+                upcmpflg=upcmpflg,
+                connect_timeout_ms=self._jdbc_connect_timeout_ms,
+                read_timeout_ms=self._jdbc_read_timeout_ms,
+            )
         return open_and_merge(
             oracle_cfg,
             table_name=oracle_cfg["table_name"],
@@ -52,6 +76,7 @@ class _OracleAdapter:
             sta_no2=sta_no2,
             sta_no3=sta_no3,
             t1_status=t1_status,
+            upcmpflg=upcmpflg,
         )
 
 
@@ -91,7 +116,7 @@ def main() -> int:    # pragma: no cover
     )
     network = NetworkWatcher(command=bridge_cfg["network_watcher"]["ssid_command"])
     time_watcher = TimeWatcher(command=bridge_cfg["time_watcher"]["sync_command"])
-    oracle_adapter = _OracleAdapter()
+    oracle_adapter = _OracleAdapter(jdbc_cfg=bridge_cfg["oracle_jdbc"])
 
     mqtt = BridgeMqttClient(client_id=bridge_cfg["mqtt"]["client_id"])
     mqtt.connect_and_loop(
@@ -100,6 +125,22 @@ def main() -> int:    # pragma: no cover
     )
 
     def _on_event(payload: EventPayload, raw: bytes) -> None:
+        # Enforce unknown_ssid_policy at receive time, not just at send time.
+        # When policy=drop and we're on an unknown SSID (e.g. dev/home Wi-Fi),
+        # events are discarded immediately instead of being kept in the inbox
+        # to be flushed later. This matches the "don't write events captured
+        # under a non-production SSID" requirement.
+        decision = resolver.peek(network.cached_ssid)
+        if decision.action == "drop":
+            _log.info(
+                "drop_unknown_ssid",
+                extra={
+                    "event": "drop_unknown_ssid",
+                    "event_id": payload.event_id,
+                    "ssid": network.cached_ssid,
+                },
+            )
+            return
         event = InboxEvent(
             event_id=payload.event_id,
             event_type=payload.event_type,

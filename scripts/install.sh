@@ -57,16 +57,28 @@ print(" ".join(seen))
 PY
 )
 
+# Public NTP servers appended to the NTP= line (NOT FallbackNTP=). timesyncd
+# only consults FallbackNTP= when NTP= is empty, so to get a real fallback on
+# WiFis where the factory-internal SNTP is unreachable we must list public
+# servers in NTP= itself. Order matters: profile (factory-internal) servers
+# come first and win on the closed network; these are tried only on timeout.
+PUBLIC_NTP_FALLBACK="ntp.nict.jp time.cloudflare.com"
+
 if [[ -n "$SNTP_SERVERS" ]]; then
     cat >/etc/systemd/timesyncd.conf <<EOF
 [Time]
-NTP=$SNTP_SERVERS
-FallbackNTP=ntp.nict.jp time.cloudflare.com
+NTP=$SNTP_SERVERS $PUBLIC_NTP_FALLBACK
+FallbackNTP=$PUBLIC_NTP_FALLBACK
 EOF
     systemctl restart systemd-timesyncd
-    echo "configured timesyncd with: $SNTP_SERVERS"
+    echo "configured timesyncd with: $SNTP_SERVERS $PUBLIC_NTP_FALLBACK"
 else
-    echo "no SNTP servers found in profiles.yaml; timesyncd left unchanged"
+    cat >/etc/systemd/timesyncd.conf <<EOF
+[Time]
+NTP=$PUBLIC_NTP_FALLBACK
+EOF
+    systemctl restart systemd-timesyncd
+    echo "no SNTP servers in profiles.yaml; timesyncd configured with public NTP only: $PUBLIC_NTP_FALLBACK"
 fi
 
 # Install the systemd unit if present.

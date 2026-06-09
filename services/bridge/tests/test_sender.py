@@ -119,6 +119,34 @@ def test_sender_skips_when_sntp_not_synced(tmp_path: Path):
     assert deps.inbox.get("e1").status == "received"
 
 
+def test_sender_uses_profile_station_override_when_present(tmp_path: Path):
+    """When profiles.yaml carries a profile-level `station:` block, sender
+    must call MERGE with that triple instead of device.yaml's station."""
+    sender, deps = _build_sender(tmp_path)
+    # Override the active profile with a station block (verify_himereap pattern).
+    deps.resolver._profiles["factory_a_wifi"]["station"] = {
+        "sta_no1": "996", "sta_no2": "995", "sta_no3": "994",
+    }
+    deps.inbox.insert_received(_make_event("e1"))
+    sender.run_once(now=datetime(2026, 4, 27, 12, 0, 0, tzinfo=UTC))
+    kwargs = deps.oracle.execute_merge_for_profile.call_args.kwargs
+    assert kwargs["sta_no1"] == "996"
+    assert kwargs["sta_no2"] == "995"
+    assert kwargs["sta_no3"] == "994"
+
+
+def test_sender_falls_back_to_device_station_when_profile_has_none(tmp_path: Path):
+    sender, deps = _build_sender(tmp_path)
+    # No profile.station override; device_cfg["station"] is the source of truth.
+    assert "station" not in deps.resolver._profiles["factory_a_wifi"]
+    deps.inbox.insert_received(_make_event("e1"))
+    sender.run_once(now=datetime(2026, 4, 27, 12, 0, 0, tzinfo=UTC))
+    kwargs = deps.oracle.execute_merge_for_profile.call_args.kwargs
+    assert kwargs["sta_no1"] == "001"
+    assert kwargs["sta_no2"] == "A"
+    assert kwargs["sta_no3"] == "01"
+
+
 def test_sender_corrects_mk_date_for_unsynced_event(tmp_path: Path):
     baseline = SyncBaseline(
         sync_wall=datetime(2026, 4, 27, 17, 23, 51, tzinfo=timezone(timedelta(hours=9))),

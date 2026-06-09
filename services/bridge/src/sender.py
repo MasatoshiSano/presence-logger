@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Any
 
 from services.bridge.src.circuit_breaker import CircuitBreaker
+from services.bridge.src.config import station_for_profile
 from services.bridge.src.inbox import InboxEvent, InboxRepository
 from services.bridge.src.network_watcher import NetworkWatcher
 from services.bridge.src.oracle_client import MergeResult
@@ -109,7 +110,7 @@ class Sender:
         mk_date: str,
         now: datetime,
     ) -> None:
-        sta = self._d.device_cfg["station"]
+        sta = station_for_profile(profile, self._d.device_cfg)
         t1_status = 1 if event.event_type == "ENTER" else 2
         result = self._d.oracle.execute_merge_for_profile(
             profile=profile,

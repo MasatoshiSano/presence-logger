@@ -34,6 +34,24 @@ services:
       retries: 3
       start_period: 30s
 
+  oracle-jdbc:
+    build:
+      context: ./services/oracle-jdbc
+      args:
+        OJDBC_VERSION: "${OJDBC_VERSION:-23.5.0.24.07}"
+    container_name: presence-oracle-jdbc
+    restart: unless-stopped
+    networks: [presence-net]
+    environment:
+      PORT: "8086"
+      TZ: Asia/Tokyo
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8086/healthz || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
   bridge:
     build:
       context: ./services/bridge
@@ -41,7 +59,7 @@ services:
         INSTANT_CLIENT_URL: "${INSTANT_CLIENT_URL:-}"
     container_name: presence-bridge
     restart: unless-stopped
-    depends_on: [mosquitto]
+    depends_on: [mosquitto, oracle-jdbc]
     networks: [presence-net]
     volumes:
       - /etc/presence-logger/device.yaml:/etc/presence-logger/device.yaml:ro

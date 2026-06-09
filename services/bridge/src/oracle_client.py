@@ -46,12 +46,27 @@ def _extract_ora_code(e: oracledb.DatabaseError) -> tuple[int | None, str]:
     return ora_code, message
 
 
-def build_merge_statement(*, table_name: str) -> str:
-    using_clause = (
-        "USING (SELECT :1 AS MK_DATE, :2 AS STA_NO1, :3 AS STA_NO2, "
-        ":4 AS STA_NO3, :5 AS T1_STATUS FROM dual) s"
-    )
-    # table_name comes from validated config, not user input
+def build_merge_statement(*, table_name: str, include_upcmpflg: bool = False) -> str:
+    # table_name comes from validated config, not user input.
+    # When include_upcmpflg=True the INSERT column list carries UPCMPFLG and a
+    # 6th bind variable (:6) is emitted -- callers must pass the value.
+    # When False, UPCMPFLG is omitted from the INSERT entirely (DB default /
+    # NULL applies). Whether to include is per-profile via
+    # profiles.yaml::oracle.upcmpflg.
+    if include_upcmpflg:
+        using_clause = (
+            "USING (SELECT :1 AS MK_DATE, :2 AS STA_NO1, :3 AS STA_NO2, "
+            ":4 AS STA_NO3, :5 AS T1_STATUS, :6 AS UPCMPFLG FROM dual) s"
+        )
+        insert_cols = "INSERT (MK_DATE, STA_NO1, STA_NO2, STA_NO3, T1_STATUS, UPCMPFLG)"
+        insert_vals = "VALUES (s.MK_DATE, s.STA_NO1, s.STA_NO2, s.STA_NO3, s.T1_STATUS, s.UPCMPFLG)"
+    else:
+        using_clause = (
+            "USING (SELECT :1 AS MK_DATE, :2 AS STA_NO1, :3 AS STA_NO2, "
+            ":4 AS STA_NO3, :5 AS T1_STATUS FROM dual) s"
+        )
+        insert_cols = "INSERT (MK_DATE, STA_NO1, STA_NO2, STA_NO3, T1_STATUS)"
+        insert_vals = "VALUES (s.MK_DATE, s.STA_NO1, s.STA_NO2, s.STA_NO3, s.T1_STATUS)"
     sql = (
         f"MERGE INTO {table_name} t\n"  # noqa: S608
         f"{using_clause}\n"
@@ -61,8 +76,8 @@ def build_merge_statement(*, table_name: str) -> str:
         "    AND t.STA_NO3 = s.STA_NO3\n"
         "    AND t.T1_STATUS = s.T1_STATUS)\n"
         "WHEN NOT MATCHED THEN\n"
-        "  INSERT (MK_DATE, STA_NO1, STA_NO2, STA_NO3, T1_STATUS)\n"
-        "  VALUES (s.MK_DATE, s.STA_NO1, s.STA_NO2, s.STA_NO3, s.T1_STATUS)"
+        f"  {insert_cols}\n"
+        f"  {insert_vals}"
     )
     return sql
 
@@ -112,11 +127,16 @@ def execute_merge(
     sta_no2: str,
     sta_no3: str,
     t1_status: int,
+    upcmpflg: int | None = None,
 ) -> MergeResult:
-    sql = build_merge_statement(table_name=table_name)
+    include_flag = upcmpflg is not None
+    sql = build_merge_statement(table_name=table_name, include_upcmpflg=include_flag)
+    binds: tuple[Any, ...] = (mk_date, sta_no1, sta_no2, sta_no3, t1_status)
+    if include_flag:
+        binds = (*binds, upcmpflg)
     try:
         with conn.cursor() as cur:
-            cur.execute(sql, (mk_date, sta_no1, sta_no2, sta_no3, t1_status))
+            cur.execute(sql, binds)
             rows = cur.rowcount or 0
         conn.commit()
         return MergeResult(rows_affected=rows, ora_code=None, error_message="")
@@ -134,12 +154,16 @@ def open_and_merge(
     sta_no2: str,
     sta_no3: str,
     t1_status: int,
+    upcmpflg: int | None = None,
 ) -> MergeResult:
     """Open a connection, run the merge, close — never raises.
 
     Connection failures (e.g. DPY-6001 service-not-registered while Oracle is
     stopped) are returned as a MergeResult so the sender can route them through
     the normal retry / circuit-breaker flow instead of crashing the process.
+
+    `upcmpflg` is the optional per-profile UPCMPFLG bind value. None omits the
+    column from the INSERT entirely (table default / NULL applies).
     """
     try:
         conn = open_connection(profile_oracle)
@@ -155,6 +179,7 @@ def open_and_merge(
             sta_no2=sta_no2,
             sta_no3=sta_no3,
             t1_status=t1_status,
+            upcmpflg=upcmpflg,
         )
     finally:
         try:

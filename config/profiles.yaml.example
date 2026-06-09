@@ -1,6 +1,47 @@
 profiles:
+  # JDBC sidecar route — required for DBs whose users still carry the 10G
+  # password verifier (0x939). The bridge's python-oracledb Thin client
+  # cannot authenticate to those (DPY-3015); Thick cannot be loaded on a
+  # 16KB-page Pi 5. The oracle-jdbc sidecar (services/oracle-jdbc/) carries
+  # ojdbc11.jar in a JVM and accepts the connection params per request.
+  HIME-H-REAP:
+    description: "Factory internal Wi-Fi -> HHC001 via JDBC sidecar"
+    # OPTIONAL: Wi-Fi provisioning parameters consumed by operator tooling
+    # (scripts/verify_himereap_oracle.sh, install helpers). The bridge does
+    # NOT read this -- it only observes the current SSID via nmcli.
+    wifi:
+      psk: "${WIFI_PSK_HIMEREAP}"   # from /etc/presence-logger/secrets.env
+      hidden: true                  # corporate Wi-Fi is usually hidden
+      static_ipv4:
+        address: "172.22.13.17/24"
+        gateway: "172.22.13.1"
+        dns: ["10.166.1.70", "10.166.1.17"]
+    # OPTIONAL: per-site override of device.yaml's station triple. Useful
+    # when the same Pi reports to different station numbers in different
+    # factories. Omit to use device.yaml's value.
+    station:
+      sta_no1: "996"
+      sta_no2: "995"
+      sta_no3: "994"
+    sntp:
+      servers: ["133.141.247.101"]  # factory-internal NTP; reachable only on HIME-H-REAP
+    oracle:
+      client_mode: "jdbc"
+      auth_mode: "basic"
+      host: "10.166.5.93"
+      port: 1521
+      service_name: "HHC001"
+      user: "ZHH001"
+      password: "${ORACLE_PASSWORD_HHC}"
+      table_name: "HF1RCM01"
+      # OPTIONAL: when set, every INSERT carries UPCMPFLG=<value>.
+      # Omit the key entirely to leave the UPCMPFLG column untouched
+      # (DB default / NULL applies). HF1RCM01 requires 1 on new rows.
+      upcmpflg: 1
+
+  # python-oracledb Thin example (modern verifier, on-prem direct).
   factory_a_wifi:
-    description: "Factory A — line 1 (on-prem Oracle, Thin)"
+    description: "Factory A -- on-prem Oracle, Thin"
     sntp:
       servers: ["ntp.factory-a.local", "ntp.nict.jp"]
     oracle:
@@ -13,8 +54,9 @@ profiles:
       password: "${ORACLE_PASSWORD_A}"
       table_name: "HF1RCM01"
 
+  # Autonomous DB with Wallet example.
   factory_b_wifi:
-    description: "Factory B — Autonomous DB with wallet (Thin)"
+    description: "Factory B -- Autonomous DB with wallet (Thin)"
     sntp:
       servers: ["ntp.factory-b.local"]
     oracle:
@@ -27,8 +69,10 @@ profiles:
       wallet_password: "${WALLET_PASSWORD_B}"
       table_name: "HF1RCM01"
 
+  # Thick-mode legacy example. Requires Instant Client baked into the bridge
+  # image via INSTANT_CLIENT_URL build arg.
   factory_legacy_wifi:
-    description: "Factory D — legacy Oracle requiring Thick mode"
+    description: "Factory D -- legacy Oracle requiring Thick mode"
     sntp:
       servers: ["ntp.factory-d.local"]
     oracle:
@@ -41,4 +85,8 @@ profiles:
       password: "${ORACLE_PASSWORD_D}"
       table_name: "HF1RCM01"
 
+# Behaviour when the current SSID does not match any profile above.
+# "hold" => events accumulate in the inbox, no Oracle write attempted.
+# This is the SAFE default and is what enforces "do not write to any
+# DB unless on a known SSID".
 unknown_ssid_policy: "hold"

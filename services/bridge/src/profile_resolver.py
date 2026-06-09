@@ -30,6 +30,21 @@ class ProfileResolver:
             return ResolverDecision(action="drop", profile_name=None)
         return ResolverDecision(action="hold", profile_name=None)
 
+    def peek(self, ssid: str | None) -> ResolverDecision:
+        """Read-only variant of resolve() — does not mutate _last_known.
+
+        Safe to call from the paho-mqtt receive thread to decide whether to
+        accept an incoming event into the inbox. The mutating resolve() must
+        only be driven from the sender thread.
+        """
+        if ssid and ssid in self._profiles:
+            return ResolverDecision(action="send", profile_name=ssid)
+        if self._policy == "use_last" and self._last_known:
+            return ResolverDecision(action="send", profile_name=self._last_known)
+        if self._policy == "drop":
+            return ResolverDecision(action="drop", profile_name=None)
+        return ResolverDecision(action="hold", profile_name=None)
+
     def get(self, profile_name: str) -> dict[str, Any]:
         return self._profiles[profile_name]
 

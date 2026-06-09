@@ -8,12 +8,14 @@ import yaml
 _ENV_RE = re.compile(r"\$\{([^}]+)\}")
 HOSTNAME_FILE = "/etc/host_hostname"
 
-ALLOWED_CLIENT_MODES = {"thin", "thick"}
+ALLOWED_CLIENT_MODES = {"thin", "thick", "jdbc"}
 ALLOWED_AUTH_MODES = {"basic", "wallet"}
 ALLOWED_UNKNOWN_POLICIES = {"hold", "use_last", "drop"}
 
 _BASIC_REQUIRED = {"host", "port", "service_name", "user", "password"}
 _WALLET_REQUIRED = {"dsn", "user", "password", "wallet_dir"}
+# JDBC sidecar requires the same basic fields; wallet/TCPS not supported.
+_JDBC_REQUIRED = {"host", "port", "service_name", "user", "password"}
 
 _BRIDGE_REQUIRED = {
     "mqtt": {"host", "port", "qos", "topic_event", "topic_ack", "client_id"},
@@ -24,6 +26,7 @@ _BRIDGE_REQUIRED = {
         "pool_max",
         "instant_client_dir",
     },
+    "oracle_jdbc": {"url", "connect_timeout_ms", "read_timeout_ms"},
     "network_watcher": {"poll_interval_seconds", "ssid_command"},
     "time_watcher": {"poll_interval_seconds", "sync_command"},
     "retry": {"initial_delay_seconds", "max_delay_seconds", "multiplier"},
@@ -108,12 +111,68 @@ def _validate_oracle_section(name: str, oracle: dict[str, Any]) -> None:
             f"profile {name}: auth_mode must be one of "
             f"{sorted(ALLOWED_AUTH_MODES)}, got {am!r}"
         )
-    required = _BASIC_REQUIRED if am == "basic" else _WALLET_REQUIRED
+    if cm == "jdbc":
+        # The JDBC sidecar accepts only host/port/service_name + basic auth.
+        # Old-verifier passwords (10G/0x939) work here because ojdbc11.jar
+        # is the entire reason we have this client mode.
+        if am != "basic":
+            raise ConfigError(
+                f"profile {name}: client_mode=jdbc requires auth_mode=basic "
+                f"(wallet/TCPS unsupported by the sidecar), got {am!r}"
+            )
+        required = _JDBC_REQUIRED
+    else:
+        required = _BASIC_REQUIRED if am == "basic" else _WALLET_REQUIRED
     missing = required - set(oracle.keys())
     if missing:
         raise ConfigError(
-            f"profile {name} ({am}): missing required oracle key(s) {sorted(missing)}"
+            f"profile {name} ({cm}/{am}): missing required oracle key(s) {sorted(missing)}"
         )
+    if "upcmpflg" in oracle:
+        # Optional per-profile UPCMPFLG bind value. Must be a plain integer
+        # (no string-as-int). YAML loaders coerce bare numbers to int already;
+        # this catches operator typos like upcmpflg: "1" or upcmpflg: yes.
+        val = oracle["upcmpflg"]
+        if not isinstance(val, int) or isinstance(val, bool):
+            raise ConfigError(
+                f"profile {name}: oracle.upcmpflg must be an integer "
+                f"(omit the key entirely to skip the UPCMPFLG column), got {val!r}"
+            )
+
+
+_STATION_KEYS = {"sta_no1", "sta_no2", "sta_no3"}
+
+
+def _validate_optional_station(name: str, station: Any) -> None:
+    if not isinstance(station, dict):
+        raise ConfigError(f"profile {name}: 'station' override must be a mapping")
+    missing = _STATION_KEYS - set(station.keys())
+    if missing:
+        raise ConfigError(
+            f"profile {name}: station override is missing key(s) {sorted(missing)}"
+        )
+
+
+def _validate_optional_wifi(name: str, wifi: Any) -> None:
+    """Validate the OPTIONAL Wi-Fi provisioning block on a profile.
+
+    Consumed by operator tooling (verify_himereap_oracle.sh, future install
+    helpers) -- the bridge service itself never reads this section. Bridge
+    just observes the current SSID via nmcli; Wi-Fi setup is out-of-process.
+    """
+    if not isinstance(wifi, dict):
+        raise ConfigError(f"profile {name}: 'wifi' must be a mapping")
+    if "psk" not in wifi:
+        raise ConfigError(f"profile {name}: wifi.psk is required when wifi section is present")
+    if "static_ipv4" in wifi:
+        s = wifi["static_ipv4"]
+        if not isinstance(s, dict):
+            raise ConfigError(f"profile {name}: wifi.static_ipv4 must be a mapping")
+        for k in ("address", "gateway", "dns"):
+            if k not in s:
+                raise ConfigError(f"profile {name}: wifi.static_ipv4.{k} is required")
+        if not isinstance(s["dns"], list):
+            raise ConfigError(f"profile {name}: wifi.static_ipv4.dns must be a list")
 
 
 def load_profiles_config(path: Path) -> dict[str, Any]:
@@ -135,7 +194,23 @@ def load_profiles_config(path: Path) -> dict[str, Any]:
         if "servers" not in profile["sntp"] or not isinstance(profile["sntp"]["servers"], list):
             raise ConfigError(f"profile {name}: sntp.servers must be a list")
         _validate_oracle_section(name, profile["oracle"])
+        if "station" in profile:
+            _validate_optional_station(name, profile["station"])
+        if "wifi" in profile:
+            _validate_optional_wifi(name, profile["wifi"])
     return data
+
+
+def station_for_profile(profile: dict[str, Any], device_cfg: dict[str, Any]) -> dict[str, str]:
+    """Return the (sta_no1, sta_no2, sta_no3) triple to use for this profile.
+
+    Profile-level `station:` wins when present; otherwise fall back to the
+    device-wide `device.yaml` station. Lets a single Pi report different
+    station numbers depending on which factory Wi-Fi it is on.
+    """
+    if isinstance(profile.get("station"), dict):
+        return profile["station"]
+    return device_cfg["station"]
 
 
 def needs_thick_mode(profiles: dict[str, Any]) -> bool:
