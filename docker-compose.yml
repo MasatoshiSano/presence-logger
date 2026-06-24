@@ -4,7 +4,7 @@ services:
   mosquitto:
     image: eclipse-mosquitto:2
     container_name: presence-mosquitto
-    restart: unless-stopped
+    restart: "no"
     networks: [presence-net]
     volumes:
       - ./docker/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
@@ -12,7 +12,7 @@ services:
   detector:
     build: ./services/detector
     container_name: presence-detector
-    restart: unless-stopped
+    restart: "no"
     depends_on: [mosquitto]
     networks: [presence-net]
     devices:
@@ -40,7 +40,7 @@ services:
       args:
         OJDBC_VERSION: "${OJDBC_VERSION:-23.5.0.24.07}"
     container_name: presence-oracle-jdbc
-    restart: unless-stopped
+    restart: "no"
     networks: [presence-net]
     environment:
       PORT: "8086"
@@ -58,7 +58,7 @@ services:
       args:
         INSTANT_CLIENT_URL: "${INSTANT_CLIENT_URL:-}"
     container_name: presence-bridge
-    restart: unless-stopped
+    restart: "no"
     depends_on: [mosquitto, oracle-jdbc]
     networks: [presence-net]
     volumes:
