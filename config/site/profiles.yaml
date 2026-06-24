@@ -1,34 +1,30 @@
-# SITE SNAPSHOT — HIME-H-REAP 拠点の実運用 profiles.yaml（本番値）
+# SITE SNAPSHOT — taden-ot-ap 拠点の実運用 profiles.yaml（本番値）
 # /etc/presence-logger/profiles.yaml の復元元。秘密は ${VAR} 参照のみ
 # （実値は secrets.env）。詳細は config/site/README.md を参照。
 profiles:
-  HIME-H-REAP:
-    description: "Factory internal Wi-Fi -> HHC001 via JDBC sidecar"
+  taden-ot-ap:
+    description: "Factory internal Wi-Fi -> HHS001 via JDBC sidecar"
     wifi:
-      psk: "${WIFI_PSK_HIMEREAP}"
-      hidden: true
+      psk: "${WIFI_PSK_TADEN}"
+      hidden: false
       static_ipv4:
-        address: "172.22.13.17/24"
-        gateway: "172.22.13.1"
-        dns: ["10.166.1.70", "10.166.1.17"]
-    station:
-      sta_no1: "996"
-      sta_no2: "995"
-      sta_no3: "994"
+        address: "172.29.1.4/24"
+        gateway: "172.29.1.254"
+        dns: ["192.168.250.1"]
     sntp:
-      servers: ["133.141.247.101"]
+      servers: ["192.168.250.1"]
     oracle:
       client_mode: "jdbc"
       auth_mode: "basic"
-      host: "10.166.5.93"
+      host: "10.168.252.16"
       port: 1521
-      service_name: "HHC001"
+      service_name: "HHS001"
       user: "ZHH001"
-      password: "${ORACLE_PASSWORD_HHC}"
+      password: "${ORACLE_PASSWORD_ONPREM}"
       table_name: "HF1RCM01"
       upcmpflg: 1
 
 # CHANGED from "hold" to "drop": events received while not on a known SSID
 # are discarded at receive time. The bridge no longer stores them in inbox,
-# so a future HIME-H-REAP visit does not flush "off-site" captures.
+# so a future taden-ot-ap visit does not flush "off-site" captures.
 unknown_ssid_policy: "drop"

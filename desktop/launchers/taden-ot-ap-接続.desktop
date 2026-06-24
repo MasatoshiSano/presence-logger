@@ -1,10 +1,10 @@
 [Desktop Entry]
 Type=Application
 Version=1.0
-Name=HIME-H-REAP に接続
-Name[ja]=HIME-H-REAP に接続
+Name=taden-ot-ap に接続
+Name[ja]=taden-ot-ap に接続
 Comment=工場WiFiに接続して記録を開始（繋ぎっぱなし）
-Exec=lxterminal -t "HIME-H-REAP 接続" -e sudo bash /home/pi/Desktop/presence-tools/connect-hime-h-reap.sh --hold
+Exec=lxterminal -t "taden-ot-ap 接続" -e sudo bash /home/pi/Desktop/presence-tools/connect-taden-ot-ap.sh --hold
 Icon=network-wireless
 Terminal=false
 Categories=Network;

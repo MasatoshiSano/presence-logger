@@ -1,33 +1,34 @@
 #!/usr/bin/env bash
-# check_himereap_recent.sh
-# Quick verification: switch to HIME-H-REAP, SELECT recent rows from HHC001
-# for the configured station triple (default: last 1 hour), restore UFI.
-# Read-only -- never INSERTs/DELETEs anything. Sentinel 2099% rows are
-# excluded by the sidecar's /select_range guard.
+# check_taden_ot_ap_recent.sh
+# Quick verification: switch to taden-ot-ap, SELECT recent rows from HHS001
+# for the configured station triple (default: last 1 hour), optionally
+# restore HOME_PROFILE. Read-only -- never INSERTs/DELETEs anything.
+# Sentinel 2099% rows are excluded by the sidecar's /select_range guard.
 #
 # Usage:
-#   sudo bash scripts/check_himereap_recent.sh [LOOKBACK_SECONDS=3600]
+#   sudo bash scripts/check_taden_ot_ap_recent.sh [LOOKBACK_SECONDS=3600]
 
 set -uo pipefail
 [[ $EUID -eq 0 ]] || { echo "must be root" >&2; exit 1; }
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TS="$(date +%Y%m%dT%H%M%S)"
-LOG="/tmp/check-himereap-${TS}.log"
+LOG="/tmp/check-taden-ot-ap-${TS}.log"
 
-PROFILE_NAME="${PROFILE_NAME:-HIME-H-REAP}"
+PROFILE_NAME="${PROFILE_NAME:-taden-ot-ap}"
 PROFILES_YAML="${PROFILES_YAML:-/etc/presence-logger/profiles.yaml}"
 SECRETS_ENV="${SECRETS_ENV:-/etc/presence-logger/secrets.env}"
-HOME_PROFILE="${HOME_PROFILE:-UFI_103134}"
+DEVICE_YAML="${DEVICE_YAML:-/etc/presence-logger/device.yaml}"
+HOME_PROFILE="${HOME_PROFILE:-}"
 TMP_PROFILE="${TMP_PROFILE:-${PROFILE_NAME}-check}"
 CONTAINER="${CONTAINER:-presence-oracle-jdbc}"
 SIDECAR_IN="${SIDECAR_IN:-http://127.0.0.1:8086}"
 LOOKBACK_SECONDS="${1:-${LOOKBACK_SECONDS:-3600}}"
 
 declare -A PCFG
-raw=$(python3 - "$PROFILES_YAML" "$PROFILE_NAME" "$SECRETS_ENV" <<'PY'
+raw=$(python3 - "$PROFILES_YAML" "$PROFILE_NAME" "$SECRETS_ENV" "$DEVICE_YAML" <<'PY'
 import os, sys, yaml, re
-profiles_path, name, secrets_path = sys.argv[1], sys.argv[2], sys.argv[3]
+profiles_path, name, secrets_path, device_path = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 if os.path.isfile(secrets_path):
     with open(secrets_path) as f:
         for line in f:
@@ -46,8 +47,13 @@ profile = expand((data.get("profiles") or {}).get(name) or {})
 if not profile: print(f"ERR no profile {name}", file=sys.stderr); sys.exit(2)
 wifi = profile.get("wifi") or {}; sip = wifi.get("static_ipv4") or {}
 oracle = profile.get("oracle") or {}; station = profile.get("station") or {}
+if not station and os.path.isfile(device_path):
+    with open(device_path) as f:
+        device = yaml.safe_load(f) or {}
+    station = device.get("station") or {}
 def emit(k, v): print(f"PCFG[{k}]={repr(str(v))}")
 emit("wifi_psk", wifi.get("psk", ""))
+emit("wifi_hidden", "yes" if wifi.get("hidden") else "no")
 emit("static_ip", sip.get("address", ""))
 emit("static_gw", sip.get("gateway", ""))
 emit("static_dns", " ".join(sip.get("dns") or []))
@@ -67,8 +73,13 @@ eval "$raw"
 log() { printf '[%s] %s\n' "$(date -Iseconds)" "$*" | tee -a "$LOG"; }
 cleanup() {
     local rc=$?
-    log "== cleanup (rc=$rc): restoring $HOME_PROFILE =="
-    nmcli connection up "$HOME_PROFILE" >>"$LOG" 2>&1 || true
+    if [[ -n "$HOME_PROFILE" ]]; then
+        log "== cleanup (rc=$rc): restoring $HOME_PROFILE =="
+        nmcli connection up "$HOME_PROFILE" >>"$LOG" 2>&1 || true
+    else
+        log "== cleanup (rc=$rc): bringing $TMP_PROFILE down (no restore) =="
+        nmcli connection down "$TMP_PROFILE" >>"$LOG" 2>&1 || true
+    fi
     nmcli -t -f NAME connection show | grep -Fxq "$TMP_PROFILE" && \
         nmcli connection delete "$TMP_PROFILE" >>"$LOG" 2>&1 || true
     log "== done. Full log at $LOG =="
@@ -81,7 +92,7 @@ FROM_S=$((NOW_S - LOOKBACK_SECONDS))
 MK_DATE_FROM=$(date -d "@$FROM_S" '+%Y%m%d%H%M%S')
 MK_DATE_TO=$(date -d "@$NOW_S" '+%Y%m%d%H%M%S')
 
-log "== HIME-H-REAP recent rows check =="
+log "== taden-ot-ap recent rows check =="
 log "STA: ${PCFG[sta_no1]}/${PCFG[sta_no2]}/${PCFG[sta_no3]}  table: ${PCFG[oracle_table]}"
 log "window: MK_DATE $MK_DATE_FROM .. $MK_DATE_TO (lookback ${LOOKBACK_SECONDS}s)"
 
@@ -89,7 +100,7 @@ iw reg set JP >>"$LOG" 2>&1
 nmcli -t -f NAME connection show | grep -Fxq "$TMP_PROFILE" && \
     nmcli connection delete "$TMP_PROFILE" >>"$LOG" 2>&1 || true
 nmcli connection add type wifi con-name "$TMP_PROFILE" ifname wlan0 \
-    ssid "$PROFILE_NAME" 802-11-wireless.hidden yes \
+    ssid "$PROFILE_NAME" 802-11-wireless.hidden "${PCFG[wifi_hidden]}" \
     802-11-wireless-security.key-mgmt wpa-psk \
     802-11-wireless-security.psk "${PCFG[wifi_psk]}" \
     ipv4.method manual ipv4.addresses "${PCFG[static_ip]}" \
@@ -129,7 +140,7 @@ RESPONSE="$(docker exec -i "$CONTAINER" wget -q --timeout=40 \
     --post-data="$BODY" -O - "$SIDECAR_IN/select_range" 2>&1)"
 log "/select_range response:"
 printf '%s\n' "$RESPONSE" | tee -a "$LOG"
-log "== rows in HHC001 (last ${LOOKBACK_SECONDS}s) =="
+log "== rows in HHS001 (last ${LOOKBACK_SECONDS}s) =="
 printf '%s\n' "$RESPONSE" | awk -F= '/^row=/{print $2}' | tee -a "$LOG"
 
 COUNT="$(printf '%s\n' "$RESPONSE" | awk -F= '/^count=/{print $2}')"

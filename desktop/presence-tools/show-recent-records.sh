@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # show-recent-records.sh
-# HHC001 に「実際に上がっている」直近 N 件を、この拠点の STA_NO1/2/3 で
+# HHS001 に「実際に上がっている」直近 N 件を、この拠点の STA_NO1/2/3 で
 # 絞って最新順に表示する。docker ログではなく Oracle を直接 SELECT する
 # ので「本当にDBへ入ったか」の確証になる。読み取り専用・sudo 不要。
 #
 #   使い方:  bash show-recent-records.sh [件数=30]
 #
 # 仕組み:
-#   - 非秘密の接続情報(host/service/user/table/station)は profiles.yaml から読む
+#   - 非秘密の接続情報(host/service/user/table)は profiles.yaml から読む
+#   - station(sta_no1/2/3) は profiles.yaml に上書きが無ければ device.yaml を見る
 #   - Oracle パスワードは bridge コンテナの環境変数から取る(secrets.env は
 #     root専用のため。pi は docker グループなので docker exec で参照可能)
 #   - oracle-jdbc サイドカーの /select_recent を docker exec 経由で叩く
@@ -17,33 +18,34 @@ set -uo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LIMIT="${1:-30}"
 
-PROFILE_NAME="${PROFILE_NAME:-HIME-H-REAP}"
+PROFILE_NAME="${PROFILE_NAME:-taden-ot-ap}"
 PROFILES_YAML="${PROFILES_YAML:-/etc/presence-logger/profiles.yaml}"
+DEVICE_YAML="${DEVICE_YAML:-/etc/presence-logger/device.yaml}"
 [[ -f "$PROFILES_YAML" ]] || PROFILES_YAML="$DIR/../../projects/presence-logger/config/profiles.yaml.example"
 BRIDGE_CONTAINER="${BRIDGE_CONTAINER:-presence-bridge}"
 JDBC_CONTAINER="${JDBC_CONTAINER:-presence-oracle-jdbc}"
 SIDECAR_IN="${SIDECAR_IN:-http://127.0.0.1:8086}"
-PW_ENV="${PW_ENV:-ORACLE_PASSWORD_HHC}"
+PW_ENV="${PW_ENV:-ORACLE_PASSWORD_ONPREM}"
 
 echo "===================================================================="
 echo " presence-logger 直近記録ビューア（DBを直接確認）"
-echo "   テーブル: HHC001 / 直近 ${LIMIT} 件・最新順"
+echo "   テーブル: HHS001 / 直近 ${LIMIT} 件・最新順"
 echo "===================================================================="
 
 # --- 現在のSSIDを確認（未接続なら警告。DBは工場網内からしか届かない）---
-SSID="$(nmcli -t -f ACTIVE,SSID dev wifi 2>/dev/null | awk -F: '$1=="yes"{print $2; exit}')"
+SSID="$(LC_ALL=C nmcli -t -f ACTIVE,SSID dev wifi 2>/dev/null | awk -F: '$1=="yes"{print $2; exit}')"
 echo "   現在のSSID: ${SSID:-(不明)}"
 if [[ "$SSID" != "$PROFILE_NAME" ]]; then
     echo "   ⚠ SSID が $PROFILE_NAME ではありません。"
-    echo "     先に「HIME-H-REAP に接続」を実行してから開いてください。"
+    echo "     先に「taden-ot-ap に接続」を実行してから開いてください。"
     echo "     （未接続でも照会は試みますが、タイムアウトする可能性があります）"
 fi
 
-# --- 非秘密の接続情報を profiles.yaml から読む ---
+# --- 非秘密の接続情報を profiles.yaml + device.yaml から読む ---
 declare -A PCFG
-raw=$(python3 - "$PROFILES_YAML" "$PROFILE_NAME" <<'PY'
-import sys, yaml
-profiles_path, name = sys.argv[1], sys.argv[2]
+raw=$(python3 - "$PROFILES_YAML" "$PROFILE_NAME" "$DEVICE_YAML" <<'PY'
+import sys, yaml, os
+profiles_path, name, device_path = sys.argv[1], sys.argv[2], sys.argv[3]
 with open(profiles_path) as f:
     data = yaml.safe_load(f)
 profile = (data.get("profiles") or {}).get(name) or {}
@@ -51,6 +53,11 @@ if not profile:
     print(f"ERR no profile {name}", file=sys.stderr); sys.exit(2)
 oracle = profile.get("oracle") or {}
 station = profile.get("station") or {}
+# Fallback: profiles.yaml に station 上書きが無ければ device.yaml を読む
+if not station and os.path.isfile(device_path):
+    with open(device_path) as f:
+        device = yaml.safe_load(f) or {}
+    station = device.get("station") or {}
 def emit(k, v): print(f"PCFG[{k}]={v!r}")
 emit("oracle_host", oracle.get("host", ""))
 emit("oracle_port", oracle.get("port", "1521"))
@@ -64,10 +71,12 @@ PY
 ) || { echo "FAIL: profiles.yaml ($PROFILES_YAML) を読めませんでした"; exit 1; }
 eval "$raw"
 
-# device.yaml 由来の station を使う構成もあり得るが、HIME-H-REAP は profiles.yaml で
-# station を上書きしている前提。空ならエラーにする（誤った全件取得を防ぐ）。
+# station は profiles.yaml の上書き → device.yaml デフォルト の順で解決する。
+# どちらにも値が無ければエラーにする（誤った全件取得を防ぐ）。
 if [[ -z "${PCFG[sta_no1]}" || -z "${PCFG[sta_no2]}" || -z "${PCFG[sta_no3]}" ]]; then
-    echo "FAIL: $PROFILE_NAME の station(sta_no1/2/3) が profiles.yaml にありません"
+    echo "FAIL: station(sta_no1/2/3) が見つかりません"
+    echo "      profiles.yaml の $PROFILE_NAME に station セクションを書くか、"
+    echo "      device.yaml の station にデフォルトを設定してください。"
     exit 1
 fi
 echo "   STA_NO  : ${PCFG[sta_no1]}/${PCFG[sta_no2]}/${PCFG[sta_no3]}"

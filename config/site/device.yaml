@@ -1,9 +1,9 @@
-# SITE SNAPSHOT — HIME-H-REAP 拠点の実運用 device.yaml（本番値）
+# SITE SNAPSHOT — taden-ot-ap 拠点の実運用 device.yaml（本番値）
 # /etc/presence-logger/device.yaml の復元元。config/site/README.md を参照。
 #
 # device_id: null = /etc/host_hostname（ホスト名）から自動取得。
-# station はフォールバックの既定値。HIME-H-REAP では profiles.yaml の
-# station 上書き(996/995/994)が優先されるため、整合のため同値を入れている。
+# station はこの Pi のデフォルト値。taden-ot-ap プロファイルは station セクションを
+# 持たないため、ここの値がそのまま使われる。
 #
 # 注意: 実Piは現在 station が検証用の TST/T/00 のまま稼働中。
 # 本番想定値は下記の 996/995/994。

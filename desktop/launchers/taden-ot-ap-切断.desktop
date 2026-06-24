@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=taden-ot-ap を切断
+Name[ja]=taden-ot-ap を切断
+Comment=検知を停止して taden-ot-ap を切断する
+Exec=lxterminal -t "taden-ot-ap 切断" -e sudo bash /home/pi/Desktop/presence-tools/disconnect-taden-ot-ap.sh --hold
+Icon=network-wireless-offline
+Terminal=false
+Categories=Network;

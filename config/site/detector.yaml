@@ -1,4 +1,4 @@
-# SITE SNAPSHOT — HIME-H-REAP 拠点の実運用 detector.yaml（本番値）
+# SITE SNAPSHOT — taden-ot-ap 拠点の実運用 detector.yaml（本番値）
 # /etc/presence-logger/detector.yaml の復元元。config/site/README.md を参照。
 #
 # 注意: 実Piは現在 debounce を検証用に 0.1/0.2 秒へ短縮した状態で稼働中。

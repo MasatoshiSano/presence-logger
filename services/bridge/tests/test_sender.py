@@ -123,7 +123,7 @@ def test_sender_uses_profile_station_override_when_present(tmp_path: Path):
     """When profiles.yaml carries a profile-level `station:` block, sender
     must call MERGE with that triple instead of device.yaml's station."""
     sender, deps = _build_sender(tmp_path)
-    # Override the active profile with a station block (verify_himereap pattern).
+    # Override the active profile with a station block (verify_taden_ot_ap pattern).
     deps.resolver._profiles["factory_a_wifi"]["station"] = {
         "sta_no1": "996", "sta_no2": "995", "sta_no3": "994",
     }

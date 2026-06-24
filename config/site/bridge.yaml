@@ -1,4 +1,4 @@
-# SITE SNAPSHOT — HIME-H-REAP 拠点の実運用 bridge.yaml（本番値）
+# SITE SNAPSHOT — taden-ot-ap 拠点の実運用 bridge.yaml（本番値）
 # /etc/presence-logger/bridge.yaml の復元元。config/site/README.md を参照。
 mqtt:
   host: "mosquitto"

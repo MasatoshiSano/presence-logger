@@ -35,7 +35,7 @@ mkdir -p "$DROPIN_DIR"
 cat > "$DROPIN_DIR/override.conf" <<EOF
 [Service]
 WorkingDirectory=$REPO_DIR
-# 起動時は検知(detector)を止めておく。検知は「HIME-H-REAP に接続」で開始する設計。
+# 起動時は検知(detector)を止めておく。検知は「taden-ot-ap に接続」で開始する設計。
 # （up -d で一旦起動するが直後に stop。manual stop なので restart policy では復帰しない）
 ExecStartPost=-/usr/bin/docker stop presence-detector
 EOF

@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# cleanup_himereap_rows.sh
-# One-shot: switch to HIME-H-REAP, POST /cleanup_range to oracle-jdbc to delete
+# cleanup_taden_ot_ap_rows.sh
+# One-shot: switch to taden-ot-ap, POST /cleanup_range to oracle-jdbc to delete
 # rows that were accidentally flushed during a previous verify-script run, then
-# restore UFI_103134. Sentinel rows (MK_DATE LIKE '2099%') are protected by
-# Main.java's hard-coded guard.
+# optionally restore HOME_PROFILE. Sentinel rows (MK_DATE LIKE '2099%') are
+# protected by Main.java's hard-coded guard.
 #
-# Configuration: same env-override knobs as scripts/verify_himereap_oracle.sh.
+# Configuration: same env-override knobs as scripts/verify_taden_ot_ap_oracle.sh.
 # Defaults pulled from /etc/presence-logger/profiles.yaml entry PROFILE_NAME.
 #
 # Run as root:
-#   sudo bash scripts/cleanup_himereap_rows.sh \
+#   sudo bash scripts/cleanup_taden_ot_ap_rows.sh \
 #     [MK_DATE_FROM=20260604170000 MK_DATE_TO=20260604173000]
 
 set -uo pipefail
@@ -21,27 +21,33 @@ fi
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TS="$(date +%Y%m%dT%H%M%S)"
-LOG="/tmp/cleanup-himereap-${TS}.log"
+LOG="/tmp/cleanup-taden-ot-ap-${TS}.log"
 
-PROFILE_NAME="${PROFILE_NAME:-HIME-H-REAP}"
+PROFILE_NAME="${PROFILE_NAME:-taden-ot-ap}"
 PROFILES_YAML="${PROFILES_YAML:-/etc/presence-logger/profiles.yaml}"
 SECRETS_ENV="${SECRETS_ENV:-/etc/presence-logger/secrets.env}"
-HOME_PROFILE="${HOME_PROFILE:-UFI_103134}"
+DEVICE_YAML="${DEVICE_YAML:-/etc/presence-logger/device.yaml}"
+HOME_PROFILE="${HOME_PROFILE:-}"
 TMP_PROFILE="${TMP_PROFILE:-${PROFILE_NAME}-cleanup}"
 CONTAINER="${CONTAINER:-presence-oracle-jdbc}"
 SIDECAR_IN="${SIDECAR_IN:-http://127.0.0.1:8086}"
 
-# The deletion window. Defaults target the leak documented during the
-# 2026-06-04 deployment (UFI rows that flushed at 17:34). Override via env.
-MK_DATE_FROM="${MK_DATE_FROM:-20260604170000}"
-MK_DATE_TO="${MK_DATE_TO:-20260604173000}"
+# The deletion window. No defaults — must be supplied via env to avoid
+# accidental wide-window deletes.
+MK_DATE_FROM="${MK_DATE_FROM:-}"
+MK_DATE_TO="${MK_DATE_TO:-}"
+if [[ -z "$MK_DATE_FROM" || -z "$MK_DATE_TO" ]]; then
+    echo "FAIL: MK_DATE_FROM and MK_DATE_TO must be set via env (no defaults)." >&2
+    echo "  ex: sudo MK_DATE_FROM=20260604170000 MK_DATE_TO=20260604173000 bash $0" >&2
+    exit 2
+fi
 
 declare -A PCFG
 load_profile_from_yaml() {
     local raw
-    raw=$(python3 - "$PROFILES_YAML" "$PROFILE_NAME" "$SECRETS_ENV" <<'PY'
+    raw=$(python3 - "$PROFILES_YAML" "$PROFILE_NAME" "$SECRETS_ENV" "$DEVICE_YAML" <<'PY'
 import os, sys, yaml, re
-profiles_path, name, secrets_path = sys.argv[1], sys.argv[2], sys.argv[3]
+profiles_path, name, secrets_path, device_path = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 if os.path.isfile(secrets_path):
     with open(secrets_path) as f:
         for line in f:
@@ -65,8 +71,13 @@ wifi = profile.get("wifi") or {}
 sip = wifi.get("static_ipv4") or {}
 oracle = profile.get("oracle") or {}
 station = profile.get("station") or {}
+if not station and os.path.isfile(device_path):
+    with open(device_path) as f:
+        device = yaml.safe_load(f) or {}
+    station = device.get("station") or {}
 def emit(k, v): print(f"PCFG[{k}]={repr(str(v))}")
 emit("wifi_psk", wifi.get("psk", ""))
+emit("wifi_hidden", "yes" if wifi.get("hidden") else "no")
 emit("static_ip", sip.get("address", ""))
 emit("static_gw", sip.get("gateway", ""))
 emit("static_dns", " ".join(sip.get("dns") or []))
@@ -86,8 +97,9 @@ PY
 }
 load_profile_from_yaml
 
-HIME_SSID="$PROFILE_NAME"
-HIME_PSK="${PCFG[wifi_psk]}"
+TADEN_SSID="$PROFILE_NAME"
+TADEN_PSK="${PCFG[wifi_psk]}"
+TADEN_HIDDEN="${PCFG[wifi_hidden]}"
 STATIC_IP="${PCFG[static_ip]}"
 STATIC_GW="${PCFG[static_gw]}"
 STATIC_DNS="${PCFG[static_dns]}"
@@ -106,8 +118,13 @@ in_container_wget() { docker exec "$CONTAINER" wget -q --timeout=10 "$@"; }
 
 cleanup() {
     local rc=$?
-    log "== cleanup (rc=$rc): restoring $HOME_PROFILE =="
-    nmcli connection up "$HOME_PROFILE" >>"$LOG" 2>&1 || log "WARN: failed to re-up $HOME_PROFILE"
+    if [[ -n "$HOME_PROFILE" ]]; then
+        log "== cleanup (rc=$rc): restoring $HOME_PROFILE =="
+        nmcli connection up "$HOME_PROFILE" >>"$LOG" 2>&1 || log "WARN: failed to re-up $HOME_PROFILE"
+    else
+        log "== cleanup (rc=$rc): bringing $TMP_PROFILE down (no restore) =="
+        nmcli connection down "$TMP_PROFILE" >>"$LOG" 2>&1 || true
+    fi
     if nmcli -t -f NAME connection show | grep -Fxq "$TMP_PROFILE"; then
         nmcli connection delete "$TMP_PROFILE" >>"$LOG" 2>&1 || true
         log "removed temp profile $TMP_PROFILE"
@@ -117,9 +134,9 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-log "== presence-logger HIME-H-REAP cleanup =="
+log "== presence-logger taden-ot-ap cleanup =="
 log "delete window: MK_DATE $MK_DATE_FROM .. $MK_DATE_TO"
-log "delete key   : STA_NO=$STA1/$STA2/$STA3 (from profiles.yaml)"
+log "delete key   : STA_NO=$STA1/$STA2/$STA3"
 log "table        : $ORACLE_TABLE @ jdbc:oracle:thin:@$ORACLE_HOST:$ORACLE_PORT/$ORACLE_SVC"
 
 log "step 1: iw reg set JP"
@@ -130,10 +147,10 @@ if nmcli -t -f NAME connection show | grep -Fxq "$TMP_PROFILE"; then
     nmcli connection delete "$TMP_PROFILE" >>"$LOG" 2>&1 || true
 fi
 nmcli connection add type wifi con-name "$TMP_PROFILE" ifname wlan0 \
-    ssid "$HIME_SSID" \
-    802-11-wireless.hidden yes \
+    ssid "$TADEN_SSID" \
+    802-11-wireless.hidden "$TADEN_HIDDEN" \
     802-11-wireless-security.key-mgmt wpa-psk \
-    802-11-wireless-security.psk "$HIME_PSK" \
+    802-11-wireless-security.psk "$TADEN_PSK" \
     ipv4.method manual \
     ipv4.addresses "$STATIC_IP" \
     ipv4.gateway "$STATIC_GW" \
@@ -147,7 +164,7 @@ nmcli connection up "$TMP_PROFILE" >>"$LOG" 2>&1 || { log "FAIL: bring up $TMP_P
 sleep 4
 ACTUAL_SSID="$(nmcli -t -f ACTIVE,SSID dev wifi | awk -F: '$1=="yes"{print $2; exit}')"
 log "active SSID after switch: $ACTUAL_SSID"
-[[ "$ACTUAL_SSID" == "$HIME_SSID" ]] || { log "FAIL: SSID mismatch"; exit 2; }
+[[ "$ACTUAL_SSID" == "$TADEN_SSID" ]] || { log "FAIL: SSID mismatch"; exit 2; }
 
 log "step 4: docker compose up -d oracle-jdbc"
 docker compose --project-directory "$REPO_DIR" up -d oracle-jdbc >>"$LOG" 2>&1 \

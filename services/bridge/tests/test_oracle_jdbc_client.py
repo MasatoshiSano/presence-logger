@@ -15,7 +15,7 @@ from services.bridge.src.oracle_jdbc_client import (
 )
 
 
-def _profile(host: str = "10.166.5.93", svc: str = "HHC001") -> dict[str, Any]:
+def _profile(host: str = "10.168.252.16", svc: str = "HHS001") -> dict[str, Any]:
     return {
         "client_mode": "jdbc",
         "auth_mode": "basic",
@@ -30,7 +30,7 @@ def _profile(host: str = "10.166.5.93", svc: str = "HHC001") -> dict[str, Any]:
 
 def test_build_jdbc_url_matches_oracle_thin_format():
     url = _build_jdbc_url(_profile())
-    assert url == "jdbc:oracle:thin:@10.166.5.93:1521/HHC001"
+    assert url == "jdbc:oracle:thin:@10.168.252.16:1521/HHS001"
 
 
 def test_parse_kv_body_handles_blank_lines_and_missing_keys():
@@ -90,7 +90,7 @@ def test_execute_merge_via_jdbc_posts_form_with_all_required_fields():
                for h, v in captured["headers"].items())
     body = captured["data"].decode("utf-8")
     for needle in (
-        "url=jdbc%3Aoracle%3Athin%3A%4010.166.5.93%3A1521%2FHHC001",
+        "url=jdbc%3Aoracle%3Athin%3A%4010.168.252.16%3A1521%2FHHS001",
         "user=ZHH001",
         "password=ZHH001_99",
         "table_name=HF1RCM01",

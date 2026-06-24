@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
-# live_himereap_run.sh
-# Live end-to-end test: switch to HIME-H-REAP for ~60s, let the bridge flush
-# real detector events into HHC001, then SELECT the new rows to prove they
-# landed, then restore UFI_103134. Everything trap-guarded.
+# live_taden_ot_ap_run.sh
+# Live end-to-end test: switch to taden-ot-ap for ~60s, let the bridge flush
+# real detector events into HHS001, then SELECT the new rows to prove they
+# landed, then (optionally) restore HOME_PROFILE. Everything trap-guarded.
 #
 # Usage:
-#   sudo bash scripts/live_himereap_run.sh [WINDOW_SECONDS=60]
+#   sudo bash scripts/live_taden_ot_ap_run.sh [WINDOW_SECONDS=60]
 #
-# Env overrides (same shape as verify_himereap_oracle.sh):
+# Env overrides:
 #   PROFILE_NAME, PROFILES_YAML, SECRETS_ENV, HOME_PROFILE, TMP_PROFILE
+#   HOME_PROFILE="" (default) means "do not restore on exit" — just bring the
+#   temp profile down and let NetworkManager pick whatever is available.
 
 set -uo pipefail
 if [[ $EUID -ne 0 ]]; then
@@ -18,12 +20,12 @@ fi
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TS="$(date +%Y%m%dT%H%M%S)"
-LOG="/tmp/live-himereap-${TS}.log"
+LOG="/tmp/live-taden-ot-ap-${TS}.log"
 
-PROFILE_NAME="${PROFILE_NAME:-HIME-H-REAP}"
+PROFILE_NAME="${PROFILE_NAME:-taden-ot-ap}"
 PROFILES_YAML="${PROFILES_YAML:-/etc/presence-logger/profiles.yaml}"
 SECRETS_ENV="${SECRETS_ENV:-/etc/presence-logger/secrets.env}"
-HOME_PROFILE="${HOME_PROFILE:-UFI_103134}"
+HOME_PROFILE="${HOME_PROFILE:-}"
 TMP_PROFILE="${TMP_PROFILE:-${PROFILE_NAME}-live}"
 CONTAINER="${CONTAINER:-presence-oracle-jdbc}"
 SIDECAR_IN="${SIDECAR_IN:-http://127.0.0.1:8086}"
@@ -60,6 +62,7 @@ oracle = profile.get("oracle") or {}
 station = profile.get("station") or {}
 def emit(k, v): print(f"PCFG[{k}]={repr(str(v))}")
 emit("wifi_psk", wifi.get("psk", ""))
+emit("wifi_hidden", "yes" if wifi.get("hidden") else "no")
 emit("static_ip", sip.get("address", ""))
 emit("static_gw", sip.get("gateway", ""))
 emit("static_dns", " ".join(sip.get("dns") or []))
@@ -79,6 +82,22 @@ PY
 }
 load_profile_from_yaml
 
+# Fallback: profiles.yaml に station 上書きが無ければ device.yaml を読む
+if [[ -z "${PCFG[sta_no1]:-}" || -z "${PCFG[sta_no2]:-}" || -z "${PCFG[sta_no3]:-}" ]]; then
+    DEVICE_YAML="${DEVICE_YAML:-/etc/presence-logger/device.yaml}"
+    if [[ -f "$DEVICE_YAML" ]]; then
+        eval "$(python3 - "$DEVICE_YAML" <<'PY'
+import sys, yaml
+with open(sys.argv[1]) as f: d = yaml.safe_load(f) or {}
+s = d.get("station") or {}
+print(f"PCFG[sta_no1]={s.get('sta_no1','')!r}")
+print(f"PCFG[sta_no2]={s.get('sta_no2','')!r}")
+print(f"PCFG[sta_no3]={s.get('sta_no3','')!r}")
+PY
+)"
+    fi
+fi
+
 ORACLE_HOST="${PCFG[oracle_host]}"
 ORACLE_PORT="${PCFG[oracle_port]}"
 ORACLE_SVC="${PCFG[oracle_service]}"
@@ -88,8 +107,9 @@ ORACLE_TABLE="${PCFG[oracle_table]}"
 STA1="${PCFG[sta_no1]}"
 STA2="${PCFG[sta_no2]}"
 STA3="${PCFG[sta_no3]}"
-HIME_SSID="$PROFILE_NAME"
-HIME_PSK="${PCFG[wifi_psk]}"
+TADEN_SSID="$PROFILE_NAME"
+TADEN_PSK="${PCFG[wifi_psk]}"
+TADEN_HIDDEN="${PCFG[wifi_hidden]}"
 STATIC_IP="${PCFG[static_ip]}"
 STATIC_GW="${PCFG[static_gw]}"
 STATIC_DNS="${PCFG[static_dns]}"
@@ -98,8 +118,13 @@ log() { printf '[%s] %s\n' "$(date -Iseconds)" "$*" | tee -a "$LOG"; }
 
 cleanup() {
     local rc=$?
-    log "== cleanup (rc=$rc): restoring $HOME_PROFILE =="
-    nmcli connection up "$HOME_PROFILE" >>"$LOG" 2>&1 || log "WARN: failed to re-up $HOME_PROFILE"
+    if [[ -n "$HOME_PROFILE" ]]; then
+        log "== cleanup (rc=$rc): restoring $HOME_PROFILE =="
+        nmcli connection up "$HOME_PROFILE" >>"$LOG" 2>&1 || log "WARN: failed to re-up $HOME_PROFILE"
+    else
+        log "== cleanup (rc=$rc): bringing $TMP_PROFILE down (no restore) =="
+        nmcli connection down "$TMP_PROFILE" >>"$LOG" 2>&1 || true
+    fi
     if nmcli -t -f NAME connection show | grep -Fxq "$TMP_PROFILE"; then
         nmcli connection delete "$TMP_PROFILE" >>"$LOG" 2>&1 || true
         log "removed temp profile $TMP_PROFILE"
@@ -130,8 +155,8 @@ for s, n in c.execute('SELECT status, COUNT(*) FROM inbox GROUP BY status'):
     } | tee -a "$LOG"
 }
 
-log "== presence-logger LIVE run @ $HIME_SSID (${WINDOW_SECONDS}s window) =="
-log "STA_NO triple from profiles.yaml: $STA1/$STA2/$STA3"
+log "== presence-logger LIVE run @ $TADEN_SSID (${WINDOW_SECONDS}s window) =="
+log "STA_NO triple: $STA1/$STA2/$STA3"
 log "target table: $ORACLE_TABLE @ jdbc:oracle:thin:@$ORACLE_HOST:$ORACLE_PORT/$ORACLE_SVC"
 
 START_MK="$(date '+%Y%m%d%H%M%S')"
@@ -144,10 +169,10 @@ if nmcli -t -f NAME connection show | grep -Fxq "$TMP_PROFILE"; then
     nmcli connection delete "$TMP_PROFILE" >>"$LOG" 2>&1 || true
 fi
 nmcli connection add type wifi con-name "$TMP_PROFILE" ifname wlan0 \
-    ssid "$HIME_SSID" \
-    802-11-wireless.hidden yes \
+    ssid "$TADEN_SSID" \
+    802-11-wireless.hidden "$TADEN_HIDDEN" \
     802-11-wireless-security.key-mgmt wpa-psk \
-    802-11-wireless-security.psk "$HIME_PSK" \
+    802-11-wireless-security.psk "$TADEN_PSK" \
     ipv4.method manual \
     ipv4.addresses "$STATIC_IP" \
     ipv4.gateway "$STATIC_GW" \
@@ -161,7 +186,7 @@ nmcli connection up "$TMP_PROFILE" >>"$LOG" 2>&1 || { log "FAIL: bring up $TMP_P
 sleep 4
 ACTUAL_SSID="$(nmcli -t -f ACTIVE,SSID dev wifi | awk -F: '$1=="yes"{print $2; exit}')"
 log "active SSID after switch: $ACTUAL_SSID"
-[[ "$ACTUAL_SSID" == "$HIME_SSID" ]] || { log "FAIL: SSID mismatch"; exit 2; }
+[[ "$ACTUAL_SSID" == "$TADEN_SSID" ]] || { log "FAIL: SSID mismatch"; exit 2; }
 
 log "step 3: docker compose up -d oracle-jdbc (idempotent)"
 docker compose --project-directory "$REPO_DIR" up -d oracle-jdbc >>"$LOG" 2>&1 \
@@ -176,7 +201,7 @@ docker exec "$CONTAINER" wget -q --timeout=10 -O - "$SIDECAR_IN/healthz" 2>/dev/
     || { log "FAIL: healthz never came up"; exit 1; }
 log "  healthz OK"
 
-log "step 5: LIVE window — letting detector→bridge→HHC001 run for ${WINDOW_SECONDS}s"
+log "step 5: LIVE window — letting detector→bridge→HHS001 run for ${WINDOW_SECONDS}s"
 log "  (bridge's network_watcher polls every 5s, so first MERGE may be ~5s in)"
 sleep "$WINDOW_SECONDS"
 
@@ -188,7 +213,7 @@ docker logs presence-bridge --since "${WINDOW_SECONDS}s" 2>&1 \
     | grep -E "(merge_committed|merge_failed|received|drop_unknown_ssid)" \
     | tail -30 | tee -a "$LOG"
 
-log "step 7: POST /select_range to confirm rows in HHC001"
+log "step 7: POST /select_range to confirm rows in HHS001"
 BODY="$(python3 - <<PY
 import urllib.parse
 print(urllib.parse.urlencode({
@@ -222,5 +247,5 @@ if [[ -n "$ORA_CODE" ]]; then
     log "FAIL: Oracle returned ora_code=$ORA_CODE"
     exit 1
 fi
-log "SUMMARY: HHC001 rows written in window [$START_MK .. $END_MK] for STA $STA1/$STA2/$STA3 -> $COUNT"
+log "SUMMARY: HHS001 rows written in window [$START_MK .. $END_MK] for STA $STA1/$STA2/$STA3 -> $COUNT"
 exit 0

@@ -1,28 +1,29 @@
-presence-tools — HIME-H-REAP 操作ツール
+presence-tools — taden-ot-ap 操作ツール
 =========================================
 
-工場WiFi(HIME-H-REAP)に手動で接続し、Oracle(HHC001)への記録を
+工場WiFi(taden-ot-ap)に手動で接続し、Oracle(HHS001)への記録を
 リアルタイムで確認するためのツール一式です。
 
 ■ 検知のオン/オフは「接続/切断」に連動します
-  ・「接続」  → HIME-H-REAP に繋ぎ、まず時刻同期(NTP 133.141.247.101)、
+  ・「接続」  → taden-ot-ap に繋ぎ、まず時刻同期(NTP 192.168.250.1)、
                次に検知(detector)を開始
-  ・「切断」  → 検知(detector)を停止し、元のWiFiに戻す
+  ・「切断」  → 検知(detector)を停止し、taden-ot-ap を切断
+               （別の SSID への切替は行わない＝NetworkManager 任せ）
   ・通常時(未接続)は検知オフ。再起動直後も検知オフ（接続するまで動かない）
   ・セッション中に通信が一時的に切れても検知は継続し、回復後に
-    溜まった分をまとめて HHC001 に記録します（バックフィル）
+    溜まった分をまとめて HHS001 に記録します（バックフィル）
 
 ■ 使い方（おすすめの順番）
   1. 「記録モニタ」を起動（先に開いておく）
-  2. 「HIME-H-REAP に接続」を起動 → パスワード入力（ここで検知も始まる）
+  2. 「taden-ot-ap に接続」を起動 → パスワード入力（ここで検知も始まる）
   3. モニタに「✅ DB書込(NEW)」が流れ出すのを確認
-  4. 終わったら「HIME-H-REAP を切断」（検知も止まり、元のWiFiに戻る）
+  4. 終わったら「taden-ot-ap を切断」（検知も止まる）
 
 ■ ファイル
-  HIME-H-REAP-接続.desktop … 接続＋検知開始（繋ぎっぱなし。自動接続はしない）
-  HIME-H-REAP-切断.desktop … 検知停止＋切断し UFI_103134 に戻す
+  taden-ot-ap-接続.desktop … 接続＋検知開始（繋ぎっぱなし。自動接続はしない）
+  taden-ot-ap-切断.desktop … 検知停止＋切断（戻り先WiFi の選択は NetworkManager 任せ）
   記録モニタ.desktop        … 何が書き込まれているかをリアルタイム表示
-  直近30件.desktop          … HHC001 に実際に入った直近30件を最新順で表示
+  直近30件.desktop          … HHS001 に実際に入った直近30件を最新順で表示
                               （docker ログではなくDBを直接SELECT＝確証。sudo不要）
   setup-autostart.sh        … 再起動でコンテナ自動復帰＋起動時は検知オフにする
                               （一度だけ sudo bash で実行）
@@ -38,5 +39,5 @@ presence-tools — HIME-H-REAP 操作ツール
 ■ 補足
   ・接続スクリプトは PSK をファイルに持ちません。実行時に root で
     /etc/presence-logger/secrets.env から読み込みます。
-  ・再起動後は自動接続しません。再度「HIME-H-REAP に接続」を実行してください。
+  ・再起動後は自動接続しません。再度「taden-ot-ap に接続」を実行してください。
   ・記録モニタは sudo 不要。接続/切断はネットワーク変更のため sudo が必要です。

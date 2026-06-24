@@ -1,4 +1,4 @@
-# `config/site/` — HIME-H-REAP 拠点の実設定スナップショット
+# `config/site/` — taden-ot-ap 拠点の実設定スナップショット
 
 `/etc/presence-logger/` に配置する**非秘密の実設定（本番値）**をバージョン管理する場所。
 `config/*.example`（汎用テンプレート）と違い、ここは**この拠点の実運用構成そのもの**で、
@@ -13,8 +13,8 @@
 
 | ファイル | 内容 | 本番値の要点 |
 |---|---|---|
-| `profiles.yaml` | HIME-H-REAP プロファイル | 固定IP 172.22.13.17、Oracle 10.166.5.93/HHC001、station 996/995/994、`unknown_ssid_policy: drop` |
-| `device.yaml` | 端末既定 | station 996/995/994（profile 上書きと整合） |
+| `profiles.yaml` | taden-ot-ap プロファイル | 固定IP 172.29.1.4、Oracle 10.168.252.16/HHS001、station は device.yaml デフォルト、`unknown_ssid_policy: drop` |
+| `device.yaml` | 端末既定 | station 996/995/994（profiles.yaml に station 上書きなし → これがそのまま使われる） |
 | `detector.yaml` | 検知パラメータ | **debounce 3.0/3.0 秒**（本番想定） |
 | `bridge.yaml` | bridge 動作 | 実運用と同一 |
 
@@ -43,7 +43,7 @@ sudo chown root:root /etc/presence-logger/*.yaml
 sudo chmod 644       /etc/presence-logger/*.yaml
 
 # 秘密は別途（Git管理外）。secrets.env と wallets/ を安全な経路でコピー:
-#   /etc/presence-logger/secrets.env   (600 root:docker) — WIFI_PSK_HIMEREAP + ORACLE_PASSWORD_*
+#   /etc/presence-logger/secrets.env   (600 root:docker) — WIFI_PSK_TADEN + ORACLE_PASSWORD_ONPREM
 #   /etc/presence-logger/wallets/      (700 root:docker) — wallet 利用時のみ
 
 # 反映後、コンテナを作り直して再読込

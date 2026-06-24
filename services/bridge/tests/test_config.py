@@ -113,27 +113,27 @@ unknown_ssid_policy: hold
 
 
 def test_load_profiles_jdbc_mode_basic_auth_accepted(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("ORACLE_PASSWORD_HHC", "ZHH001_99")
+    monkeypatch.setenv("ORACLE_PASSWORD_ONPREM", "ZHH001_99")
     p = tmp_path / "profiles.yaml"
     p.write_text("""
 profiles:
-  HIME-H-REAP:
-    description: Factory internal Wi-Fi (HHC001 via JDBC sidecar)
-    sntp: {servers: [10.166.1.70]}
+  taden-ot-ap:
+    description: Factory internal Wi-Fi (HHS001 via JDBC sidecar)
+    sntp: {servers: [192.168.250.1]}
     oracle:
       client_mode: jdbc
       auth_mode: basic
-      host: 10.166.5.93
+      host: 10.168.252.16
       port: 1521
-      service_name: HHC001
+      service_name: HHS001
       user: ZHH001
-      password: ${ORACLE_PASSWORD_HHC}
+      password: ${ORACLE_PASSWORD_ONPREM}
       table_name: HF1RCM01
 unknown_ssid_policy: hold
 """)
     cfg = load_profiles_config(p)
-    assert cfg["profiles"]["HIME-H-REAP"]["oracle"]["client_mode"] == "jdbc"
-    assert cfg["profiles"]["HIME-H-REAP"]["oracle"]["password"] == "ZHH001_99"
+    assert cfg["profiles"]["taden-ot-ap"]["oracle"]["client_mode"] == "jdbc"
+    assert cfg["profiles"]["taden-ot-ap"]["oracle"]["password"] == "ZHH001_99"
 
 
 def test_load_profiles_jdbc_mode_rejects_wallet_auth(tmp_path: Path):
@@ -187,41 +187,41 @@ def test_needs_thick_mode_false_when_jdbc_present():
 
 
 def test_load_profiles_accepts_optional_wifi_and_station(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("ORACLE_PASSWORD_HHC", "ZHH001_99")
-    monkeypatch.setenv("WIFI_PSK_HIME", "Cisco@12345")
+    monkeypatch.setenv("ORACLE_PASSWORD_ONPREM", "ZHH001_99")
+    monkeypatch.setenv("WIFI_PSK_TADEN", "Cisco@12345")
     p = tmp_path / "profiles.yaml"
     p.write_text("""
 profiles:
-  HIME-H-REAP:
+  taden-ot-ap:
     description: factory
     wifi:
-      psk: ${WIFI_PSK_HIME}
+      psk: ${WIFI_PSK_TADEN}
       hidden: true
       static_ipv4:
-        address: 172.22.13.17/24
-        gateway: 172.22.13.1
-        dns: [10.166.1.70]
+        address: 172.29.1.4/24
+        gateway: 172.29.1.254
+        dns: [192.168.250.1]
     station:
       sta_no1: "996"
       sta_no2: "995"
       sta_no3: "994"
-    sntp: {servers: [10.166.1.70]}
+    sntp: {servers: [192.168.250.1]}
     oracle:
       client_mode: jdbc
       auth_mode: basic
-      host: 10.166.5.93
+      host: 10.168.252.16
       port: 1521
-      service_name: HHC001
+      service_name: HHS001
       user: ZHH001
-      password: ${ORACLE_PASSWORD_HHC}
+      password: ${ORACLE_PASSWORD_ONPREM}
       table_name: HF1RCM01
 unknown_ssid_policy: hold
 """)
     cfg = load_profiles_config(p)
-    prof = cfg["profiles"]["HIME-H-REAP"]
+    prof = cfg["profiles"]["taden-ot-ap"]
     assert prof["wifi"]["psk"] == "Cisco@12345"
-    assert prof["wifi"]["static_ipv4"]["address"] == "172.22.13.17/24"
-    assert prof["wifi"]["static_ipv4"]["dns"] == ["10.166.1.70"]
+    assert prof["wifi"]["static_ipv4"]["address"] == "172.29.1.4/24"
+    assert prof["wifi"]["static_ipv4"]["dns"] == ["192.168.250.1"]
     assert prof["station"] == {"sta_no1": "996", "sta_no2": "995", "sta_no3": "994"}
 
 
@@ -282,27 +282,27 @@ def test_station_for_profile_prefers_profile_override():
 
 
 def test_load_profiles_accepts_optional_upcmpflg_integer(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("ORACLE_PASSWORD_HHC", "ZHH001_99")
+    monkeypatch.setenv("ORACLE_PASSWORD_ONPREM", "ZHH001_99")
     p = tmp_path / "profiles.yaml"
     p.write_text("""
 profiles:
-  HIME-H-REAP:
+  taden-ot-ap:
     description: x
     sntp: {servers: [n]}
     oracle:
       client_mode: jdbc
       auth_mode: basic
-      host: 10.166.5.93
+      host: 10.168.252.16
       port: 1521
-      service_name: HHC001
+      service_name: HHS001
       user: ZHH001
-      password: ${ORACLE_PASSWORD_HHC}
+      password: ${ORACLE_PASSWORD_ONPREM}
       table_name: HF1RCM01
       upcmpflg: 1
 unknown_ssid_policy: hold
 """)
     cfg = load_profiles_config(p)
-    assert cfg["profiles"]["HIME-H-REAP"]["oracle"]["upcmpflg"] == 1
+    assert cfg["profiles"]["taden-ot-ap"]["oracle"]["upcmpflg"] == 1
 
 
 def test_load_profiles_rejects_string_upcmpflg(tmp_path: Path):

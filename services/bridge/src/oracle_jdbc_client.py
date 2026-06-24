@@ -5,11 +5,11 @@ application/x-www-form-urlencoded parameters and returns
 text/plain key=value lines. This mirrors the contract used by
 services/oracle-jdbc/src/Main.java.
 
-We avoid python-oracledb here entirely: the HIME-H-REAP target DB
-(HHC001) authenticates ZHH001 with a 10G verifier which the Thin
+We avoid python-oracledb here entirely: the taden-ot-ap target DB
+(HHS001) authenticates ZHH001 with a 10G verifier which the Thin
 driver rejects (DPY-3015), and the Thick driver cannot be loaded
 on a 16KB-page Pi 5. JDBC via ojdbc11.jar is the only path that
-works (see /home/pi/oracle-himereap-guide/index.html).
+works (see /home/pi/oracle-taden-ot-ap-guide/index.html).
 """
 from __future__ import annotations
 

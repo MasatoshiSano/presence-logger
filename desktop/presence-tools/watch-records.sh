@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # watch-records.sh
-# 接続中に「実際に何が HHC001 へ書き込まれているか」をリアルタイム表示する。
+# 接続中に「実際に何が HHS001 へ書き込まれているか」をリアルタイム表示する。
 #   detector(ENTER/EXIT検知) と bridge(DB書込) を1画面に流す。
 #   event_id を突き合わせ、DB書込の行にも 🟢ENTER / 🔴EXIT を表示する。
 #   1行 = 1イベント。✅DB書込(NEW) が Oracle に実際に入った行。終了は Ctrl-C。
@@ -10,13 +10,13 @@ set -uo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export SINCE="${1:-30s}"   # 最初に何分/秒前から表示するか（その後はリアルタイム追従）
 
-SSID="$(nmcli -t -f ACTIVE,SSID dev wifi 2>/dev/null | awk -F: '$1=="yes"{print $2; exit}')"
+SSID="$(LC_ALL=C nmcli -t -f ACTIVE,SSID dev wifi 2>/dev/null | awk -F: '$1=="yes"{print $2; exit}')"
 echo "===================================================================="
 echo " presence-logger 記録モニタ（リアルタイム）"
 echo "   現在のSSID : ${SSID:-(不明)}"
 echo "   凡例: 🟢ENTER 🔴EXIT / 📥受信 ✅DB書込(NEW) ➖重複skip ❌失敗"
 echo "        [🟢/🔴] は その書き込みが 入室/退室 どちらかを表します"
-echo "   ※SSIDが HIME-H-REAP のときだけ「DB書込」が出ます"
+echo "   ※SSIDが taden-ot-ap のときだけ「DB書込」が出ます"
 echo "     （他のSSIDでは未登録→drop されDBには行きません）"
 echo "   終了: Ctrl-C"
 echo "===================================================================="

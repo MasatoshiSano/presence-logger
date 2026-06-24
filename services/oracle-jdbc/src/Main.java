@@ -33,7 +33,7 @@ import java.util.logging.Logger;
  *
  *   GET /healthz   200 "ok"
  *
- * No connection pool: each request opens a fresh JDBC connection. The HIME-H-REAP
+ * No connection pool: each request opens a fresh JDBC connection. The taden-ot-ap
  * workload is single-digit events per minute, so per-call overhead (~100-500ms)
  * is dwarfed by Oracle-side cost. Keeps server stateless and crash-safe.
  */
@@ -183,7 +183,7 @@ public class Main {
      * the caller controls is the (station triple, mk_date range) window.
      *
      * Hard-coded guard: never deletes rows whose MK_DATE starts with '2099'
-     * (those are sentinel rows created by verify_himereap_oracle.sh and must
+     * (those are sentinel rows created by verify_taden_ot_ap_oracle.sh and must
      * survive cleanup).
      */
     private static void cleanupRange(HttpExchange ex) throws IOException {
@@ -256,9 +256,9 @@ public class Main {
     }
 
     /**
-     * Read-only window inspector. Used by scripts/live_himereap_run.sh to
+     * Read-only window inspector. Used by scripts/live_taden_ot_ap_run.sh to
      * confirm that real ENTER/EXIT events captured during a test run made it
-     * into HHC001. Same key shape as /cleanup_range; never modifies data.
+     * into HHS001. Same key shape as /cleanup_range; never modifies data.
      *
      * Response (text/plain):
      *   count=<N>
@@ -357,7 +357,7 @@ public class Main {
      * POST fields: url, user, password, table_name, sta_no1, sta_no2, sta_no3
      *   optional: limit (default 30, capped at 200),
      *             connect_timeout_ms, read_timeout_ms
-     * 2099% sentinel rows (verify_himereap_oracle smoke MERGEs) are excluded.
+     * 2099% sentinel rows (verify_taden_ot_ap_oracle smoke MERGEs) are excluded.
      */
     private static void selectRecent(HttpExchange ex) throws IOException {
         if (!"POST".equalsIgnoreCase(ex.getRequestMethod())) {

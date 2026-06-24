@@ -1,17 +1,18 @@
 #!/usr/bin/env bash
-# verify_himereap_oracle.sh
-# One-shot verification: switch Wi-Fi to HIME-H-REAP, exercise the
-# oracle-jdbc sidecar against HHC001, restore UFI_103134.
+# verify_taden_ot_ap_oracle.sh
+# One-shot verification: switch Wi-Fi to taden-ot-ap, exercise the
+# oracle-jdbc sidecar against HHS001, then optionally restore HOME_PROFILE.
 #
 # Designed to be safe even if the calling shell or Claude Code session dies
-# mid-flight: the `trap cleanup EXIT` reliably restores the home Wi-Fi
-# (UFI_103134) so the Pi never gets stranded on the corporate closed network.
+# mid-flight: the `trap cleanup EXIT` brings the temp profile down so the Pi
+# does not stay parked on the corporate network if something goes wrong.
+# (Set HOME_PROFILE=<nmcli-name> to also re-up your dev Wi-Fi on exit.)
 #
-# All log lines are appended to /tmp/verify-himereap-oracle-<ts>.log so the
+# All log lines are appended to /tmp/verify-taden-ot-ap-oracle-<ts>.log so the
 # result is inspectable after the network round-trip, even if stdout was lost.
 #
 # Run as root:
-#   sudo bash scripts/verify_himereap_oracle.sh
+#   sudo bash scripts/verify_taden_ot_ap_oracle.sh
 #
 # Exit code:
 #   0 — MERGE returned rows_affected=1 (or 0 on idempotent re-run) AND ora_code empty
@@ -27,24 +28,27 @@ fi
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TS="$(date +%Y%m%dT%H%M%S)"
-LOG="/tmp/verify-himereap-oracle-${TS}.log"
+LOG="/tmp/verify-taden-ot-ap-oracle-${TS}.log"
 
 # The profile to verify is the SSID key in /etc/presence-logger/profiles.yaml.
 # Override with PROFILE_NAME=<ssid> for a different site.
-PROFILE_NAME="${PROFILE_NAME:-HIME-H-REAP}"
+PROFILE_NAME="${PROFILE_NAME:-taden-ot-ap}"
 PROFILES_YAML="${PROFILES_YAML:-/etc/presence-logger/profiles.yaml}"
 SECRETS_ENV="${SECRETS_ENV:-/etc/presence-logger/secrets.env}"
+DEVICE_YAML="${DEVICE_YAML:-/etc/presence-logger/device.yaml}"
 
-# The home/dev Wi-Fi profile to restore on EXIT. Not stored in profiles.yaml
-# because it's a developer-machine concern, not a site config.
-HOME_PROFILE="${HOME_PROFILE:-UFI_103134}"
+# Optional: the dev Wi-Fi profile to restore on EXIT. Empty (default) means
+# "do not restore" — the temp profile is just brought down and NetworkManager
+# picks whatever is available next.
+HOME_PROFILE="${HOME_PROFILE:-}"
 TMP_PROFILE="${TMP_PROFILE:-${PROFILE_NAME}-verify}"
 
 # All other values are pulled from profiles.yaml below. Override knobs:
 #   PROFILE_NAME       which profile (= SSID) to verify
 #   PROFILES_YAML      where profiles.yaml lives
 #   SECRETS_ENV        env file expanding ${WIFI_PSK_*} / ${ORACLE_PASSWORD_*}
-#   HOME_PROFILE       nmcli connection to restore on exit
+#   DEVICE_YAML        device.yaml (used for station fallback)
+#   HOME_PROFILE       nmcli connection to restore on exit (default: none)
 #   TMP_PROFILE        nmcli connection name to (re)create for the verify run
 # Profile shape (see config/profiles.yaml.example):
 #   profiles.<NAME>.wifi.psk / .hidden / .static_ipv4.{address,gateway,dns}
@@ -54,9 +58,9 @@ declare -A PCFG
 load_profile_from_yaml() {
     # shellcheck disable=SC2155
     local raw
-    raw=$(python3 - "$PROFILES_YAML" "$PROFILE_NAME" "$SECRETS_ENV" <<'PY'
+    raw=$(python3 - "$PROFILES_YAML" "$PROFILE_NAME" "$SECRETS_ENV" "$DEVICE_YAML" <<'PY'
 import os, sys, yaml
-profiles_path, name, secrets_path = sys.argv[1], sys.argv[2], sys.argv[3]
+profiles_path, name, secrets_path, device_path = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 # Expand the secrets.env file into the environment so ${VAR} placeholders
 # inside profiles.yaml resolve.
 if os.path.isfile(secrets_path):
@@ -89,6 +93,11 @@ wifi = profile.get("wifi") or {}
 sip = wifi.get("static_ipv4") or {}
 oracle = profile.get("oracle") or {}
 station = profile.get("station") or {}
+# Fallback: profiles.yaml に station 上書きが無ければ device.yaml を読む
+if not station and os.path.isfile(device_path):
+    with open(device_path) as f:
+        device = yaml.safe_load(f) or {}
+    station = device.get("station") or {}
 
 # Single-quoted shell key=value lines for `eval` consumption.
 def emit(k, v): print(f"PCFG[{k}]={repr(str(v))}")
@@ -116,8 +125,9 @@ PY
 }
 load_profile_from_yaml
 
-HIME_SSID="${HIME_SSID:-$PROFILE_NAME}"
-HIME_PSK="${HIME_PSK:-${PCFG[wifi_psk]}}"
+TADEN_SSID="${TADEN_SSID:-$PROFILE_NAME}"
+TADEN_PSK="${TADEN_PSK:-${PCFG[wifi_psk]}}"
+TADEN_HIDDEN="${TADEN_HIDDEN:-${PCFG[wifi_hidden]}}"
 STATIC_IP="${STATIC_IP:-${PCFG[static_ip]}}"
 STATIC_GW="${STATIC_GW:-${PCFG[static_gw]}}"
 STATIC_DNS="${STATIC_DNS:-${PCFG[static_dns]}}"
@@ -143,9 +153,14 @@ in_container_wget() {
 
 cleanup() {
     local rc=$?
-    log "== cleanup (rc=$rc): restoring $HOME_PROFILE =="
-    nmcli connection up "$HOME_PROFILE" >>"$LOG" 2>&1 || \
-        log "WARN: failed to re-up $HOME_PROFILE"
+    if [[ -n "$HOME_PROFILE" ]]; then
+        log "== cleanup (rc=$rc): restoring $HOME_PROFILE =="
+        nmcli connection up "$HOME_PROFILE" >>"$LOG" 2>&1 || \
+            log "WARN: failed to re-up $HOME_PROFILE"
+    else
+        log "== cleanup (rc=$rc): bringing $TMP_PROFILE down (no restore) =="
+        nmcli connection down "$TMP_PROFILE" >>"$LOG" 2>&1 || true
+    fi
     # Always remove the temporary profile so credentials don't linger in
     # NetworkManager's keystore between runs.
     if nmcli -t -f NAME connection show | grep -Fxq "$TMP_PROFILE"; then
@@ -157,11 +172,11 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-log "== presence-logger HIME-H-REAP verification =="
+log "== presence-logger taden-ot-ap verification =="
 log "repo: $REPO_DIR"
-log "home profile: $HOME_PROFILE  (must already exist)"
+log "home profile: ${HOME_PROFILE:-(none — no restore on exit)}"
 log "tmp profile : $TMP_PROFILE"
-log "target SSID : $HIME_SSID"
+log "target SSID : $TADEN_SSID  (hidden=$TADEN_HIDDEN)"
 log "static IP   : $STATIC_IP via $STATIC_GW (DNS $STATIC_DNS)"
 log "JDBC URL    : jdbc:oracle:thin:@$ORACLE_HOST:$ORACLE_PORT/$ORACLE_SVC"
 log "JDBC user   : $ORACLE_USER  table=$ORACLE_TABLE"
@@ -172,16 +187,16 @@ log "step 1: iw reg set JP"
 iw reg set JP >>"$LOG" 2>&1 || { log "FAIL: iw reg set JP"; exit 2; }
 sleep 2
 
-# 2. (Re)create the HIME-H-REAP nmcli profile with the static-IP shape.
+# 2. (Re)create the taden-ot-ap nmcli profile with the static-IP shape.
 log "step 2: nmcli connection (re)create $TMP_PROFILE"
 if nmcli -t -f NAME connection show | grep -Fxq "$TMP_PROFILE"; then
     nmcli connection delete "$TMP_PROFILE" >>"$LOG" 2>&1 || true
 fi
 nmcli connection add type wifi con-name "$TMP_PROFILE" ifname wlan0 \
-    ssid "$HIME_SSID" \
-    802-11-wireless.hidden yes \
+    ssid "$TADEN_SSID" \
+    802-11-wireless.hidden "$TADEN_HIDDEN" \
     802-11-wireless-security.key-mgmt wpa-psk \
-    802-11-wireless-security.psk "$HIME_PSK" \
+    802-11-wireless-security.psk "$TADEN_PSK" \
     ipv4.method manual \
     ipv4.addresses "$STATIC_IP" \
     ipv4.gateway "$STATIC_GW" \
@@ -190,7 +205,7 @@ nmcli connection add type wifi con-name "$TMP_PROFILE" ifname wlan0 \
     connection.autoconnect no >>"$LOG" 2>&1 \
     || { log "FAIL: nmcli connection add"; exit 2; }
 
-# 3. Switch to HIME-H-REAP.
+# 3. Switch to taden-ot-ap.
 log "step 3: nmcli connection up $TMP_PROFILE"
 if ! nmcli connection up "$TMP_PROFILE" >>"$LOG" 2>&1; then
     log "FAIL: could not bring $TMP_PROFILE up (signal? PSK? regdomain?)"
@@ -199,8 +214,8 @@ fi
 sleep 4
 ACTUAL_SSID="$(nmcli -t -f ACTIVE,SSID dev wifi | awk -F: '$1=="yes"{print $2; exit}')"
 log "active SSID after switch: $ACTUAL_SSID"
-if [[ "$ACTUAL_SSID" != "$HIME_SSID" ]]; then
-    log "FAIL: expected SSID=$HIME_SSID, got $ACTUAL_SSID"
+if [[ "$ACTUAL_SSID" != "$TADEN_SSID" ]]; then
+    log "FAIL: expected SSID=$TADEN_SSID, got $ACTUAL_SSID"
     exit 2
 fi
 
@@ -239,10 +254,10 @@ log "step 7: POST /merge to $SIDECAR_IN (inside $CONTAINER)"
 # YYYYMMDDHHMMSS (14 chars). The HF1RCM01.MK_DATE column is 14 wide; anything
 # else triggers ORA-12899 "value too large for column".
 #
-# We use a *stable sentinel* timestamp + station triple (999/998/997) so the
-# MERGE is idempotent across runs: first invocation inserts the row, every
+# We use a *stable sentinel* timestamp + station triple (999/998/997 default) so
+# the MERGE is idempotent across runs: first invocation inserts the row, every
 # subsequent run hits WHEN MATCHED (rows_affected=0) without polluting
-# HHC001 with new rows. Override MK_DATE / STA_NO* via env if needed.
+# HHS001 with new rows. Override MK_DATE / SMOKE_STA_NO* via env if needed.
 MK_DATE="${MK_DATE:-20990101000002}"
 SMOKE_STA1="${SMOKE_STA1:-${PCFG[sta_no1]}}"
 SMOKE_STA2="${SMOKE_STA2:-${PCFG[sta_no2]}}"
@@ -288,6 +303,5 @@ if [[ "$ROWS_AFFECTED" != "1" && "$ROWS_AFFECTED" != "0" ]]; then
     exit 1
 fi
 
-log "SUCCESS: HIME-H-REAP -> oracle-jdbc -> HHC001 MERGE confirmed"
-# trap cleanup restores UFI_103134 on exit.
+log "SUCCESS: taden-ot-ap -> oracle-jdbc -> HHS001 MERGE confirmed"
 exit 0

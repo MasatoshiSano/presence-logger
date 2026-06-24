@@ -25,9 +25,9 @@ def _profile(client_mode: str, **overrides):
         "oracle": {
             "client_mode": client_mode,
             "auth_mode": "basic",
-            "host": "10.166.5.93",
+            "host": "10.168.252.16",
             "port": 1521,
-            "service_name": "HHC001",
+            "service_name": "HHS001",
             "user": "ZHH001",
             "password": "ZHH001_99",
             "table_name": "HF1RCM01",

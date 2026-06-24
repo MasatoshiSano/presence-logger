@@ -156,7 +156,7 @@ def _validate_optional_station(name: str, station: Any) -> None:
 def _validate_optional_wifi(name: str, wifi: Any) -> None:
     """Validate the OPTIONAL Wi-Fi provisioning block on a profile.
 
-    Consumed by operator tooling (verify_himereap_oracle.sh, future install
+    Consumed by operator tooling (verify_taden_ot_ap_oracle.sh, future install
     helpers) -- the bridge service itself never reads this section. Bridge
     just observes the current SSID via nmcli; Wi-Fi setup is out-of-process.
     """

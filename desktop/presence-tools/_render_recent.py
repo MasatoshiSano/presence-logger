@@ -51,7 +51,7 @@ def main() -> int:
         if error_message:
             print(f"     {error_message}")
         print()
-        print("  ヒント: HIME-H-REAP に接続中か確認してください（未接続だとDBに届きません）。")
+        print("  ヒント: taden-ot-ap に接続中か確認してください（未接続だとDBに届きません）。")
         return 1
 
     if not rows:
