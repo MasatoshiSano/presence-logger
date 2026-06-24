@@ -114,7 +114,10 @@ def main() -> int:    # pragma: no cover
         half_open_after_seconds=bridge_cfg["circuit_breaker"]["half_open_after_seconds"],
         permanent_codes=set(bridge_cfg["circuit_breaker"]["permanent_ora_codes"]),
     )
-    network = NetworkWatcher(command=bridge_cfg["network_watcher"]["ssid_command"])
+    network = NetworkWatcher(
+        command=bridge_cfg["network_watcher"]["ssid_command"],
+        preferred_ssids=set(profiles_cfg["profiles"]),
+    )
     time_watcher = TimeWatcher(command=bridge_cfg["time_watcher"]["sync_command"])
     oracle_adapter = _OracleAdapter(jdbc_cfg=bridge_cfg["oracle_jdbc"])
 
