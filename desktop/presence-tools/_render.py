@@ -34,6 +34,13 @@ for raw in sys.stdin:
     eid = rec.get("event_id")
     ts = rec.get("ts", "")
 
+    # 種別を持つ行（detector の transition だけでなく、bridge の received /
+    # merge_committed / merge_failed も event_type を載せる）は対応表を更新する。
+    # これで起動時バッファ分や detector 行が表示窓の外でも ? にならない。
+    et = rec.get("event_type")
+    if eid and et:
+        typ[eid] = et
+
     if ev == "transition":
         t = rec.get("event_type")
         if eid:

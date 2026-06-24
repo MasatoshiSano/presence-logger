@@ -161,7 +161,14 @@ def main() -> int:    # pragma: no cover
             last_error=None,
         )
         inbox.insert_received(event)
-        _log.info("received", extra={"event": "received", "event_id": payload.event_id})
+        _log.info(
+            "received",
+            extra={
+                "event": "received",
+                "event_id": payload.event_id,
+                "event_type": payload.event_type,
+            },
+        )
 
     mqtt.subscribe_event(bridge_cfg["mqtt"]["topic_event"], _on_event)
 

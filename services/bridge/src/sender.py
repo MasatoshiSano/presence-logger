@@ -139,6 +139,7 @@ class Sender:
                 extra={
                     "event": "merge_committed",
                     "event_id": event.event_id,
+                    "event_type": event.event_type,
                     "mk_date": mk_date,
                     "rows_affected": result.rows_affected,
                     "profile": profile_name,
@@ -161,6 +162,7 @@ class Sender:
                 extra={
                     "event": "merge_failed",
                     "event_id": event.event_id,
+                    "event_type": event.event_type,
                     "ora_code": result.ora_code,
                     "retry_count": attempt,
                 },
