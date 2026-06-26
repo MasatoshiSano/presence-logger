@@ -82,6 +82,23 @@ class BridgeMqttClient:
         self._client.subscribe(topic, qos=2)
         self._client.message_callback_add(topic, _on_message)
 
+    def subscribe_text(
+        self, topic_filter: str, handler: Callable[[str, bytes], None]
+    ) -> None:
+        """Subscribe to a topic filter and hand the raw (topic, payload) to handler.
+
+        Used for liveness (status/heartbeat) where the device_id is in the topic
+        and payloads are small strings/JSON. QoS 1 is enough; status is retained.
+        """
+        if self._client is None:
+            raise RuntimeError("mqtt client not connected")
+
+        def _on_message(_client, _userdata, msg) -> None:
+            handler(msg.topic, msg.payload)
+
+        self._client.subscribe(topic_filter, qos=1)
+        self._client.message_callback_add(topic_filter, _on_message)
+
     def publish_ack(self, topic: str, *, event_id: str, mk_date_committed: str,
                     committed_at_iso: str) -> None:
         if self._client is None:

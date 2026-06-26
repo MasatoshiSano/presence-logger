@@ -30,3 +30,15 @@ retry:
 buffer:
   path: "/var/lib/presence-logger/detector_buf.db"
   max_rows: 100000
+
+# Liveness reporting to the hub (optional; defaults shown). On connect the
+# detector publishes "online" (retained) to <status_topic_prefix><device_id> and
+# registers an MQTT Last-Will "offline" the broker emits on ungraceful
+# disconnect; it also publishes a heartbeat every heartbeat_interval_seconds to
+# <heartbeat_topic_prefix><device_id>. keepalive_seconds tunes how fast the
+# broker detects a dead TCP connection (~1.5x).
+liveness:
+  status_topic_prefix: "presence/status/"
+  heartbeat_topic_prefix: "presence/heartbeat/"
+  heartbeat_interval_seconds: 20
+  keepalive_seconds: 30

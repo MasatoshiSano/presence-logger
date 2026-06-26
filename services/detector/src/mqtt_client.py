@@ -13,12 +13,30 @@ class DetectorMqttClient:
         self._client_id = f"{client_id_prefix}-{uuid.uuid4().hex[:8]}"
         self._client: paho.Client | None = None
 
-    def connect_and_loop(self, *, host: str, port: int, keepalive: int = 60) -> None:
+    def connect_and_loop(
+        self, *, host: str, port: int, keepalive: int = 60,
+        will_topic: str | None = None, will_payload: str | None = None,
+    ) -> None:
         client = paho.Client(client_id=self._client_id, protocol=paho.MQTTv311)
         client.reconnect_delay_set(min_delay=1, max_delay=60)
+        # Last-Will: broker emits this (retained) if we drop ungracefully, so the
+        # hub learns the device went offline without us being able to say so.
+        if will_topic is not None:
+            client.will_set(will_topic, payload=will_payload, qos=1, retain=True)
         client.connect(host, port, keepalive=keepalive)
         client.loop_start()
         self._client = client
+
+    def publish_retained(self, topic: str, payload: str, *, qos: int = 1) -> None:
+        """Publish a small retained string (used for online/offline status)."""
+        if self._client is None:
+            raise RuntimeError("mqtt client not connected")
+        self._client.publish(topic, payload, qos=qos, retain=True)
+
+    def publish_heartbeat(self, topic: str, payload: dict, *, qos: int = 0) -> None:
+        if self._client is None:
+            raise RuntimeError("mqtt client not connected")
+        self._client.publish(topic, json.dumps(payload, ensure_ascii=False), qos=qos)
 
     def publish_event(self, topic: str, payload: dict, *, qos: int = 2) -> paho.MQTTMessageInfo:
         if self._client is None:

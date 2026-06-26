@@ -44,3 +44,15 @@ buffer:
 logging:
   level: "INFO"
   buffer_stats_interval_seconds: 60
+
+# Child-device liveness monitoring (optional; defaults shown). The hub subscribes
+# to <status_topic_prefix><device_id> (retained online/offline incl. MQTT
+# Last-Will) and <heartbeat_topic_prefix><device_id> (periodic JSON), then logs a
+# "liveness" snapshot every report_interval_seconds and a "device_down" warning
+# for any device that is offline or whose heartbeat is older than
+# heartbeat_timeout_seconds.
+liveness:
+  status_topic_prefix: "presence/status/"
+  heartbeat_topic_prefix: "presence/heartbeat/"
+  heartbeat_timeout_seconds: 60
+  report_interval_seconds: 30

@@ -152,11 +152,23 @@ def main() -> int:    # pragma: no cover (integration entry point)
     buffer = BufferRepository(detector_cfg["buffer"]["path"])
     buffer.init()
 
+    # --- liveness: announce online + heartbeat, with a Last-Will for crashes ---
+    liv_cfg = detector_cfg.get("liveness", {})
+    status_topic = liv_cfg.get("status_topic_prefix", "presence/status/") + device_cfg["device_id"]
+    heartbeat_topic = (
+        liv_cfg.get("heartbeat_topic_prefix", "presence/heartbeat/") + device_cfg["device_id"]
+    )
+    heartbeat_interval = liv_cfg.get("heartbeat_interval_seconds", 20)
+
     mqtt = DetectorMqttClient(client_id_prefix=detector_cfg["mqtt"]["client_id_prefix"])
     mqtt.connect_and_loop(
         host=os.environ.get("MQTT_HOST", detector_cfg["mqtt"]["host"]),
         port=detector_cfg["mqtt"]["port"],
+        keepalive=liv_cfg.get("keepalive_seconds", 30),
+        will_topic=status_topic,
+        will_payload="offline",
     )
+    mqtt.publish_retained(status_topic, "online")
 
     def _on_ack(event_id: str, mk_date_committed: str) -> None:
         buffer.mark_acked(event_id)
@@ -188,6 +200,7 @@ def main() -> int:    # pragma: no cover (integration entry point)
     last_health = 0.0
     last_retry_scan = 0.0
     last_stats = 0.0
+    last_heartbeat = 0.0
     running = True
 
     def _stop(*_a):
@@ -226,6 +239,22 @@ def main() -> int:    # pragma: no cover (integration entry point)
         if now - last_health >= 5.0:
             Path(HEALTH_FILE).touch()
             last_health = now
+        if now - last_heartbeat >= heartbeat_interval:
+            try:
+                mqtt.publish_heartbeat(heartbeat_topic, {
+                    "device_id": device_cfg["device_id"],
+                    "ts_iso": format_iso_with_tz(time_source.now()),
+                    "wall_clock_synced": time_source.is_synced(),
+                    "buffer_pending": buffer.count(),
+                    "camera_consecutive_errors": camera.consecutive_failures,
+                    "schema_version": 1,
+                })
+            except Exception as e:   # heartbeat must never crash the detector
+                _log.warning("heartbeat_failed", extra={
+                    "event": "heartbeat_failed",
+                    "error": {"type": type(e).__name__, "message": str(e)},
+                })
+            last_heartbeat = now
         if now - last_stats >= 60.0:
             _log.info("periodic", extra={
                 "event": "periodic",
@@ -240,6 +269,11 @@ def main() -> int:    # pragma: no cover (integration entry point)
             time.sleep(period - elapsed)
 
     camera.close()
+    # graceful shutdown: announce offline now instead of waiting for the Last-Will
+    try:
+        mqtt.publish_retained(status_topic, "offline")
+    except Exception:  # noqa: BLE001, S110  best-effort on the way out
+        pass
     mqtt.disconnect()
     return 0
 

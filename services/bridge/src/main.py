@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import os
 import signal
@@ -10,6 +11,7 @@ from pathlib import Path
 from services.bridge.src import config as cfg_mod
 from services.bridge.src.circuit_breaker import CircuitBreaker
 from services.bridge.src.inbox import InboxEvent, InboxRepository
+from services.bridge.src.liveness import LivenessTracker, device_id_from_topic
 from services.bridge.src.logging_setup import setup_logging
 from services.bridge.src.mqtt_listener import BridgeMqttClient, EventPayload
 from services.bridge.src.network_watcher import NetworkWatcher
@@ -170,6 +172,37 @@ def main() -> int:    # pragma: no cover
 
     mqtt.subscribe_event(bridge_cfg["mqtt"]["topic_event"], _on_event)
 
+    # --- child-device liveness (status + heartbeat) ---
+    liv_cfg = bridge_cfg.get("liveness", {})
+    status_prefix = liv_cfg.get("status_topic_prefix", "presence/status/")
+    hb_prefix = liv_cfg.get("heartbeat_topic_prefix", "presence/heartbeat/")
+    hb_timeout = liv_cfg.get("heartbeat_timeout_seconds", 60)
+    liveness_report_interval = liv_cfg.get("report_interval_seconds", 30)
+    liveness = LivenessTracker(heartbeat_timeout_seconds=hb_timeout)
+
+    def _on_status(topic: str, payload: bytes) -> None:
+        dev = device_id_from_topic(topic, status_prefix)
+        if dev:
+            liveness.record_status(
+                dev, payload.decode("utf-8", errors="replace").strip(),
+                now=time.monotonic(),
+            )
+
+    def _on_heartbeat(topic: str, payload: bytes) -> None:
+        dev = device_id_from_topic(topic, hb_prefix)
+        if not dev:
+            return
+        try:
+            data = json.loads(payload.decode("utf-8"))
+            if not isinstance(data, dict):
+                data = {}
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            data = {}
+        liveness.record_heartbeat(dev, data, now=time.monotonic())
+
+    mqtt.subscribe_text(status_prefix + "#", _on_status)
+    mqtt.subscribe_text(hb_prefix + "#", _on_heartbeat)
+
     sender = Sender(deps=SenderDeps(
         inbox=inbox,
         resolver=resolver,
@@ -200,6 +233,7 @@ def main() -> int:    # pragma: no cover
     last_stats = 0.0
     last_network = 0.0
     last_time = 0.0
+    last_liveness = 0.0
 
     while running:
         now = time.monotonic()
@@ -227,6 +261,29 @@ def main() -> int:    # pragma: no cover
                 },
             )
             last_stats = now
+        if now - last_liveness >= liveness_report_interval:
+            devices = liveness.snapshot(now=now)
+            down = [d for d in devices if d["state"] in ("offline", "stale")]
+            _log.info(
+                "liveness",
+                extra={
+                    "event": "liveness",
+                    "devices_total": len(devices),
+                    "devices_down": len(down),
+                    "devices": devices,
+                },
+            )
+            for d in down:
+                _log.warning(
+                    "device_down",
+                    extra={
+                        "event": "device_down",
+                        "device_id": d["device_id"],
+                        "state": d["state"],
+                        "age_seconds": d["age_seconds"],
+                    },
+                )
+            last_liveness = now
 
         time.sleep(1.0)
 
