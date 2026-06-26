@@ -379,12 +379,29 @@
     <p class="lead reveal">投函してから台帳に載るまで、6ステップ。</p>
 
     <div class="steps stagger reveal">
-      <div class="step"><h4>子PiをAPに接続</h4><p>子ラズパイをハブの無線「presence-hub」に繋ぐ。自動で 10.42.0.x のIPがもらえる。</p><span class="cmd">nmcli device wifi connect "presence-hub" password ****</span></div>
+      <div class="step"><h4>子PiをAPに接続</h4><p>子ラズパイをハブの無線「presence-hub」に繋ぐ。下の接続情報を使う。自動で 10.42.0.x のIPがもらえる。</p><span class="cmd">sudo nmcli device wifi connect "presence-hub" password "presence-hub-2026"</span></div>
       <div class="step"><h4>CSVを置く</h4><p>送りたい行を書いたCSVを子Piの outbox フォルダに置く。</p><span class="cmd">~/outbox/records.csv</span></div>
       <div class="step"><h4>発送係がJSONで投函</h4><p>child-csv-to-mqtt.py が各行をJSONにして MQTT の presence/record へ送信（QoS2）。送ったファイルは sent へ退避。</p><span class="cmd">MQTT_HOST=10.42.0.1 python3 child-csv-to-mqtt.py</span></div>
       <div class="step"><h4>ハブが受け取り控える</h4><p>ハブのmosquittoが受信→bridgeが「record_inbox」に保存。ここまでは工場網が無くてもOK（貯めておける）。</p><span class="cmd">log: record_received</span></div>
       <div class="step"><h4>Oracleへ転記</h4><p>ハブが工場網（HIME-H-REAP）に繋がっている間に、bridgeが行の値そのままで HHC001 に書き込む（MERGE）。</p><span class="cmd">log: record_committed / rows_affected:1</span></div>
       <div class="step"><h4>完了の合図</h4><p>書けたら presence/record/ack で「受領」を返す。失敗時は時間をおいて自動で再挑戦。</p></div>
+    </div>
+
+    <!-- presence-hub 接続情報 -->
+    <div class="codecard reveal"><div class="ttl">🔑 presence-hub の接続情報（子Pi側で使う）</div><pre><span class="cm"># Wi-Fi（ハブのドングルAP）</span>
+SSID     : presence-hub        <span class="cm"># 2.4GHz・隠しではないので一覧に出る</span>
+パスワード : presence-hub-2026   <span class="cm"># WPA2。運用で変えたら↓も更新</span>
+ハブ(GW) : 10.42.0.1           <span class="cm"># 子Piは 10.42.0.x が自動付与(DHCP)</span>
+
+<span class="cm"># ① 接続（子ラズパイで1回）</span>
+sudo nmcli device wifi connect "presence-hub" password "presence-hub-2026"
+
+<span class="cm"># ② つながったか確認</span>
+ping 10.42.0.1            <span class="cm"># ハブに届けばOK</span>
+nmcli device wifi list | grep presence-hub   <span class="cm"># 電波が見えるか</span></pre></div>
+
+    <div class="callout warn reveal"><span class="lbl">前提</span><span class="ico">⚠️</span>
+      この電波が出ているのは、ハブ側で<strong>AP（presence-hub）が起動しているとき</strong>だけです。ハブで Desktop「HIME-H-REAP 接続」を押すと、APの起動とMQTTの公開まで自動で整います。パスワードはハブの <code>secrets.env</code> の <code>WIFI_AP_PSK</code> で管理しているので、変更したらこの資料も直してください。
     </div>
 
     <div class="dist reveal">
