@@ -22,6 +22,9 @@ from services.bridge.src.oracle_client import (
 )
 from services.bridge.src.oracle_jdbc_client import execute_merge_via_jdbc
 from services.bridge.src.profile_resolver import ProfileResolver
+from services.bridge.src.record import parse_record_payload
+from services.bridge.src.record_inbox import RecordInboxEvent, RecordInboxRepository
+from services.bridge.src.record_sender import RecordSender, RecordSenderDeps
 from services.bridge.src.retry import BackoffPolicy
 from services.bridge.src.sender import Sender, SenderDeps
 from services.bridge.src.time_watcher import TimeWatcher
@@ -108,6 +111,11 @@ def main() -> int:    # pragma: no cover
 
     inbox = InboxRepository(bridge_cfg["buffer"]["path"])
     inbox.init()
+    record_cfg = bridge_cfg.get("record", {})
+    record_inbox = RecordInboxRepository(
+        record_cfg.get("buffer_path", "/var/lib/presence-logger/bridge_record_buf.db")
+    )
+    record_inbox.init()
     resolver = ProfileResolver(
         profiles=profiles_cfg["profiles"],
         unknown_policy=profiles_cfg["unknown_ssid_policy"],
@@ -203,6 +211,47 @@ def main() -> int:    # pragma: no cover
     mqtt.subscribe_text(status_prefix + "#", _on_status)
     mqtt.subscribe_text(hb_prefix + "#", _on_heartbeat)
 
+    # --- child-Pi records (presence/record): fully-formed Oracle rows ---
+    record_topic = record_cfg.get("topic", "presence/record")
+    record_ack_topic = record_cfg.get("topic_ack", "presence/record/ack")
+
+    def _on_record(topic: str, payload: bytes) -> None:
+        try:
+            rec = parse_record_payload(payload)
+        except ValueError as e:
+            _log.warning(
+                "record_parse_failed",
+                extra={
+                    "event": "record_parse_failed",
+                    "error": {"type": type(e).__name__, "message": str(e)},
+                },
+            )
+            return
+        record_inbox.insert_received(RecordInboxEvent(
+            event_id=rec.event_id,
+            mk_date=rec.mk_date,
+            sta_no1=rec.sta_no1,
+            sta_no2=rec.sta_no2,
+            sta_no3=rec.sta_no3,
+            t1_status=rec.t1_status,
+            device_id=rec.device_id,
+            raw_payload=payload.decode("utf-8", errors="replace"),
+            status="received",
+            received_at_iso=datetime.now(UTC).isoformat(),
+            sent_at_iso=None,
+            mk_date_committed=None,
+            retry_count=0,
+            next_retry_at_iso=None,
+            last_error=None,
+        ))
+        _log.info(
+            "record_received",
+            extra={"event": "record_received", "event_id": rec.event_id,
+                   "device_id": rec.device_id},
+        )
+
+    mqtt.subscribe_text(record_topic, _on_record)
+
     sender = Sender(deps=SenderDeps(
         inbox=inbox,
         resolver=resolver,
@@ -213,6 +262,21 @@ def main() -> int:    # pragma: no cover
         mqtt=mqtt,
         device_cfg=device_cfg,
         topic_ack=bridge_cfg["mqtt"]["topic_ack"],
+        backoff_policy=BackoffPolicy(
+            initial=bridge_cfg["retry"]["initial_delay_seconds"],
+            multiplier=bridge_cfg["retry"]["multiplier"],
+            cap=bridge_cfg["retry"]["max_delay_seconds"],
+        ),
+    ))
+
+    record_sender = RecordSender(deps=RecordSenderDeps(
+        record_inbox=record_inbox,
+        resolver=resolver,
+        breaker=breaker,
+        network=network,
+        oracle=oracle_adapter,
+        mqtt=mqtt,
+        topic_ack=record_ack_topic,
         backoff_policy=BackoffPolicy(
             initial=bridge_cfg["retry"]["initial_delay_seconds"],
             multiplier=bridge_cfg["retry"]["multiplier"],
@@ -246,6 +310,7 @@ def main() -> int:    # pragma: no cover
             last_time = now
 
         sender.run_once(now=datetime.now(UTC))
+        record_sender.run_once(now=datetime.now(UTC))
 
         if now - last_health >= 5.0:
             Path(HEALTH_FILE).touch()
@@ -258,6 +323,7 @@ def main() -> int:    # pragma: no cover
                     "current_ssid": network.cached_ssid,
                     "ntp_synced": time_watcher.is_synced,
                     "inbox_count": inbox.count(),
+                    "record_inbox_count": record_inbox.count(),
                 },
             )
             last_stats = now

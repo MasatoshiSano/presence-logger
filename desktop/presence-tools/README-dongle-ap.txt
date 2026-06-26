@@ -31,11 +31,22 @@ PSK は secrets.env の WIFI_AP_PSK に入れておく（ファイルに直書�
          wlan0=HIME-H-REAP(工場/Oracle) + wlan1=AP     … ネット無し（SSH/Claudeは切断）
 
 --- 子Pi → ハブ → Oracle のデータ経路 --------------------------
-子Pi(detector)を MQTT_HOST=10.42.0.1 で起動 → presence/event を発行
-→ ハブの mosquitto → bridge → Oracle(HHC001)。
 ハブで mosquitto を子Piへ公開するには hub override を併用:
        docker compose -f docker-compose.yml -f docker-compose.hub.yml up -d
 (セキュリティ: 1883 は 10.42.0.1 だけにバインド＝工場網には晒さない)
+(注: 「HIME-H-REAP 接続」アイコンを使えば、AP起動とこの mosquitto 公開まで自動)
+
+経路は2種類:
+ (A) 在席イベント: 子Pi(detector)を MQTT_HOST=10.42.0.1 で起動 → presence/event
+     (ENTER/EXIT) → bridge が profile の席番号で HHC001 へ。
+ (B) CSVレコード: 子Piの CSV 行(YYYYMMDDhhmmss,STA_NO1,STA_NO2,STA_NO3,T1_STATUS)を
+     child-csv-to-mqtt.py が JSON 化して presence/record へ発行 → bridge が
+     「行の値そのまま」HHC001 へ MERGE(席番号もT1_STATUSもCSV側の値)。
+     子Piでの起動例:
+       MQTT_HOST=10.42.0.1 DEVICE_ID=child-01 WATCH_DIR=~/outbox \
+         python3 child-csv-to-mqtt.py
+     ~/outbox に *.csv を置くと1行ずつ送信し、~/sent へ退避。冪等(再送しても
+     二重記録されない)。bridge側設定は bridge.yaml の record: セクション。
 
 --- 子Piの死活監視 ---------------------------------------------
 detector は接続時に presence/status/<device_id>=online(retained)＋Last-Will offline、

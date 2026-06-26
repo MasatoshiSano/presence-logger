@@ -56,3 +56,13 @@ liveness:
   heartbeat_topic_prefix: "presence/heartbeat/"
   heartbeat_timeout_seconds: 60
   report_interval_seconds: 30
+
+# Child-Pi "record" ingestion (optional; defaults shown). Children publish
+# fully-formed Oracle rows (MK_DATE/STA_NO1-3/T1_STATUS) as JSON to `topic`; the
+# bridge buffers them durably in buffer_path and MERGEs them to Oracle using the
+# row's own values (no ENTER/EXIT mapping). Idempotent via event_id + the MERGE
+# key. An ack is published to topic_ack on commit.
+record:
+  topic: "presence/record"
+  topic_ack: "presence/record/ack"
+  buffer_path: "/var/lib/presence-logger/bridge_record_buf.db"
