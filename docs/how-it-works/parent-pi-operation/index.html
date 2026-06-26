@@ -1,0 +1,494 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>親ラズパイの起動と運用 ── 2つの無線の役割</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Klee+One:wght@400;600&family=Zen+Maru+Gothic:wght@400;500;700&family=JetBrains+Mono:wght@400;500&family=Noto+Color+Emoji&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --paper:#faf6ea;
+    --paper-2:#f2ead4;
+    --ink:#2c2e44;
+    --ink-soft:#5a5d76;
+    --rule:#cfe0ef;
+    --red:#e24a37;
+    --red-soft:#f4a79c;
+    --yellow:#ffd84d;
+    --pink:#ff9ec4;
+    --blue:#86c8e6;
+    --mint:#9adfa9;
+    --lilac:#c3b4ec;
+    --bluepen:#2f6fb3;
+    --shadow:rgba(44,46,68,.16);
+    --maxw:1080px;
+    --emoji:"Apple Color Emoji","Segoe UI Emoji","Segoe UI Symbol","Noto Color Emoji";
+    --font-hand:"Klee One",serif,var(--emoji);
+    --font-body:"Zen Maru Gothic",sans-serif,var(--emoji);
+    --font-mono:"JetBrains Mono",monospace,var(--emoji);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  body{
+    font-family:var(--font-body);
+    color:var(--ink);
+    line-height:1.85;
+    background-color:var(--paper);
+    background-image:
+      repeating-linear-gradient(transparent 0 33px, rgba(120,160,200,.16) 33px 34px),
+      radial-gradient(circle at 12% 8%, rgba(255,216,77,.10), transparent 40%),
+      radial-gradient(circle at 88% 92%, rgba(134,200,230,.12), transparent 45%);
+    background-attachment:fixed;
+    -webkit-font-smoothing:antialiased;
+    overflow-x:hidden;
+  }
+  body::before{
+    content:"";position:fixed;inset:0;pointer-events:none;z-index:9999;opacity:.04;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    mix-blend-mode:multiply;
+  }
+  body::after{
+    content:"";position:fixed;top:0;bottom:0;left:max(18px, calc(50% - var(--maxw)/2 - 6px));
+    width:2px;background:rgba(226,74,55,.28);pointer-events:none;z-index:0;
+  }
+  @media(max-width:1140px){body::after{display:none}}
+
+  .wrap{max-width:var(--maxw);margin:0 auto;padding:0 26px;position:relative;z-index:1}
+  code{font-family:var(--font-mono);font-size:.84em;background:rgba(47,111,179,.10);
+    color:var(--bluepen);padding:.12em .42em;border-radius:5px;border:1px solid rgba(47,111,179,.18);white-space:nowrap}
+
+  /* ---------- HERO ---------- */
+  header.hero{padding:84px 0 56px;text-align:center;position:relative}
+  .tape{position:absolute;width:148px;height:34px;background:rgba(255,216,77,.55);
+    box-shadow:0 2px 6px var(--shadow);backdrop-filter:saturate(1.2)}
+  .tape.t1{top:42px;left:50%;transform:translateX(-50%) rotate(-3deg)}
+  .eyebrow{font-family:var(--font-hand);font-size:1.05rem;color:var(--red);
+    letter-spacing:.18em;margin-bottom:10px}
+  .hero h1{font-family:var(--font-hand);font-weight:600;line-height:1.25;
+    font-size:clamp(2.3rem,6vw,4.1rem);letter-spacing:.01em}
+  .hero h1 .mark{position:relative;white-space:nowrap}
+  .hero h1 .mark::after{content:"";position:absolute;left:-4px;right:-4px;bottom:.08em;height:.42em;
+    background:var(--yellow);opacity:.55;z-index:-1;border-radius:3px;transform:rotate(-1deg)}
+  .hero .sub{font-size:1.12rem;color:var(--ink-soft);margin-top:22px;max-width:620px;
+    margin-left:auto;margin-right:auto}
+  .hero .meta{margin-top:30px;font-family:var(--font-mono);font-size:.78rem;color:var(--ink-soft);opacity:.8}
+
+  .circle-note{display:inline-block;position:relative;padding:0 .15em}
+  .circle-note::before{content:"";position:absolute;inset:-8px -12px;border:2.5px solid var(--red);
+    border-radius:55% 45% 50% 50%/55% 50% 50% 45%;transform:rotate(-2deg);opacity:.7}
+
+  /* ---------- SECTIONS ---------- */
+  section{padding:50px 0}
+  .sec-head{display:flex;align-items:baseline;gap:14px;margin-bottom:8px}
+  .num{font-family:var(--font-hand);font-weight:600;font-size:2.4rem;color:var(--red);
+    line-height:1;flex:none}
+  h2{font-family:var(--font-hand);font-weight:600;font-size:clamp(1.5rem,3.6vw,2.1rem);line-height:1.3}
+  .lead{font-size:1.05rem;color:var(--ink-soft);margin:14px 0 28px;max-width:680px}
+  p+p{margin-top:14px}
+  strong{font-weight:700;background:linear-gradient(transparent 62%, rgba(255,216,77,.5) 62%)}
+
+  .analogy{position:relative;background:var(--paper-2);border:2px dashed rgba(226,74,55,.4);
+    border-radius:14px;padding:22px 24px 22px 56px;margin:24px 0;font-size:1.02rem}
+  .analogy::before{content:"たとえ";position:absolute;top:-13px;left:20px;background:var(--red);
+    color:#fff;font-family:var(--font-hand);font-size:.78rem;padding:2px 12px;border-radius:20px;
+    letter-spacing:.08em;box-shadow:0 2px 5px var(--shadow)}
+  .analogy .ico{position:absolute;left:16px;top:20px;font-size:1.4rem}
+
+  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(248px,1fr));gap:26px;margin-top:14px}
+  .card{position:relative;background:#fffef9;border-radius:12px;padding:26px 22px 24px;
+    box-shadow:3px 5px 0 var(--shadow);border:1px solid rgba(44,46,68,.08);transition:transform .25s ease, box-shadow .25s ease}
+  .card:hover{transform:translateY(-5px) rotate(-.4deg);box-shadow:5px 10px 0 var(--shadow)}
+  .card .pin{position:absolute;top:-10px;left:50%;transform:translateX(-50%);width:18px;height:18px;
+    border-radius:50%;box-shadow:0 2px 4px var(--shadow);border:3px solid rgba(255,255,255,.7)}
+  .card .emoji{font-size:2.1rem;display:block;margin-bottom:8px}
+  .card h3{font-family:var(--font-hand);font-weight:600;font-size:1.22rem;margin-bottom:4px}
+  .card .role{font-size:.82rem;color:var(--red);font-weight:700;margin-bottom:10px;font-family:var(--font-hand)}
+  .card p{font-size:.93rem;color:var(--ink-soft)}
+  .card .real{margin-top:12px;font-family:var(--font-mono);font-size:.72rem;color:var(--bluepen);
+    background:rgba(47,111,179,.07);border-radius:6px;padding:7px 9px;line-height:1.5;word-break:break-all;white-space:normal}
+  .card.c-yellow .pin{background:var(--yellow)} .card.c-yellow{border-top:4px solid var(--yellow)}
+  .card.c-pink .pin{background:var(--pink)} .card.c-pink{border-top:4px solid var(--pink)}
+  .card.c-blue .pin{background:var(--blue)} .card.c-blue{border-top:4px solid var(--blue)}
+  .card.c-mint .pin{background:var(--mint)} .card.c-mint{border-top:4px solid var(--mint)}
+  .card.c-lilac .pin{background:var(--lilac)} .card.c-lilac{border-top:4px solid var(--lilac)}
+
+  .route{display:grid;gap:12px;margin-top:18px}
+  .route-row{display:grid;grid-template-columns:1fr 44px 1fr;align-items:center;gap:8px;
+    background:#fffef9;border-radius:10px;padding:12px 16px;box-shadow:2px 3px 0 var(--shadow);
+    border:1px solid rgba(44,46,68,.07)}
+  .route-row .say{font-size:.97rem}
+  .route-row .say .q{font-family:var(--font-hand);color:var(--ink)}
+  .route-row .arrow{text-align:center;color:var(--red);font-size:1.3rem;font-weight:700}
+  .route-row .go{font-size:.9rem;color:var(--ink-soft)}
+  .route-row .go b{color:var(--bluepen);font-family:var(--font-mono);font-size:.84rem;font-weight:500}
+  @media(max-width:560px){.route-row{grid-template-columns:1fr;text-align:center;gap:4px}
+    .route-row .arrow{transform:rotate(90deg)}}
+
+  .rule-pill{display:inline-block;background:var(--ink);color:var(--paper);font-size:.86rem;
+    padding:6px 14px;border-radius:20px;margin:6px 6px 0 0;font-family:var(--font-hand)}
+
+  /* ハブ＆スポーク図 */
+  .dist{display:grid;grid-template-columns:1fr;gap:0;margin-top:20px;position:relative}
+  .hub{background:var(--ink);color:var(--paper);border-radius:14px;padding:22px 24px;max-width:430px;
+    margin:0 auto;text-align:center;box-shadow:4px 6px 0 var(--shadow);position:relative;z-index:2}
+  .hub .label{font-family:var(--font-hand);font-size:1.25rem;color:var(--yellow)}
+  .hub .path{font-family:var(--font-mono);font-size:.74rem;opacity:.85;margin-top:6px;word-break:break-all}
+  .spokes{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin-top:30px;position:relative}
+  .spokes::before{content:"";position:absolute;top:-22px;left:50%;width:2px;height:22px;background:var(--ink-soft)}
+  .spoke{background:#fffef9;border:2px dashed var(--bluepen);border-radius:10px;padding:14px;text-align:center;
+    box-shadow:2px 3px 0 var(--shadow)}
+  .spoke .t{font-family:var(--font-hand);font-size:1rem}
+  .spoke .p{font-family:var(--font-mono);font-size:.68rem;color:var(--bluepen);margin-top:4px;word-break:break-all}
+  .spoke .tag{font-size:.7rem;color:var(--ink-soft);margin-top:6px}
+
+  /* ステップ */
+  .steps{counter-reset:s;margin-top:18px;display:grid;gap:14px}
+  .step{position:relative;background:#fffef9;border-radius:10px;padding:16px 18px 16px 60px;
+    box-shadow:2px 3px 0 var(--shadow);border:1px solid rgba(44,46,68,.07)}
+  .step::before{counter-increment:s;content:counter(s);position:absolute;left:14px;top:14px;
+    width:32px;height:32px;background:var(--red);color:#fff;border-radius:50%;display:grid;place-items:center;
+    font-family:var(--font-hand);font-weight:600;font-size:1.1rem;box-shadow:0 2px 4px var(--shadow)}
+  .step h4{font-family:var(--font-hand);font-weight:600;font-size:1.05rem;margin-bottom:2px}
+  .step p{font-size:.9rem;color:var(--ink-soft)}
+  .step .cmd{font-family:var(--font-mono);font-size:.76rem;color:var(--bluepen);margin-top:6px;display:block}
+
+  /* 状態表 */
+  .status{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px;margin-top:16px}
+  .st-item{background:#fffef9;border-radius:12px;padding:18px 20px;box-shadow:2px 3px 0 var(--shadow);
+    border-left:5px solid var(--mint)}
+  .st-item.warn{border-left-color:var(--red)}
+  .st-item .badge{font-family:var(--font-hand);font-size:.82rem;font-weight:600;display:inline-block;margin-bottom:6px}
+  .st-item.ok .badge{color:#2f9e54} .st-item.warn .badge{color:var(--red)}
+  .st-item h4{font-size:1rem;margin-bottom:4px}
+  .st-item p{font-size:.88rem;color:var(--ink-soft)}
+
+  /* まとめ */
+  .summary{background:var(--ink);color:var(--paper);border-radius:18px;padding:40px 34px;margin:40px 0;
+    box-shadow:5px 7px 0 var(--shadow);position:relative;overflow:hidden}
+  .summary::after{content:"📎";position:absolute;top:-10px;right:18px;font-size:3.4rem;opacity:.18;transform:rotate(18deg)}
+  .summary h2{color:var(--yellow)}
+  .summary .lead{color:rgba(250,246,234,.82)}
+  .summary ul{list-style:none;margin-top:18px;display:grid;gap:12px}
+  .summary li{padding-left:30px;position:relative;font-size:1rem}
+  .summary li::before{content:"✓";position:absolute;left:0;top:0;color:var(--mint);font-weight:700}
+  .summary strong{background:none;color:var(--yellow)}
+
+  footer{text-align:center;padding:30px 0 60px;color:var(--ink-soft);font-size:.82rem}
+  footer .hand{font-family:var(--font-hand);font-size:1rem;color:var(--red)}
+
+  /* reveal */
+  html.js .reveal{opacity:0;transform:translateY(26px);transition:opacity .6s ease, transform .6s ease}
+  html.js .reveal.in{opacity:1;transform:none}
+  .cards .card,.route-row,.spoke,.step,.st-item{transition:transform .25s ease, box-shadow .25s ease, opacity .5s ease}
+  .stagger.in>*{animation:pop .5s ease backwards}
+  .stagger.in>*:nth-child(2){animation-delay:.07s}
+  .stagger.in>*:nth-child(3){animation-delay:.14s}
+  .stagger.in>*:nth-child(4){animation-delay:.21s}
+  .stagger.in>*:nth-child(5){animation-delay:.28s}
+  .stagger.in>*:nth-child(6){animation-delay:.35s}
+  @keyframes pop{from{opacity:0;transform:translateY(18px) scale(.97)}to{opacity:1;transform:none}}
+  @media(prefers-reduced-motion:reduce){.reveal{opacity:1;transform:none}.stagger.in>*{animation:none}}
+
+  /* ---------- NAV ---------- */
+  .topnav{position:sticky;top:0;z-index:50;background:rgba(250,246,234,.88);
+    backdrop-filter:blur(8px) saturate(1.1);border-bottom:2px solid rgba(226,74,55,.22)}
+  .topnav .inner{max-width:var(--maxw);margin:0 auto;padding:9px 22px;display:flex;align-items:center;gap:9px;overflow-x:auto}
+  .topnav .inner::-webkit-scrollbar{height:0}
+  .topnav .brand{font-family:var(--font-hand);font-weight:600;color:var(--red);font-size:.95rem;white-space:nowrap;flex:none}
+  .topnav a{flex:none;text-decoration:none;color:var(--ink-soft);font-size:.84rem;
+    padding:5px 11px;border-radius:18px;white-space:nowrap;border:1px solid transparent;
+    transition:background .2s,color .2s,border-color .2s}
+  .topnav a:hover{color:var(--ink);background:rgba(47,111,179,.09)}
+  .topnav a.active{color:#fff;background:var(--red);border-color:var(--red)}
+  .topnav a .n{font-family:var(--font-hand);font-weight:600;margin-right:3px}
+  section,.summary{scroll-margin-top:66px}
+
+  /* コードカード */
+  .codecard{background:var(--ink);border-radius:12px;margin:14px 0;box-shadow:3px 5px 0 var(--shadow);overflow:hidden}
+  .codecard .ttl{font-family:var(--font-hand);font-size:.8rem;color:var(--ink);background:var(--yellow);
+    padding:6px 14px;display:flex;align-items:center;gap:6px;letter-spacing:.02em}
+  .codecard pre{margin:0;padding:15px 18px;overflow-x:auto;font-family:var(--font-mono);font-size:.77rem;
+    line-height:1.75;color:#e7ecf5;white-space:pre}
+  .codecard pre .cm{color:#8fa6c4}
+
+  /* callout */
+  .callout{position:relative;border-radius:14px;padding:20px 22px 20px 56px;margin:24px 0;font-size:1rem}
+  .callout .ico{position:absolute;left:17px;top:19px;font-size:1.4rem}
+  .callout .lbl{position:absolute;top:-13px;left:20px;color:#fff;font-family:var(--font-hand);
+    font-size:.78rem;padding:2px 12px;border-radius:20px;letter-spacing:.08em;box-shadow:0 2px 5px var(--shadow)}
+  .callout.warn{background:#fdeeea;border:2px solid rgba(226,74,55,.45)}
+  .callout.warn .lbl{background:var(--red)}
+  .callout.tip{background:#eef7ee;border:2px solid rgba(47,158,84,.4)}
+  .callout.tip .lbl{background:#2f9e54}
+
+  /* チェックリスト */
+  .checks{display:grid;gap:12px;margin-top:16px}
+  .check{display:grid;grid-template-columns:36px 1fr;gap:13px;background:#fffef9;border-radius:10px;
+    padding:14px 16px;box-shadow:2px 3px 0 var(--shadow);border-left:5px solid var(--mint)}
+  .check.risk{border-left-color:var(--red)}
+  .check .mk{font-family:var(--font-hand);font-weight:600;font-size:1.35rem;color:#2f9e54;text-align:center;line-height:1.2}
+  .check.risk .mk{color:var(--red)}
+  .check h4{font-size:.98rem;margin-bottom:2px;font-family:var(--font-hand);font-weight:600}
+  .check p{font-size:.88rem;color:var(--ink-soft)}
+
+  /* 2無線ダイアグラム（このページ専用・既存トークンで構成） */
+  .radio-fig{margin-top:22px}
+  .radio-fig .pi{background:var(--ink);color:var(--paper);border-radius:14px;padding:16px 22px;text-align:center;
+    max-width:360px;margin:0 auto;box-shadow:4px 6px 0 var(--shadow)}
+  .radio-fig .pi .lbl{font-family:var(--font-hand);font-size:1.2rem;color:var(--yellow)}
+  .radio-fig .pi .sub2{font-family:var(--font-mono);font-size:.7rem;opacity:.8}
+  .radio-fig .legs{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:30px;position:relative}
+  .radio-fig .legs::before{content:"";position:absolute;top:-22px;left:50%;width:2px;height:22px;background:var(--ink-soft)}
+  .radio-fig .leg{background:#fffef9;border-radius:12px;padding:16px 18px;box-shadow:3px 5px 0 var(--shadow);text-align:center}
+  .radio-fig .leg.w0{border-top:5px solid var(--blue)}
+  .radio-fig .leg.w1{border-top:5px solid var(--mint)}
+  .radio-fig .leg .dev{font-family:var(--font-hand);font-weight:600;font-size:1.05rem}
+  .radio-fig .leg .mac{font-family:var(--font-mono);font-size:.66rem;color:var(--ink-soft)}
+  .radio-fig .leg .desc{font-size:.88rem;color:var(--ink-soft);margin-top:8px}
+  .radio-fig .leg .arrow{font-size:1.3rem;color:var(--red);margin:6px 0 2px}
+  .radio-fig .leg .dest{font-family:var(--font-hand);font-size:1rem}
+  @media(max-width:560px){.radio-fig .legs{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+
+<!-- ============ NAV ============ -->
+<nav class="topnav">
+  <div class="inner">
+    <span class="brand">📑 もくじ</span>
+    <a href="#s1"><span class="n">①</span>親Piとは</a>
+    <a href="#s2"><span class="n">②</span>起動方法</a>
+    <a href="#s3"><span class="n">③</span>2つの無線</a>
+    <a href="#s4"><span class="n">④</span>運用モード</a>
+    <a href="#s5"><span class="n">⑤</span>毎日の操作</a>
+    <a href="#s6"><span class="n">⑥</span>確認と注意</a>
+    <a href="#summary">まとめ</a>
+  </div>
+</nav>
+
+<!-- ============ HERO ============ -->
+<header class="hero">
+  <span class="tape t1"></span>
+  <div class="wrap">
+    <div class="eyebrow reveal">― presence-logger / 親(ハブ)ラズパイ ―</div>
+    <h1 class="reveal">親ラズパイの<span class="mark">起動</span>と<br>2つの無線の<span class="circle-note">役割</span></h1>
+    <p class="sub reveal">電源を入れてから記録が始まるまで。内蔵WiFiとUSBドングル、それぞれ何をしていて、どう使い分ければいいの？</p>
+    <div class="meta reveal">所要 6分 / 図解多め・中学生でも読めるように</div>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <!-- ============ ① 親Piとは ============ -->
+  <section id="s1">
+    <div class="sec-head reveal"><span class="num">①</span><h2>親ラズパイって何をする子？</h2></div>
+    <p class="lead reveal">親ラズパイは <strong>「工場のOracleにデータをあげる代表係（ハブ）」</strong>。子ラズパイたちのデータを集め、まとめてOracleに書き込みます。</p>
+    <div class="reveal"><p>そのために親は無線を<strong>2枚</strong>持っています。1枚は内蔵WiFi、もう1枚は後付けのUSBドングル。この2枚を上手に使い分けるのが運用のキモです。</p></div>
+
+    <div class="analogy reveal"><span class="ico">🏢</span>
+      会社の<strong>受付＆経理</strong>に似ています。受付（ドングル）は来客（子ラズパイ）を迎え入れ、経理（内蔵WiFi）は本社の金庫（Oracle）とやりとりする。窓口が2つあるから、来客対応と本社連絡を<strong>同時に</strong>こなせます。
+    </div>
+
+    <!-- 図: 親Pi → 2枚の無線 -->
+    <div class="radio-fig reveal">
+      <div class="pi"><div class="lbl">🍓 親ラズパイ（ハブ）</div><div class="sub2">Raspberry Pi 5 / 4コンテナが常駐</div></div>
+      <div class="legs stagger">
+        <div class="leg w0">
+          <div class="dev">📶 内蔵WiFi <code>wlan0</code></div>
+          <div class="mac">driver: brcmfmac</div>
+          <div class="desc">許可されたMACを持つ「正規回線」</div>
+          <div class="arrow">↓</div>
+          <div class="dest">工場網 → <strong>Oracle</strong></div>
+        </div>
+        <div class="leg w1">
+          <div class="dev">🔌 ドングル <code>wlan1</code></div>
+          <div class="mac">driver: rtl8821au (USB)</div>
+          <div class="desc">用途を切り替える「増設の窓口」</div>
+          <div class="arrow">↓</div>
+          <div class="dest">子Piの親機(AP) or ネット</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ ② 起動方法 ============ -->
+  <section id="s2">
+    <div class="sec-head reveal"><span class="num">②</span><h2>起動のしかた（電源だけ）</h2></div>
+    <p class="lead reveal">難しい操作は不要。<strong>電源を入れれば必要なプログラムは自動で立ち上がります。</strong>ただし「工場につなぐ」のは手動です。</p>
+
+    <div class="steps stagger reveal">
+      <div class="step"><h4>電源を入れる</h4><p>USB-C電源をつなぐだけ。OSが起動する。</p></div>
+      <div class="step"><h4>4つのコンテナが自動起動</h4><p>systemd と Docker の自動再起動で、記録に必要な4つの部品が勝手に立ち上がる。</p><span class="cmd">docker ps で4つ Up になる</span></div>
+      <div class="step"><h4>この時点では「工場未接続」</h4><p>電源ONだけでは工場網につながらない（安全のため自動接続しない）。まだOracleへはあげていないがOK。</p></div>
+      <div class="step"><h4>運用モードを選ぶ</h4><p>本番にするなら Desktop の「HIME-H-REAP 接続」を押す（⑤章）。これで工場とつながり記録開始。</p></div>
+    </div>
+
+    <p class="lead reveal" style="margin-bottom:8px">自動で立ち上がる4つの部品（コンテナ）：</p>
+    <div class="status stagger reveal">
+      <div class="st-item ok"><div class="badge">📬 受け口</div><h4>mosquitto</h4><p>MQTTの郵便受け。子Piや検知の結果を受け取る。</p></div>
+      <div class="st-item ok"><div class="badge">👁 検知</div><h4>detector</h4><p>このPiのカメラで在席を判定（カメラがあれば）。</p></div>
+      <div class="st-item ok"><div class="badge">🧮 転記</div><h4>bridge</h4><p>受けたデータをOracleへ書き込む司令塔。</p></div>
+      <div class="st-item ok"><div class="badge">🔌 橋渡し</div><h4>oracle-jdbc</h4><p>Oracleとつなぐ専用サイドカー（Java）。</p></div>
+    </div>
+
+    <div class="callout tip reveal"><span class="lbl">ヒント</span><span class="ico">💡</span>
+      再起動しても<strong>4つは自動で復活</strong>します。だから「電源を入れ直す」だけで土台は元通り。あとは工場につなぐ操作（アイコン）をするだけ。
+    </div>
+  </section>
+
+  <!-- ============ ③ 2つの無線の役割 ============ -->
+  <section id="s3">
+    <div class="sec-head reveal"><span class="num">③</span><h2>2つの無線、それぞれの役割</h2></div>
+    <p class="lead reveal">無線は2枚。<strong>内蔵(wlan0)は工場専用、ドングル(wlan1)は用途を切り替える窓口</strong>、と覚えると迷いません。</p>
+
+    <div class="cards stagger reveal">
+      <div class="card c-blue"><span class="pin"></span>
+        <span class="emoji">📶</span>
+        <div class="role">内蔵WiFi</div>
+        <h3>wlan0</h3>
+        <p>工場のOT網「HIME-H-REAP」につなぐ専用。<strong>許可されたMAC</strong>はこの内蔵側だけなので、工場接続は必ずここ。Oracle/NTPへの通り道。</p>
+        <div class="real">brcmfmac / 工場サブネットのみ・既定経路は奪わない</div>
+      </div>
+      <div class="card c-mint"><span class="pin"></span>
+        <span class="emoji">🔌</span>
+        <div class="role">USBドングル</div>
+        <h3>wlan1</h3>
+        <p>役割を切り替える窓口。ふだんは<strong>子Piの親機(AP)「presence-hub」</strong>。開発時はインターネット(UFI)受けにも使える。</p>
+        <div class="real">rtl8821au / AP=10.42.0.1（子Piは10.42.0.x）</div>
+      </div>
+    </div>
+
+    <div class="callout warn reveal"><span class="lbl">なぜ固定？</span><span class="ico">⚠️</span>
+      工場網は<strong>MACアドレス許可制</strong>。登録されているのは内蔵(wlan0)のMACだけなので、工場接続を内蔵に固定します。番号(wlan0/wlan1)ではなく<strong>「内蔵＝工場／ドングル＝子Pi」</strong>で覚えてください。
+    </div>
+
+    <!-- 図: 親 ← 複数子Pi（ドングルAP） -->
+    <p class="lead reveal" style="margin-bottom:6px">ドングルがAPのとき、子Piは1:多でぶら下がれます：</p>
+    <div class="dist reveal">
+      <div class="hub"><div class="label">🍓 親ラズパイ wlan1=AP</div><div class="path">SSID: presence-hub / 10.42.0.1</div></div>
+      <div class="spokes stagger">
+        <div class="spoke"><div class="t">🍓 子Pi-01</div><div class="p">10.42.0.x</div><div class="tag">MQTTで投函</div></div>
+        <div class="spoke"><div class="t">🍓 子Pi-02</div><div class="p">10.42.0.x</div><div class="tag">同じ宛先へ</div></div>
+        <div class="spoke"><div class="t">🍓 子Pi-03</div><div class="p">10.42.0.x</div><div class="tag">何台でもOK</div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ ④ 運用モード ============ -->
+  <section id="s4">
+    <div class="sec-head reveal"><span class="num">④</span><h2>3つの運用モード</h2></div>
+    <p class="lead reveal">無線は2枚しかないので、<strong>3つの役割（工場・ネット・子PiAP）のうち同時に持てるのは2つ</strong>。目的でモードを選びます。</p>
+
+    <div class="cards stagger reveal">
+      <div class="card c-yellow"><span class="pin"></span>
+        <span class="emoji">🏭</span>
+        <div class="role">本番モード</div>
+        <h3>工場 ＋ 子PiAP</h3>
+        <p>記録の本番。<strong>wlan0=工場(Oracle) / wlan1=AP(子Pi)</strong>。インターネットは無し。</p>
+        <div class="real">Desktop「HIME-H-REAP 接続」アイコン</div>
+      </div>
+      <div class="card c-blue"><span class="pin"></span>
+        <span class="emoji">🛠️</span>
+        <div class="role">開発モード</div>
+        <h3>ネット ＋ 子PiAP</h3>
+        <p>開発・動作確認用。<strong>wlan0=UFI(ネット) / wlan1=AP(子Pi)</strong>。ネットありで子Piテストもできる。</p>
+        <div class="real">sudo bash mode-dev.sh</div>
+      </div>
+      <div class="card c-mint"><span class="pin"></span>
+        <span class="emoji">🔬</span>
+        <div class="role">検証モード</div>
+        <h3>工場 ＋ ネット</h3>
+        <p>Oracle書込みを見ながら確認したいとき。<strong>wlan0=工場 / wlan1=UFI(ネット)</strong>。子PiAPは無し。</p>
+        <div class="real">dual-WiFi（手動 nmcli）</div>
+      </div>
+    </div>
+
+    <div class="callout warn reveal"><span class="lbl">大事</span><span class="ico">⚠️</span>
+      <strong>本番モードはインターネットが消えます</strong>（工場OT網は外に出られない）。工場外からSSH等で管理している場合、本番接続中は切れます。管理に戻すには「切断」でネット側へ。
+    </div>
+  </section>
+
+  <!-- ============ ⑤ 毎日の操作 ============ -->
+  <section id="s5">
+    <div class="sec-head reveal"><span class="num">⑤</span><h2>毎日の操作（アイコン2つ）</h2></div>
+    <p class="lead reveal">ふだんはDesktopの2つのアイコンだけ。<strong>「接続」で始め、「切断」で止める。</strong></p>
+
+    <div class="route stagger reveal">
+      <div class="route-row"><div class="say"><span class="q">記録を始めたい</span></div><div class="arrow">→</div><div class="go">Desktop <b>HIME-H-REAP 接続</b></div></div>
+      <div class="route-row"><div class="say"><span class="q">記録を止めたい</span></div><div class="arrow">→</div><div class="go">Desktop <b>HIME-H-REAP 切断</b></div></div>
+      <div class="route-row"><div class="say"><span class="q">入った記録を見たい</span></div><div class="arrow">→</div><div class="go">Desktop <b>直近30件の記録</b></div></div>
+    </div>
+
+    <div class="steps stagger reveal">
+      <div class="step"><h4>「接続」を押すと…</h4><p>wlan0=工場 を張り、時刻同期し、wlan1=AP を起動、子Pi用にMQTTを公開、検知も開始。これ一発で本番状態になる。</p><span class="cmd">工場・子PiAP・記録が一括ON</span></div>
+      <div class="step"><h4>記録が流れる</h4><p>このPiのカメラ＋子Piからの送信が、bridge経由でOracle(HHC001)へ。通信が一時切れても貯めて後で送る。</p></div>
+      <div class="step"><h4>「切断」を押すと…</h4><p>検知を止め、子PiAPを止め、工場網を切り、ネット(UFI)へ戻す。両方の通信がオフになり、管理に戻れる。</p><span class="cmd">工場・子PiAP・検知が一括OFF</span></div>
+    </div>
+
+    <div class="callout tip reveal"><span class="lbl">ヒント</span><span class="ico">💡</span>
+      隠しSSID＋5GHzの工場APは、つながるまで<strong>少し時間がかかる</strong>ことがあります。「接続」直後にすぐ反応しなくても、数十秒待てばつながります（待ち時間は調整済み）。
+    </div>
+  </section>
+
+  <!-- ============ ⑥ 確認と注意 ============ -->
+  <section id="s6">
+    <div class="sec-head reveal"><span class="num">⑥</span><h2>確認のしかたと注意点</h2></div>
+    <p class="lead reveal">「ちゃんと記録できている？」は、見るところが決まっています。</p>
+
+    <div class="status stagger reveal">
+      <div class="st-item ok"><div class="badge">✓ 確認</div><h4>直近30件の記録</h4><p>Oracleを直接見て、最新の記録が入っているか確かめられる（Desktopアイコン）。</p></div>
+      <div class="st-item ok"><div class="badge">✓ 確認</div><h4>時刻が合っているか</h4><p>工場NTPで自動同期。合っていれば工場接続が健全な目安にもなる。</p></div>
+      <div class="st-item warn"><div class="badge">⚠ 注意</div><h4>本番中はネット無し</h4><p>本番モードはインターネット不可。リモート管理は「切断」後に。</p></div>
+      <div class="st-item warn"><div class="badge">⚠ 注意</div><h4>ドングルは抜かない</h4><p>子PiAPはドングル。抜くと子Piの受け口が消える（工場記録自体は内蔵で継続）。</p></div>
+    </div>
+
+    <div class="checks stagger reveal">
+      <div class="check"><div class="mk">✓</div><div><h4>迷ったら「内蔵=工場／ドングル=子Pi」</h4><p>wlan0/wlan1の番号は起動順で入れ替わり得る。役割はドライバ(brcmfmac/rtl8821au)で見分ける。</p></div></div>
+      <div class="check risk"><div class="mk">!</div><div><h4>アイコンの実体は ~/Desktop 側</h4><p>スクリプトを直しても、アイコンが動かすのは ~/Desktop/presence-tools のコピー。更新時は同期が必要。</p></div></div>
+    </div>
+  </section>
+
+  <!-- ============ まとめ ============ -->
+  <div class="summary reveal" id="summary">
+    <h2>ひとことで言うと</h2>
+    <p class="lead">親ラズパイは <strong>電源ONで土台が自動起動</strong>。あとは<strong>「接続」で本番（工場＋子PiAP）、「切断」で停止</strong>。無線は内蔵=工場、ドングル=子Pi。</p>
+    <ul>
+      <li><strong>起動</strong>：電源を入れるだけ → 4コンテナが自動起動（工場接続は手動）</li>
+      <li><strong>内蔵 wlan0</strong>：工場網 HIME-H-REAP → Oracle（許可MACはここだけ）</li>
+      <li><strong>ドングル wlan1</strong>：子Piの親機(AP) presence-hub（開発時はネット受けにも）</li>
+      <li><strong>モード</strong>：本番=工場+AP／開発=ネット+AP／検証=工場+ネット（同時は2つまで）</li>
+      <li><strong>操作</strong>：Desktop「接続」で開始・「切断」で停止・「直近30件」で確認</li>
+    </ul>
+  </div>
+
+</main>
+
+<footer>
+  <div class="hand">― おわり ―</div>
+  <div style="margin-top:8px">presence-logger / 親(ハブ)ラズパイの起動と運用ガイド（社内向け）</div>
+</footer>
+
+<script>
+  document.documentElement.classList.add('js');
+  const io = new IntersectionObserver((entries)=>{
+    entries.forEach(e=>{ if(e.isIntersecting){ e.target.classList.add('in'); io.unobserve(e.target);} });
+  },{threshold:.12});
+  document.querySelectorAll('.reveal,.stagger').forEach(el=>io.observe(el));
+
+  const links = [...document.querySelectorAll('.topnav a')];
+  const navMap = new Map(links.map(a=>[a.getAttribute('href').slice(1), a]));
+  const navObserver = new IntersectionObserver((entries)=>{
+    entries.forEach(e=>{
+      if(e.isIntersecting){
+        links.forEach(a=>a.classList.remove('active'));
+        const a = navMap.get(e.target.id);
+        if(a) a.classList.add('active');
+      }
+    });
+  },{rootMargin:'-58px 0px -68% 0px',threshold:0});
+  document.querySelectorAll('section[id], #summary').forEach(s=>navObserver.observe(s));
+</script>
+</body>
+</html>

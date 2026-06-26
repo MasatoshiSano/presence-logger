@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>子ラズパイのデータが Oracle にあがるまで ── presence-logger</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Klee+One:wght@400;600&family=Zen+Maru+Gothic:wght@400;500;700&family=JetBrains+Mono:wght@400;500&family=Noto+Color+Emoji&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --paper:#faf6ea;
+    --paper-2:#f2ead4;
+    --ink:#2c2e44;
+    --ink-soft:#5a5d76;
+    --rule:#cfe0ef;
+    --red:#e24a37;
+    --red-soft:#f4a79c;
+    --yellow:#ffd84d;
+    --pink:#ff9ec4;
+    --blue:#86c8e6;
+    --mint:#9adfa9;
+    --lilac:#c3b4ec;
+    --bluepen:#2f6fb3;
+    --shadow:rgba(44,46,68,.16);
+    --maxw:1080px;
+    --emoji:"Apple Color Emoji","Segoe UI Emoji","Segoe UI Symbol","Noto Color Emoji";
+    --font-hand:"Klee One",serif,var(--emoji);
+    --font-body:"Zen Maru Gothic",sans-serif,var(--emoji);
+    --font-mono:"JetBrains Mono",monospace,var(--emoji);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  body{
+    font-family:var(--font-body);
+    color:var(--ink);
+    line-height:1.85;
+    background-color:var(--paper);
+    background-image:
+      repeating-linear-gradient(transparent 0 33px, rgba(120,160,200,.16) 33px 34px),
+      radial-gradient(circle at 12% 8%, rgba(255,216,77,.10), transparent 40%),
+      radial-gradient(circle at 88% 92%, rgba(134,200,230,.12), transparent 45%);
+    background-attachment:fixed;
+    -webkit-font-smoothing:antialiased;
+    overflow-x:hidden;
+  }
+  /* 紙のざらつき */
+  body::before{
+    content:"";position:fixed;inset:0;pointer-events:none;z-index:9999;opacity:.04;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    mix-blend-mode:multiply;
+  }
+  /* 左の赤マージン線（ノート風） */
+  body::after{
+    content:"";position:fixed;top:0;bottom:0;left:max(18px, calc(50% - var(--maxw)/2 - 6px));
+    width:2px;background:rgba(226,74,55,.28);pointer-events:none;z-index:0;
+  }
+  @media(max-width:1140px){body::after{display:none}}
+
+  .wrap{max-width:var(--maxw);margin:0 auto;padding:0 26px;position:relative;z-index:1}
+  code{font-family:var(--font-mono);font-size:.84em;background:rgba(47,111,179,.10);
+    color:var(--bluepen);padding:.12em .42em;border-radius:5px;border:1px solid rgba(47,111,179,.18);white-space:nowrap}
+
+  /* ---------- HERO ---------- */
+  header.hero{padding:84px 0 56px;text-align:center;position:relative}
+  .tape{position:absolute;width:148px;height:34px;background:rgba(255,216,77,.55);
+    box-shadow:0 2px 6px var(--shadow);backdrop-filter:saturate(1.2)}
+  .tape.t1{top:42px;left:50%;transform:translateX(-50%) rotate(-3deg)}
+  .eyebrow{font-family:var(--font-hand);font-size:1.05rem;color:var(--red);
+    letter-spacing:.18em;margin-bottom:10px}
+  .hero h1{font-family:var(--font-hand);font-weight:600;line-height:1.25;
+    font-size:clamp(2.3rem,6vw,4.1rem);letter-spacing:.01em}
+  .hero h1 .mark{position:relative;white-space:nowrap}
+  .hero h1 .mark::after{content:"";position:absolute;left:-4px;right:-4px;bottom:.08em;height:.42em;
+    background:var(--yellow);opacity:.55;z-index:-1;border-radius:3px;transform:rotate(-1deg)}
+  .hero .sub{font-size:1.12rem;color:var(--ink-soft);margin-top:22px;max-width:620px;
+    margin-left:auto;margin-right:auto}
+  .hero .meta{margin-top:30px;font-family:var(--font-mono);font-size:.78rem;color:var(--ink-soft);opacity:.8}
+
+  /* circle scribble */
+  .circle-note{display:inline-block;position:relative;padding:0 .15em}
+  .circle-note::before{content:"";position:absolute;inset:-8px -12px;border:2.5px solid var(--red);
+    border-radius:55% 45% 50% 50%/55% 50% 50% 45%;transform:rotate(-2deg);opacity:.7}
+
+  /* ---------- SECTIONS ---------- */
+  section{padding:50px 0}
+  .sec-head{display:flex;align-items:baseline;gap:14px;margin-bottom:8px}
+  .num{font-family:var(--font-hand);font-weight:600;font-size:2.4rem;color:var(--red);
+    line-height:1;flex:none}
+  h2{font-family:var(--font-hand);font-weight:600;font-size:clamp(1.5rem,3.6vw,2.1rem);line-height:1.3}
+  .lead{font-size:1.05rem;color:var(--ink-soft);margin:14px 0 28px;max-width:680px}
+  p+p{margin-top:14px}
+  strong{font-weight:700;background:linear-gradient(transparent 62%, rgba(255,216,77,.5) 62%)}
+
+  /* たとえ話ボックス */
+  .analogy{position:relative;background:var(--paper-2);border:2px dashed rgba(226,74,55,.4);
+    border-radius:14px;padding:22px 24px 22px 56px;margin:24px 0;font-size:1.02rem}
+  .analogy::before{content:"たとえ";position:absolute;top:-13px;left:20px;background:var(--red);
+    color:#fff;font-family:var(--font-hand);font-size:.78rem;padding:2px 12px;border-radius:20px;
+    letter-spacing:.08em;box-shadow:0 2px 5px var(--shadow)}
+  .analogy .ico{position:absolute;left:16px;top:20px;font-size:1.4rem}
+
+  /* キャラ/カードのグリッド */
+  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(248px,1fr));gap:26px;margin-top:14px}
+  .card{position:relative;background:#fffef9;border-radius:12px;padding:26px 22px 24px;
+    box-shadow:3px 5px 0 var(--shadow);border:1px solid rgba(44,46,68,.08);transition:transform .25s ease, box-shadow .25s ease}
+  .card:hover{transform:translateY(-5px) rotate(-.4deg);box-shadow:5px 10px 0 var(--shadow)}
+  .card .pin{position:absolute;top:-10px;left:50%;transform:translateX(-50%);width:18px;height:18px;
+    border-radius:50%;box-shadow:0 2px 4px var(--shadow);border:3px solid rgba(255,255,255,.7)}
+  .card .emoji{font-size:2.1rem;display:block;margin-bottom:8px}
+  .card h3{font-family:var(--font-hand);font-weight:600;font-size:1.22rem;margin-bottom:4px}
+  .card .role{font-size:.82rem;color:var(--red);font-weight:700;margin-bottom:10px;font-family:var(--font-hand)}
+  .card p{font-size:.93rem;color:var(--ink-soft)}
+  .card .real{margin-top:12px;font-family:var(--font-mono);font-size:.72rem;color:var(--bluepen);
+    background:rgba(47,111,179,.07);border-radius:6px;padding:7px 9px;line-height:1.5;word-break:break-all;white-space:normal}
+  .card.c-yellow .pin{background:var(--yellow)} .card.c-yellow{border-top:4px solid var(--yellow)}
+  .card.c-pink .pin{background:var(--pink)} .card.c-pink{border-top:4px solid var(--pink)}
+  .card.c-blue .pin{background:var(--blue)} .card.c-blue{border-top:4px solid var(--blue)}
+  .card.c-mint .pin{background:var(--mint)} .card.c-mint{border-top:4px solid var(--mint)}
+  .card.c-lilac .pin{background:var(--lilac)} .card.c-lilac{border-top:4px solid var(--lilac)}
+
+  /* ルーティング表 */
+  .route{display:grid;gap:12px;margin-top:18px}
+  .route-row{display:grid;grid-template-columns:1fr 44px 1fr;align-items:center;gap:8px;
+    background:#fffef9;border-radius:10px;padding:12px 16px;box-shadow:2px 3px 0 var(--shadow);
+    border:1px solid rgba(44,46,68,.07)}
+  .route-row .say{font-size:.97rem}
+  .route-row .say .q{font-family:var(--font-hand);color:var(--ink)}
+  .route-row .arrow{text-align:center;color:var(--red);font-size:1.3rem;font-weight:700}
+  .route-row .go{font-size:.9rem;color:var(--ink-soft)}
+  .route-row .go b{color:var(--bluepen);font-family:var(--font-mono);font-size:.84rem;font-weight:500}
+  @media(max-width:560px){.route-row{grid-template-columns:1fr;text-align:center;gap:4px}
+    .route-row .arrow{transform:rotate(90deg)}}
+
+  .rule-pill{display:inline-block;background:var(--ink);color:var(--paper);font-size:.86rem;
+    padding:6px 14px;border-radius:20px;margin:6px 6px 0 0;font-family:var(--font-hand)}
+
+  /* symlink/ハブ図 */
+  .dist{display:grid;grid-template-columns:1fr;gap:0;margin-top:20px;position:relative}
+  .hub{background:var(--ink);color:var(--paper);border-radius:14px;padding:22px 24px;max-width:430px;
+    margin:0 auto;text-align:center;box-shadow:4px 6px 0 var(--shadow);position:relative;z-index:2}
+  .hub .label{font-family:var(--font-hand);font-size:1.25rem;color:var(--yellow)}
+  .hub .path{font-family:var(--font-mono);font-size:.74rem;opacity:.85;margin-top:6px;word-break:break-all}
+  .spokes{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin-top:30px;position:relative}
+  .spokes::before{content:"";position:absolute;top:-22px;left:50%;width:2px;height:22px;background:var(--ink-soft)}
+  .spoke{background:#fffef9;border:2px dashed var(--bluepen);border-radius:10px;padding:14px;text-align:center;
+    box-shadow:2px 3px 0 var(--shadow)}
+  .spoke .t{font-family:var(--font-hand);font-size:1rem}
+  .spoke .p{font-family:var(--font-mono);font-size:.68rem;color:var(--bluepen);margin-top:4px;word-break:break-all}
+  .spoke .tag{font-size:.7rem;color:var(--ink-soft);margin-top:6px}
+
+  /* ステップ */
+  .steps{counter-reset:s;margin-top:18px;display:grid;gap:14px}
+  .step{position:relative;background:#fffef9;border-radius:10px;padding:16px 18px 16px 60px;
+    box-shadow:2px 3px 0 var(--shadow);border:1px solid rgba(44,46,68,.07)}
+  .step::before{counter-increment:s;content:counter(s);position:absolute;left:14px;top:14px;
+    width:32px;height:32px;background:var(--red);color:#fff;border-radius:50%;display:grid;place-items:center;
+    font-family:var(--font-hand);font-weight:600;font-size:1.1rem;box-shadow:0 2px 4px var(--shadow)}
+  .step h4{font-family:var(--font-hand);font-weight:600;font-size:1.05rem;margin-bottom:2px}
+  .step p{font-size:.9rem;color:var(--ink-soft)}
+  .step .cmd{font-family:var(--font-mono);font-size:.76rem;color:var(--bluepen);margin-top:6px;display:block}
+
+  /* 状態表 */
+  .status{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px;margin-top:16px}
+  .st-item{background:#fffef9;border-radius:12px;padding:18px 20px;box-shadow:2px 3px 0 var(--shadow);
+    border-left:5px solid var(--mint)}
+  .st-item.warn{border-left-color:var(--red)}
+  .st-item .badge{font-family:var(--font-hand);font-size:.82rem;font-weight:600;display:inline-block;margin-bottom:6px}
+  .st-item.ok .badge{color:#2f9e54} .st-item.warn .badge{color:var(--red)}
+  .st-item h4{font-size:1rem;margin-bottom:4px}
+  .st-item p{font-size:.88rem;color:var(--ink-soft)}
+
+  /* まとめ */
+  .summary{background:var(--ink);color:var(--paper);border-radius:18px;padding:40px 34px;margin:40px 0;
+    box-shadow:5px 7px 0 var(--shadow);position:relative;overflow:hidden}
+  .summary::after{content:"📎";position:absolute;top:-10px;right:18px;font-size:3.4rem;opacity:.18;transform:rotate(18deg)}
+  .summary h2{color:var(--yellow)}
+  .summary .lead{color:rgba(250,246,234,.82)}
+  .summary ul{list-style:none;margin-top:18px;display:grid;gap:12px}
+  .summary li{padding-left:30px;position:relative;font-size:1rem}
+  .summary li::before{content:"✓";position:absolute;left:0;top:0;color:var(--mint);font-weight:700}
+  .summary strong{background:none;color:var(--yellow)}
+
+  footer{text-align:center;padding:30px 0 60px;color:var(--ink-soft);font-size:.82rem}
+  footer .hand{font-family:var(--font-hand);font-size:1rem;color:var(--red)}
+
+  /* reveal（JS有効時のみ隠す＝JS無効でも必ず読める） */
+  html.js .reveal{opacity:0;transform:translateY(26px);transition:opacity .6s ease, transform .6s ease}
+  html.js .reveal.in{opacity:1;transform:none}
+  .cards .card,.route-row,.spoke,.step,.st-item{transition:transform .25s ease, box-shadow .25s ease, opacity .5s ease}
+  .stagger.in>*{animation:pop .5s ease backwards}
+  .stagger.in>*:nth-child(2){animation-delay:.07s}
+  .stagger.in>*:nth-child(3){animation-delay:.14s}
+  .stagger.in>*:nth-child(4){animation-delay:.21s}
+  .stagger.in>*:nth-child(5){animation-delay:.28s}
+  .stagger.in>*:nth-child(6){animation-delay:.35s}
+  @keyframes pop{from{opacity:0;transform:translateY(18px) scale(.97)}to{opacity:1;transform:none}}
+  @media(prefers-reduced-motion:reduce){.reveal{opacity:1;transform:none}.stagger.in>*{animation:none}}
+
+  /* ---------- NAV（目次バー） ---------- */
+  .topnav{position:sticky;top:0;z-index:50;background:rgba(250,246,234,.88);
+    backdrop-filter:blur(8px) saturate(1.1);border-bottom:2px solid rgba(226,74,55,.22)}
+  .topnav .inner{max-width:var(--maxw);margin:0 auto;padding:9px 22px;display:flex;align-items:center;gap:9px;overflow-x:auto}
+  .topnav .inner::-webkit-scrollbar{height:0}
+  .topnav .brand{font-family:var(--font-hand);font-weight:600;color:var(--red);font-size:.95rem;white-space:nowrap;flex:none}
+  .topnav a{flex:none;text-decoration:none;color:var(--ink-soft);font-size:.84rem;
+    padding:5px 11px;border-radius:18px;white-space:nowrap;border:1px solid transparent;
+    transition:background .2s,color .2s,border-color .2s}
+  .topnav a:hover{color:var(--ink);background:rgba(47,111,179,.09)}
+  .topnav a.active{color:#fff;background:var(--red);border-color:var(--red)}
+  .topnav a .n{font-family:var(--font-hand);font-weight:600;margin-right:3px}
+  section,.summary{scroll-margin-top:66px}
+
+  /* コードカード */
+  .codecard{background:var(--ink);border-radius:12px;margin:14px 0;box-shadow:3px 5px 0 var(--shadow);overflow:hidden}
+  .codecard .ttl{font-family:var(--font-hand);font-size:.8rem;color:var(--ink);background:var(--yellow);
+    padding:6px 14px;display:flex;align-items:center;gap:6px;letter-spacing:.02em}
+  .codecard pre{margin:0;padding:15px 18px;overflow-x:auto;font-family:var(--font-mono);font-size:.77rem;
+    line-height:1.75;color:#e7ecf5;white-space:pre}
+  .codecard pre .cm{color:#8fa6c4}
+
+  /* 注意/警告 callout */
+  .callout{position:relative;border-radius:14px;padding:20px 22px 20px 56px;margin:24px 0;font-size:1rem}
+  .callout .ico{position:absolute;left:17px;top:19px;font-size:1.4rem}
+  .callout .lbl{position:absolute;top:-13px;left:20px;color:#fff;font-family:var(--font-hand);
+    font-size:.78rem;padding:2px 12px;border-radius:20px;letter-spacing:.08em;box-shadow:0 2px 5px var(--shadow)}
+  .callout.warn{background:#fdeeea;border:2px solid rgba(226,74,55,.45)}
+  .callout.warn .lbl{background:var(--red)}
+  .callout.tip{background:#eef7ee;border:2px solid rgba(47,158,84,.4)}
+  .callout.tip .lbl{background:#2f9e54}
+
+  /* チェックリスト */
+  .checks{display:grid;gap:12px;margin-top:16px}
+  .check{display:grid;grid-template-columns:36px 1fr;gap:13px;background:#fffef9;border-radius:10px;
+    padding:14px 16px;box-shadow:2px 3px 0 var(--shadow);border-left:5px solid var(--mint)}
+  .check.risk{border-left-color:var(--red)}
+  .check .mk{font-family:var(--font-hand);font-weight:600;font-size:1.35rem;color:#2f9e54;text-align:center;line-height:1.2}
+  .check.risk .mk{color:var(--red)}
+  .check h4{font-size:.98rem;margin-bottom:2px;font-family:var(--font-hand);font-weight:600}
+  .check p{font-size:.88rem;color:var(--ink-soft)}
+
+  /* 集合知の山（点→線） */
+  .insight{background:var(--paper-2);border:2px solid rgba(226,74,55,.28);border-radius:16px;
+    padding:24px 26px;margin-top:26px;position:relative}
+  .insight .ih{font-family:var(--font-hand);font-weight:600;font-size:1.22rem;color:var(--red);
+    margin-bottom:10px;display:flex;align-items:center;gap:8px}
+  .insight p{font-size:.98rem;color:var(--ink)}
+  .insight .conclusion{background:var(--ink);color:var(--paper);border-radius:10px;padding:14px 18px;
+    margin-top:6px;font-size:.96rem}
+  .insight .conclusion b{color:var(--yellow)}
+</style>
+</head>
+<body>
+
+<!-- ============ NAV（目次） ============ -->
+<nav class="topnav">
+  <div class="inner">
+    <span class="brand">📑 もくじ</span>
+    <a href="#s1"><span class="n">①</span>ぜんたい像</a>
+    <a href="#s2"><span class="n">②</span>登場人物</a>
+    <a href="#s3"><span class="n">③</span>データの形</a>
+    <a href="#s4"><span class="n">④</span>ながれ</a>
+    <a href="#s5"><span class="n">⑤</span>確認と注意</a>
+    <a href="#summary">まとめ</a>
+  </div>
+</nav>
+
+<!-- ============ HERO ============ -->
+<header class="hero">
+  <span class="tape t1"></span>
+  <div class="wrap">
+    <div class="eyebrow reveal">― presence-logger / 子Pi → Oracle ―</div>
+    <h1 class="reveal">子ラズパイの<span class="mark">データ</span>は<br>どうやって <span class="circle-note">Oracle</span> にあがる？</h1>
+    <p class="sub reveal">「どんな形で・どこに送れば・どう記録されるの？」を、入口から台帳まで一本の道として追いかけます。</p>
+    <div class="meta reveal">所要 5分 / 中学生でも読めるように書いてあります</div>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <!-- ============ ① ぜんたい像 ============ -->
+  <section id="s1">
+    <div class="sec-head reveal"><span class="num">①</span><h2>まず、ぜんたいの道すじ</h2></div>
+    <p class="lead reveal">子ラズパイは Oracle に直接は触りません。<strong>無線で「ハブ役のラズパイ」に渡し、ハブが代表してOracleに書き込みます。</strong></p>
+    <div class="reveal">
+      <p>送るものは「CSVの1行」を <strong>JSON</strong> に直したもの。送り先は <strong>ハブの MQTT（10.42.0.1:1883）</strong>。あとはハブの中の係（bridge）が、工場ネットワーク経由で Oracle の台帳テーブル <code>HHC001</code> に転記します。</p>
+    </div>
+
+    <div class="analogy reveal"><span class="ico">🏭</span>
+      工場の例え。各<strong>持ち場（子ラズパイ）</strong>が伝票（CSV）を書く → <strong>集荷係（MQTT）</strong>が本社の郵便受けに集める → <strong>本社の事務（bridge）</strong>がまとめて<strong>台帳（Oracle）</strong>に転記する。持ち場は台帳を直接いじらない＝鍵（工場ネット）を持つのは本社だけ、という分担です。
+    </div>
+  </section>
+
+  <!-- ============ ② 登場人物 ============ -->
+  <section id="s2">
+    <div class="sec-head reveal"><span class="num">②</span><h2>登場人物（だれが何をする）</h2></div>
+    <p class="lead reveal">データが通る順に、6人の役者を紹介します。</p>
+
+    <div class="cards stagger reveal">
+      <div class="card c-yellow"><span class="pin"></span>
+        <span class="emoji">🍓</span>
+        <div class="role">送り手</div>
+        <h3>子ラズパイ</h3>
+        <p>各持ち場の端末。検知や計測の結果を CSV ファイルとして書き出す。Oracle には触らない。</p>
+        <div class="real">AP「presence-hub」に接続 → 10.42.0.x</div>
+      </div>
+      <div class="card c-blue"><span class="pin"></span>
+        <span class="emoji">📄</span>
+        <div class="role">中身</div>
+        <h3>CSVファイル</h3>
+        <p>1行が1件の記録。日時・席番号3つ・状態の5項目をカンマ区切りで並べる。</p>
+        <div class="real">20260610173000,100,200,300,3</div>
+      </div>
+      <div class="card c-mint"><span class="pin"></span>
+        <span class="emoji">📮</span>
+        <div class="role">発送係</div>
+        <h3>child-csv-to-mqtt.py</h3>
+        <p>子Piで動く小さな番人。CSVの各行をJSONに包んでMQTTへ送り、送り終えたファイルは退避する。</p>
+        <div class="real">~/outbox の *.csv を1行ずつ送信</div>
+      </div>
+      <div class="card c-pink"><span class="pin"></span>
+        <span class="emoji">📬</span>
+        <div class="role">郵便受け</div>
+        <h3>MQTT (mosquitto)</h3>
+        <p>ハブにある受け口。子Piはここの「presence/record」という宛先に投函するだけでよい。</p>
+        <div class="real">10.42.0.1:1883 / topic: presence/record</div>
+      </div>
+      <div class="card c-lilac"><span class="pin"></span>
+        <span class="emoji">🧮</span>
+        <div class="role">転記係</div>
+        <h3>bridge</h3>
+        <p>受け取った1件をいったん手元の控え（record_inbox）に保存し、工場網に繋がっている間にOracleへ書き込む。</p>
+        <div class="real">services/bridge（ハブで常駐）</div>
+      </div>
+      <div class="card c-yellow"><span class="pin"></span>
+        <span class="emoji">🗄️</span>
+        <div class="role">最終台帳</div>
+        <h3>Oracle (HHC001)</h3>
+        <p>本物の記録が貯まる場所。bridgeがJDBCサイドカー経由で1行ずつ書き込む。</p>
+        <div class="real">10.166.5.93:1521/HHC001 表 HF1RCM01</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ ③ データの形 ============ -->
+  <section id="s3">
+    <div class="sec-head reveal"><span class="num">③</span><h2>どんな形で送る？</h2></div>
+    <p class="lead reveal">子Pi内部では <strong>CSVの1行</strong>。MQTTを流れるときは <strong>JSON</strong>。最後はOracleの<strong>1行</strong>。形は変わっても中身は同じ5項目です。</p>
+
+    <div class="codecard reveal"><div class="ttl">📄 子Pi内のCSV（1行＝1件・複数行OK）</div><pre><span class="cm"># YYYYMMDDhhmmss , STA_NO1 , STA_NO2 , STA_NO3 , T1_STATUS</span>
+20260610173000,100,200,300,3
+20260610173100,101,201,301,1</pre></div>
+
+    <div class="codecard reveal"><div class="ttl">📨 MQTTで送るJSON（発送係が変換）</div><pre>{
+  "event_id": "&lt;行から自動生成のID&gt;",   <span class="cm">// 再送しても二重にならない鍵</span>
+  "mk_date": "20260610173000",     <span class="cm">// → Oracle MK_DATE</span>
+  "sta_no1": "100", "sta_no2": "200", "sta_no3": "300",
+  "t1_status": 3,                  <span class="cm">// → Oracle T1_STATUS</span>
+  "device_id": "child-01",
+  "schema_version": 1
+}</pre></div>
+
+    <p class="lead reveal" style="margin-bottom:8px">CSVの位置と、Oracleの列名の対応：</p>
+    <div class="route stagger reveal">
+      <div class="route-row"><div class="say"><span class="q">1番目「20260610173000」</span></div><div class="arrow">→</div><div class="go">日時 <b>MK_DATE</b></div></div>
+      <div class="route-row"><div class="say"><span class="q">2〜4番目「100,200,300」</span></div><div class="arrow">→</div><div class="go">席番号 <b>STA_NO1 / STA_NO2 / STA_NO3</b></div></div>
+      <div class="route-row"><div class="say"><span class="q">5番目「3」</span></div><div class="arrow">→</div><div class="go">状態 <b>T1_STATUS</b></div></div>
+      <div class="route-row"><div class="say"><span class="q">（固定値）</span></div><div class="arrow">→</div><div class="go">更新フラグ <b>UPCMPFLG = 1</b></div></div>
+    </div>
+
+    <div class="callout tip reveal"><span class="lbl">ヒント</span><span class="ico">💡</span>
+      在席の <code>ENTER/EXIT</code> とは<strong>別の経路</strong>です。在席は席番号をハブ側で決めますが、こちらは<strong>席番号も状態もCSVの値をそのまま</strong>Oracleに書きます。
+    </div>
+  </section>
+
+  <!-- ============ ④ ながれ ============ -->
+  <section id="s4">
+    <div class="sec-head reveal"><span class="num">④</span><h2>Oracleにあがるまでの流れ</h2></div>
+    <p class="lead reveal">投函してから台帳に載るまで、6ステップ。</p>
+
+    <div class="steps stagger reveal">
+      <div class="step"><h4>子PiをAPに接続</h4><p>子ラズパイをハブの無線「presence-hub」に繋ぐ。下の接続情報を使う。自動で 10.42.0.x のIPがもらえる。</p><span class="cmd">sudo nmcli device wifi connect "presence-hub" password "presence-hub-2026"</span></div>
+      <div class="step"><h4>CSVを置く</h4><p>送りたい行を書いたCSVを子Piの outbox フォルダに置く。</p><span class="cmd">~/outbox/records.csv</span></div>
+      <div class="step"><h4>発送係がJSONで投函</h4><p>child-csv-to-mqtt.py が各行をJSONにして MQTT の presence/record へ送信（QoS2）。送ったファイルは sent へ退避。</p><span class="cmd">MQTT_HOST=10.42.0.1 python3 child-csv-to-mqtt.py</span></div>
+      <div class="step"><h4>ハブが受け取り控える</h4><p>ハブのmosquittoが受信→bridgeが「record_inbox」に保存。ここまでは工場網が無くてもOK（貯めておける）。</p><span class="cmd">log: record_received</span></div>
+      <div class="step"><h4>Oracleへ転記</h4><p>ハブが工場網（HIME-H-REAP）に繋がっている間に、bridgeが行の値そのままで HHC001 に書き込む（MERGE）。</p><span class="cmd">log: record_committed / rows_affected:1</span></div>
+      <div class="step"><h4>完了の合図</h4><p>書けたら presence/record/ack で「受領」を返す。失敗時は時間をおいて自動で再挑戦。</p></div>
+    </div>
+
+    <!-- presence-hub 接続情報 -->
+    <div class="codecard reveal"><div class="ttl">🔑 presence-hub の接続情報（子Pi側で使う）</div><pre><span class="cm"># Wi-Fi（ハブのドングルAP）</span>
+SSID     : presence-hub        <span class="cm"># 2.4GHz・隠しではないので一覧に出る</span>
+パスワード : presence-hub-2026   <span class="cm"># WPA2。運用で変えたら↓も更新</span>
+ハブ(GW) : 10.42.0.1           <span class="cm"># 子Piは 10.42.0.x が自動付与(DHCP)</span>
+
+<span class="cm"># ① 接続（子ラズパイで1回）</span>
+sudo nmcli device wifi connect "presence-hub" password "presence-hub-2026"
+
+<span class="cm"># ② つながったか確認</span>
+ping 10.42.0.1            <span class="cm"># ハブに届けばOK</span>
+nmcli device wifi list | grep presence-hub   <span class="cm"># 電波が見えるか</span></pre></div>
+
+    <div class="callout warn reveal"><span class="lbl">前提</span><span class="ico">⚠️</span>
+      この電波が出ているのは、ハブ側で<strong>AP（presence-hub）が起動しているとき</strong>だけです。ハブで Desktop「HIME-H-REAP 接続」を押すと、APの起動とMQTTの公開まで自動で整います。パスワードはハブの <code>secrets.env</code> の <code>WIFI_AP_PSK</code> で管理しているので、変更したらこの資料も直してください。
+    </div>
+
+    <div class="dist reveal">
+      <div class="hub">
+        <div class="label">🗄️ Oracle HHC001（書くのはハブだけ）</div>
+        <div class="path">10.166.5.93:1521 ← 工場網(wlan0) 経由</div>
+      </div>
+      <div class="spokes stagger">
+        <div class="spoke"><div class="t">🍓 子Pi-01</div><div class="p">→ MQTT 10.42.0.1</div><div class="tag">CSV→JSONで投函</div></div>
+        <div class="spoke"><div class="t">🍓 子Pi-02</div><div class="p">→ MQTT 10.42.0.1</div><div class="tag">同じ宛先に投函</div></div>
+        <div class="spoke"><div class="t">🍓 子Pi-03</div><div class="p">→ MQTT 10.42.0.1</div><div class="tag">1:多で何台でも</div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ ⑤ 確認と注意 ============ -->
+  <section id="s5">
+    <div class="sec-head reveal"><span class="num">⑤</span><h2>確認のしかたと注意点</h2></div>
+    <p class="lead reveal">本当にOracleへ入ったかは、Desktopの「直近30件の記録」で直接DBを見て確かめられます。</p>
+
+    <div class="status stagger reveal">
+      <div class="st-item ok"><div class="badge">✓ できる</div><h4>DBを直接確認</h4><p>「直近30件の記録」アイコンが HHC001 を直接SELECT。実際に書けた行が最新順で見える。</p></div>
+      <div class="st-item ok"><div class="badge">✓ できる</div><h4>二重防止（冪等）</h4><p>同じ行を再送しても event_id とDBの鍵で1件にまとまる。安心して再送できる。</p></div>
+      <div class="st-item ok"><div class="badge">✓ できる</div><h4>通信断に強い</h4><p>工場網が切れても record_inbox に貯まり、復旧後にまとめて書き込む。</p></div>
+      <div class="st-item warn"><div class="badge">⚠ 条件</div><h4>Oracle書込みは工場網が要る</h4><p>Oracleは工場網(HIME-H-REAP)経由でしか届かない。未接続の間は「貯め」だけで送信は保留。</p></div>
+    </div>
+
+    <div class="checks stagger reveal">
+      <div class="check"><div class="mk">✓</div><div><h4>「直近30件」は席番号で絞る</h4><p>このプロファイルの席（996/995/994）で絞って表示。別席のレコードは出ない。</p></div></div>
+      <div class="check risk"><div class="mk">!</div><div><h4>本番テーブルに直接入る</h4><p>HHC001 は本番。動作確認で投げたダミーは消さないと残る（後始末用に範囲削除あり）。</p></div></div>
+    </div>
+
+    <div class="callout warn reveal"><span class="lbl">注意</span><span class="ico">⚠️</span>
+      子Piが書き込めるのは、ハブで <strong>mosquitto を子Pi向けに公開しているとき</strong>だけ（10.42.0.1 のみにバインド＝工場網には晒さない）。Desktopの「HIME-H-REAP 接続」を押すと、AP起動とこの公開まで自動で整います。
+    </div>
+
+    <div class="insight reveal">
+      <div class="ih">🔭 なぜ「JSONでMQTT」なの？</div>
+      <p>生のCSVをそのまま流すより、JSONにすると <strong>ID（再送しても二重にならない）・送り主・形式バージョン</strong> を一緒に運べます。CSVは子Piの中の入力ファイル、ワイヤ（通信）上はJSON、と分けるのが堅い設計です。</p>
+      <div class="conclusion">だから子Piは「<b>CSVを置くだけ</b>」、信頼性の面倒は発送係とbridgeが見る。</div>
+    </div>
+  </section>
+
+  <!-- ============ まとめ ============ -->
+  <div class="summary reveal" id="summary">
+    <h2>ひとことで言うと</h2>
+    <p class="lead">子Piは「CSVの行」を<strong>JSONにしてハブのMQTT（10.42.0.1 / presence-record）へ投函</strong>すれば、あとはハブのbridgeが<strong>Oracle(HHC001)へ転記</strong>してくれる。</p>
+    <ul>
+      <li><strong>形</strong>：CSV 1行（日時, 席1, 席2, 席3, 状態）→ JSON → Oracleの1行</li>
+      <li><strong>送り先</strong>：AP「presence-hub」に繋いで MQTT <strong>10.42.0.1:1883</strong> の <strong>presence/record</strong></li>
+      <li><strong>あがり方</strong>：mosquitto → bridge（record_inbox に控え）→ 工場網経由で Oracle へ MERGE</li>
+      <li><strong>確認</strong>：Desktop「直近30件の記録」で HHC001 を直接見る</li>
+      <li><strong>強み</strong>：再送しても二重にならない／通信断でも貯めて後で送る</li>
+    </ul>
+  </div>
+
+</main>
+
+<footer>
+  <div class="hand">― おわり ―</div>
+  <div style="margin-top:8px">presence-logger / 子ラズパイ → MQTT → bridge → Oracle の解説（社内向け）</div>
+</footer>
+
+<script>
+  // JS有効を宣言（CSSの初期非表示はこのクラスが付いたときだけ効く＝JS無効でも全文読める）
+  document.documentElement.classList.add('js');
+  const io = new IntersectionObserver((entries)=>{
+    entries.forEach(e=>{ if(e.isIntersecting){ e.target.classList.add('in'); io.unobserve(e.target);} });
+  },{threshold:.12});
+  document.querySelectorAll('.reveal,.stagger').forEach(el=>io.observe(el));
+
+  // 目次バーの現在地ハイライト
+  const links = [...document.querySelectorAll('.topnav a')];
+  const navMap = new Map(links.map(a=>[a.getAttribute('href').slice(1), a]));
+  const navObserver = new IntersectionObserver((entries)=>{
+    entries.forEach(e=>{
+      if(e.isIntersecting){
+        links.forEach(a=>a.classList.remove('active'));
+        const a = navMap.get(e.target.id);
+        if(a) a.classList.add('active');
+      }
+    });
+  },{rootMargin:'-58px 0px -68% 0px',threshold:0});
+  document.querySelectorAll('section[id], #summary').forEach(s=>navObserver.observe(s));
+</script>
+</body>
+</html>
