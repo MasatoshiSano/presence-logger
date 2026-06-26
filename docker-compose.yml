@@ -6,12 +6,10 @@ services:
     container_name: presence-mosquitto
     restart: unless-stopped
     networks: [presence-net]
-    # Publish 1883 on the host so child Raspberry Pis on the dongle AP
-    # (presence-hub / 10.42.0.x) can publish events to this hub's broker.
-    # Reachable on every host interface (AP 10.42.0.1 and factory 172.22.13.17);
-    # the broker is anonymous, so restrict by network/firewall if needed.
-    ports:
-      - "1883:1883"
+    # NOTE: the broker is anonymous and is intentionally NOT published to the
+    # host here — single-box deployments keep it on the internal docker network
+    # only. To let child Pis publish over the dongle AP, use the hub override
+    # (docker-compose.hub.yml), which binds 1883 to the AP gateway IP only.
     volumes:
       - ./docker/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
 

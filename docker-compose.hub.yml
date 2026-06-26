@@ -1,0 +1,17 @@
+# Hub-only overrides — use on the Pi that runs the dongle AP (presence-hub) and
+# relays child-Pi events to Oracle. Start the stack with BOTH files:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.hub.yml up -d
+#
+# This publishes the (anonymous) MQTT broker ONLY on the AP gateway IP
+# (10.42.0.1) so child Pis on presence-hub can reach it, while keeping it OFF the
+# factory OT network (172.22.13.17) and off any other host interface.
+#
+# Requires the AP to be up before mosquitto starts (10.42.0.1 must exist), so
+# bring the AP up first with Desktop/presence-tools/mode-dev.sh or mode-prod.sh.
+# If the bound IP is missing the container fails fast (by design) rather than
+# silently exposing the broker on the wrong interface.
+services:
+  mosquitto:
+    ports:
+      - "10.42.0.1:1883:1883"
