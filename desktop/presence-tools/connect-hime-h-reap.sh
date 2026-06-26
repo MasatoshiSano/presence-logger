@@ -21,7 +21,15 @@ PROFILE_NAME="${PROFILE_NAME:-HIME-H-REAP}"          # = profiles.yaml のキー
 PROFILES_YAML="${PROFILES_YAML:-/etc/presence-logger/profiles.yaml}"
 SECRETS_ENV="${SECRETS_ENV:-/etc/presence-logger/secrets.env}"
 CONN_NAME="${CONN_NAME:-HIME-H-REAP}"                # nmcli 接続名（liveの "-live" とは別）
-IFNAME="${IFNAME:-wlan0}"
+IFNAME="${IFNAME:-wlan0}"                             # 内蔵WiFi（許可済みMAC）に固定
+
+# dual-WiFi: 工場宛(Oracle/DNS/NTP)のサブネットだけ wlan0 経由にする。
+# デフォルト経路とインターネットDNSはドングル(wlan1)側に残すため、ここでは
+# 工場GWをデフォルトにせず、下記サブネットだけ個別ルートにする。
+# 別拠点ではその工場の Oracle/DNS/NTP が属するサブネットに差し替える。
+#   Oracle 10.166.5.93 -> 10.166.5.0/24 / 工場DNS 10.166.1.x -> 10.166.1.0/24
+#   工場NTP 133.141.247.101 -> /32（wlan0からのみ到達）
+FACTORY_SUBNETS="${FACTORY_SUBNETS:-10.166.5.0/24 10.166.1.0/24 133.141.247.101/32}"
 
 say(){ printf '%s\n' "$*"; }
 finish(){ [[ "$HOLD" == 1 ]] && { echo; read -rp 'Enterキーで閉じる... ' _; }; exit "${1:-0}"; }
@@ -76,6 +84,12 @@ iw reg set JP 2>/dev/null || true
 if nmcli -t -f NAME connection show | grep -Fxq "$CONN_NAME"; then
     nmcli connection delete "$CONN_NAME" >/dev/null 2>&1 || true
 fi
+# dual-WiFi 用の個別ルート文字列を組み立てる（"<subnet> <gw>, ..."）。
+ROUTES=""
+for _net in $FACTORY_SUBNETS; do
+    ROUTES="${ROUTES:+$ROUTES, }$_net ${PCFG[gw]}"
+done
+
 nmcli connection add type wifi con-name "$CONN_NAME" ifname "$IFNAME" \
     ssid "$PROFILE_NAME" \
     802-11-wireless.hidden "${PCFG[hidden]}" \
@@ -83,17 +97,31 @@ nmcli connection add type wifi con-name "$CONN_NAME" ifname "$IFNAME" \
     802-11-wireless-security.psk "${PCFG[psk]}" \
     ipv4.method manual \
     ipv4.addresses "${PCFG[ip]}" \
-    ipv4.gateway "${PCFG[gw]}" \
-    ipv4.dns "${PCFG[dns]}" \
+    ipv4.gateway "" \
+    ipv4.never-default yes \
+    ipv4.routes "$ROUTES" \
+    ipv4.dns "" \
+    ipv4.ignore-auto-dns yes \
     ipv6.method disabled \
     connection.autoconnect no >/dev/null \
     || { say "FAIL: nmcli 接続の作成に失敗"; finish 1; }
 
-# --- 接続（最大25秒待つ）---
-say "接続中..."
-if nmcli --wait 25 connection up "$CONN_NAME" >/dev/null 2>&1; then
-    ACTUAL="$(nmcli -t -f ACTIVE,SSID dev wifi | awk -F: '$1=="yes"{print $2; exit}')"
-    if [[ "$ACTUAL" == "$PROFILE_NAME" ]]; then
+# --- 接続（隠しSSID＋5GHzはスキャン/associationが遅いので長めに待つ）---
+say "接続中...（隠しSSID/5GHz のため最大45秒）"
+nmcli --wait 45 connection up "$CONN_NAME" >/dev/null 2>&1 || true
+
+# up がタイムアウトを返しても直後に association 完了することがあるため、実状態を
+# 最大20秒ポーリングする。dual-WiFi では複数SSIDが同時にactiveなので「先頭の
+# アクティブSSID」では誤判定する → この接続(CONN_NAME)自身がactiveかで判定する。
+connected="no"
+for _i in $(seq 1 20); do
+    if nmcli -t -f NAME connection show --active 2>/dev/null | grep -Fxq "$CONN_NAME"; then
+        connected="yes"; break
+    fi
+    sleep 1
+done
+
+if [[ "$connected" == "yes" ]]; then
         # まず時刻同期（工場NTP 133.141.247.101 へ即時同期させ、最大15秒待つ）
         say "    時刻同期中（NTP 133.141.247.101）..."
         systemctl restart systemd-timesyncd 2>/dev/null || true
@@ -115,7 +143,7 @@ if nmcli --wait 25 connection up "$CONN_NAME" >/dev/null 2>&1; then
         say ""
         say "===================================================="
         say " ✅ HIME-H-REAP 接続＋時刻同期＋検知を開始しました"
-        say "    SSID : $ACTUAL    IP : ${PCFG[ip]}"
+        say "    SSID : $PROFILE_NAME    IP : ${PCFG[ip]}"
         say "===================================================="
         say ""
         say " detector がカメラ判定を開始 → bridge が HHC001 に記録します。"
@@ -125,7 +153,6 @@ if nmcli --wait 25 connection up "$CONN_NAME" >/dev/null 2>&1; then
         say " ◆ 記録確認:  Desktop の「記録モニタ」"
         say " ◆ 停止:      Desktop の「HIME-H-REAP を切断」（検知も止まります）"
         finish 0
-    fi
 fi
 
 say ""

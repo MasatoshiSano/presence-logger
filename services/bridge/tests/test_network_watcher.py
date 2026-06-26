@@ -3,6 +3,7 @@ from unittest.mock import patch
 
 from services.bridge.src.network_watcher import (
     NetworkWatcher,
+    parse_active_ssids,
     parse_nmcli_output,
 )
 
@@ -51,3 +52,53 @@ def test_cache_returns_last_value_until_refreshed():
     # Now nmcli is unavailable, but cache still serves last good value.
     with patch("subprocess.run", side_effect=FileNotFoundError):
         assert nw.cached_ssid == "factory_a_wifi"
+
+
+# --- dual-WiFi: multiple active SSIDs at once (dongle + internal) ---
+
+def test_parse_active_ssids_returns_all_in_order():
+    out = "no:guest\nyes:UFI_103134\nyes:HIME-H-REAP\nno:other\n"
+    assert parse_active_ssids(out) == ["UFI_103134", "HIME-H-REAP"]
+
+
+def test_parse_active_ssids_empty_returns_empty_list():
+    assert parse_active_ssids("") == []
+    assert parse_active_ssids("no:a\nno:b\n") == []
+
+
+def test_prefers_configured_ssid_when_multiple_active():
+    # Dongle (internet) and factory net both up. nmcli lists internet first,
+    # but we must pick the configured factory SSID so events are not dropped.
+    nw = NetworkWatcher(
+        command="nmcli ...", preferred_ssids={"HIME-H-REAP"}
+    )
+    with patch("subprocess.run") as run_mock:
+        run_mock.return_value = subprocess.CompletedProcess(
+            args=[], returncode=0,
+            stdout="yes:UFI_103134\nyes:HIME-H-REAP\n", stderr="",
+        )
+        assert nw.get_current_ssid() == "HIME-H-REAP"
+
+
+def test_falls_back_to_first_active_when_none_preferred():
+    # No active SSID matches a configured profile -> keep first active
+    # (so existing unknown_ssid_policy handling is unchanged).
+    nw = NetworkWatcher(
+        command="nmcli ...", preferred_ssids={"HIME-H-REAP"}
+    )
+    with patch("subprocess.run") as run_mock:
+        run_mock.return_value = subprocess.CompletedProcess(
+            args=[], returncode=0,
+            stdout="yes:UFI_103134\nyes:home_wifi\n", stderr="",
+        )
+        assert nw.get_current_ssid() == "UFI_103134"
+
+
+def test_backward_compat_no_preferred_returns_first_active():
+    nw = NetworkWatcher(command="nmcli ...")
+    with patch("subprocess.run") as run_mock:
+        run_mock.return_value = subprocess.CompletedProcess(
+            args=[], returncode=0,
+            stdout="yes:UFI_103134\nyes:HIME-H-REAP\n", stderr="",
+        )
+        assert nw.get_current_ssid() == "UFI_103134"
