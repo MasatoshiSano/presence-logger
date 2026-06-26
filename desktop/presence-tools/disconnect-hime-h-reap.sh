@@ -21,7 +21,14 @@ if docker stop presence-detector >/dev/null 2>&1; then
     say "■ 検知を停止しました（detector）"
 fi
 
+# 子ラズパイ用の独自WiFi(AP)を停止（両方の通信をオフ）
+if nmcli connection down "${AP_CONN:-presence-hub-ap}" >/dev/null 2>&1; then
+    say "■ 子Pi用 AP(presence-hub) を停止しました（子Piの接続も切れます）"
+fi
+
+# 工場網(HIME-H-REAP)を停止
 nmcli connection down "$CONN_NAME" >/dev/null 2>&1 || true
+say "■ 工場網 $CONN_NAME を切断しました"
 
 if nmcli connection up "$HOME_PROFILE" >/dev/null 2>&1; then
     say "✅ $HOME_PROFILE に戻しました"

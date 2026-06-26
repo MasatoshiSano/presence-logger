@@ -135,6 +135,22 @@ if [[ "$connected" == "yes" ]]; then
         else
             say "    ⚠ 時刻同期はまだ（背後で継続。記録は後で自動補正されます）"
         fi
+        # 子ラズパイ用の独自WiFi(AP)を起動し、子PiのMQTT書き込みを受けられるようにする
+        PROJ="/home/pi/projects/presence-logger"
+        say "    子Pi用 AP(presence-hub) を起動中..."
+        if nmcli connection up presence-hub-ap >/dev/null 2>&1; then
+            say "    ✅ AP presence-hub 起動（子Pi=10.42.0.x / このPi=10.42.0.1）"
+            # AP(10.42.0.1)が上がってから、子Pi向けに mosquitto を公開（hub override）
+            if docker compose --project-directory "$PROJ" \
+                    -f "$PROJ/docker-compose.yml" -f "$PROJ/docker-compose.hub.yml" \
+                    up -d mosquitto >/dev/null 2>&1; then
+                say "    ✅ MQTT を子Piへ公開（10.42.0.1:1883）→ 子Pi書き込みは bridge が HHC001 へ送信"
+            else
+                say "    ⚠ mosquitto の子Pi公開に失敗（docker を確認）"
+            fi
+        else
+            say "    ⚠ AP presence-hub を起動できません（先に setup-dongle-ap.sh を実行）"
+        fi
         # 次に検知を開始（detector コンテナ起動 = カメラ取得＋ENTER/EXIT判定）
         say "    検知を開始します（detector 起動中...）"
         docker start presence-detector >/dev/null 2>&1 \
@@ -142,16 +158,19 @@ if [[ "$connected" == "yes" ]]; then
             || say "    ⚠ detector の起動に失敗（docker を確認してください）"
         say ""
         say "===================================================="
-        say " ✅ HIME-H-REAP 接続＋時刻同期＋検知を開始しました"
-        say "    SSID : $PROFILE_NAME    IP : ${PCFG[ip]}"
+        say " ✅ HIME-H-REAP 接続＋AP起動＋時刻同期＋検知を開始しました"
+        say "    工場 : $PROFILE_NAME (wlan0)    IP : ${PCFG[ip]}"
+        say "    子Pi : presence-hub (wlan1)     IP : 10.42.0.1"
         say "===================================================="
         say ""
-        say " detector がカメラ判定を開始 → bridge が HHC001 に記録します。"
+        say " ・このPiの detector がカメラ判定 → bridge が HHC001 に記録。"
+        say " ・子ラズパイは presence-hub に接続し MQTT(10.42.0.1)へ書き込み"
+        say "   → bridge が HHC001 へ送信します。"
         say " （カメラ起動に数秒・最初のMERGEまで最大5秒）"
         say " 通信が一時的に切れても検知は継続し、復旧後にまとめて記録されます。"
         say ""
         say " ◆ 記録確認:  Desktop の「記録モニタ」"
-        say " ◆ 停止:      Desktop の「HIME-H-REAP を切断」（検知も止まります）"
+        say " ◆ 停止:      Desktop の「HIME-H-REAP を切断」（工場・AP・検知を停止）"
         finish 0
 fi
 
