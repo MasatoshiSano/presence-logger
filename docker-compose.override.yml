@@ -1,0 +1,21 @@
+# docker-compose.override.yml — auto-merged by a bare `docker compose up -d`
+# (the systemd unit's ExecStart). Publishes the anonymous MQTT broker ONLY on the
+# dongle-AP gateway IP (10.42.0.1) so child Pis on the "presence-hub" AP can reach
+# it, while keeping it OFF the factory OT network (wlan0) and every other host
+# interface.
+#
+# Why this file (vs. docker-compose.hub.yml): a bare `docker compose up -d` — what
+# systemd runs at boot — only auto-merges docker-compose.yml + docker-compose.override.yml.
+# The hub override is NOT picked up unless explicitly passed with -f, so before this
+# file the broker was never published on the AP and no child Pi could send. Any
+# `docker compose up` that omitted the override also silently stripped the port
+# publish. Keeping the binding here makes it durable and strip-proof.
+#
+# Requires 10.42.0.1 to exist (dongle AP up) when mosquitto starts. If it is not up
+# yet at boot, the bind fails fast and `restart: unless-stopped` retries until the
+# AP interface appears. Explicit test/tooling flows (`-f docker-compose.dev.yml`,
+# connect-hime-h-reap.sh) pass their own -f and are unaffected by this file.
+services:
+  mosquitto:
+    ports:
+      - "10.42.0.1:1883:1883"
