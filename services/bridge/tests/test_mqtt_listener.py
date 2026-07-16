@@ -76,6 +76,37 @@ def test_subscribe_event_logs_and_drops_malformed_messages():
     assert called == []  # malformed messages are dropped, not delivered to handler
 
 
+def test_resubscribes_all_topics_on_reconnect():
+    # A broker restart triggers paho's on_connect again; the client must resend
+    # every SUBSCRIBE (paho does not do this automatically), otherwise the bridge
+    # silently stops receiving events/records until the process restarts.
+    with patch("services.bridge.src.mqtt_listener.paho.Client") as paho_cls:
+        client = paho_cls.return_value
+        c = BridgeMqttClient(client_id="bridge-test")
+        c.connect_and_loop(host="m", port=1883)
+        c.subscribe_event("presence/event", lambda *a: None)
+        c.subscribe_text("presence/record", lambda *a: None)
+
+        client.subscribe.reset_mock()
+        # simulate paho invoking the registered on_connect after a reconnect
+        client.on_connect(client, None, {}, 0)
+
+        resubscribed = {call.args[0] for call in client.subscribe.call_args_list}
+        assert resubscribed == {"presence/event", "presence/record"}
+
+
+def test_on_connect_failure_does_not_subscribe():
+    with patch("services.bridge.src.mqtt_listener.paho.Client") as paho_cls:
+        client = paho_cls.return_value
+        c = BridgeMqttClient(client_id="bridge-test")
+        c.connect_and_loop(host="m", port=1883)
+        c.subscribe_event("presence/event", lambda *a: None)
+
+        client.subscribe.reset_mock()
+        client.on_connect(client, None, {}, 1)  # rc != 0 → connection refused
+        client.subscribe.assert_not_called()
+
+
 def test_publish_ack_serializes_payload_with_qos2():
     with patch("services.bridge.src.mqtt_listener.paho.Client") as paho_cls:
         client = paho_cls.return_value
