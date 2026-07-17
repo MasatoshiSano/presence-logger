@@ -45,6 +45,25 @@ def _addstr(win, y, x, text, attr=0):
         win.addnstr(y, x, text, max(0, w - x - 1), attr)
 
 
+def _draw_pane(parent, height, width, y, x, fn, *args):
+    """1ペインを独立に描画する。derwin生成や fn の例外を捕まえ、他ペインへ
+    波及させない（§7 各ペイン独立）。失敗したペインには理由を1行出す。"""
+    try:
+        win = parent.derwin(height, width, y, x)
+    except curses.error:
+        return  # このフレームでは描けないだけ。次フレームで再試行。
+    try:
+        fn(win, *args)
+    except Exception as e:  # noqa: BLE001  ペインは落とさない
+        try:
+            win.erase()
+            win.box()
+            _addstr(win, 1, 2, f"⚠ 描画失敗: {type(e).__name__}: {e}")
+            win.noutrefresh()
+        except curses.error:
+            pass
+
+
 def _draw_children(win, msgs, now):
     win.erase()
     win.box()
@@ -146,14 +165,20 @@ def run(stdscr, deps: Deps) -> None:
             stdscr.erase()
             _addstr(stdscr, 0, 0,
                     " presence パイプライン監視  [r]Oracle即時 [q]終了 ", curses.A_REVERSE)
-            tl = stdscr.derwin(mid_y - 1, mid_x, 1, 0)
-            tr = stdscr.derwin(mid_y - 1, w - mid_x, 1, mid_x)
-            bl = stdscr.derwin(h - mid_y - 1, mid_x, mid_y, 0)
-            br = stdscr.derwin(h - mid_y - 1, w - mid_x, mid_y, mid_x)
-            _draw_children(tl, msgs, now)
-            _draw_mqtt(tr, msgs)
-            _draw_inbox(bl, msgs, deps.inbox)
-            _draw_oracle(br, oracle_result, oracle_err, deps.ssid_getter(), oracle_last)
+            # 端末が小さすぎて4分割できないときは、落とさず一言だけ出す。
+            if mid_y - 1 < 3 or h - mid_y - 1 < 3 or mid_x < 12 or w - mid_x < 12:
+                _addstr(stdscr, 2, 0, "端末が小さすぎます。ウィンドウを広げてください。")
+            else:
+                # 各ペインを独立に描画。1ペインの例外は他ペインへ波及させない（§7）。
+                _draw_pane(stdscr, mid_y - 1, mid_x, 1, 0,
+                           _draw_children, msgs, now)
+                _draw_pane(stdscr, mid_y - 1, w - mid_x, 1, mid_x,
+                           _draw_mqtt, msgs)
+                _draw_pane(stdscr, h - mid_y - 1, mid_x, mid_y, 0,
+                           _draw_inbox, msgs, deps.inbox)
+                _draw_pane(stdscr, h - mid_y - 1, w - mid_x, mid_y, mid_x,
+                           _draw_oracle, oracle_result, oracle_err,
+                           deps.ssid_getter(), oracle_last)
             stdscr.noutrefresh()
             curses.doupdate()
 
