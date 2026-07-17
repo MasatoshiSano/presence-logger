@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=パイプライン監視
+Name[ja]=パイプライン監視
+Comment=子Pi→MQTT→Oracle のデータの流れを1画面で追う
+Exec=lxterminal -t "パイプライン監視" -e bash /home/pi/Desktop/presence-tools/pipeline-monitor.sh
+Icon=utilities-system-monitor
+Terminal=false
+Categories=Network;

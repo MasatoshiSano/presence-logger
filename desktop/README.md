@@ -56,3 +56,13 @@ sudo bash ~/Desktop/presence-tools/setup-autostart.sh
 4. 終わったら「HIME-H-REAP を切断」（検知も止まり元のWiFiへ戻る）
 
 凡例・トラブル対応の詳細は [`presence-tools/README.txt`](presence-tools/README.txt) を参照。
+
+## パイプライン監視（pipeline-monitor）
+
+子Pi → MQTT → bridge(record_inbox) → Oracle のデータの流れを1画面で追う curses TUI。
+`記録モニタ`（自Piカメラ検知のログ流し）とは別物で、子Pi経路とDB段階の追跡が目的。
+
+- ①子Pi別受信 / ②MQTT生ログ(presence/#) / ③record_inbox(received・sent・滞留) / ④Oracleテーブル
+- 同じ event_id を ②→③→④ と辿れる。`[r]`でOracle即時更新、`[q]`で終了。
+- 起動: デスクトップの「パイプライン監視」、または `bash desktop/presence-tools/pipeline-monitor.sh`
+- 依存: `mosquitto-clients`（`mosquitto_sub`）。④は工場網SSID接続時のみ表示。
