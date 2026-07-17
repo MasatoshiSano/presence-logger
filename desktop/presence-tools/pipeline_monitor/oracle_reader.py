@@ -9,6 +9,11 @@
 """
 from __future__ import annotations
 
+import subprocess  # noqa: S404
+import urllib.parse
+from collections.abc import Callable
+from dataclasses import dataclass
+
 from pipeline_monitor.model import OracleResult, OracleRow
 
 
@@ -30,3 +35,57 @@ def parse_select_recent(text: str) -> OracleResult:
                 sta_no3=parts[3], t1_status=parts[4], upcmpflg=parts[5],
             ))
     return res
+
+
+@dataclass
+class OracleQuery:
+    host: str
+    port: str
+    service: str
+    user: str
+    table: str
+    sta_no1: str
+    sta_no2: str
+    sta_no3: str
+    limit: int = 30
+
+
+def build_post_body(q: OracleQuery, password: str) -> str:
+    return urllib.parse.urlencode({
+        "url": f"jdbc:oracle:thin:@{q.host}:{q.port}/{q.service}",
+        "user": q.user,
+        "password": password,
+        "table_name": q.table,
+        "sta_no1": q.sta_no1,
+        "sta_no2": q.sta_no2,
+        "sta_no3": q.sta_no3,
+        "limit": str(q.limit),
+    })
+
+
+def _default_runner(cmd: list[str], stdin: str) -> str:
+    # サイドカーは presence-net 内のみ待受なので docker exec 経由で叩く。
+    proc = subprocess.run(  # noqa: S603
+        cmd, input=stdin, capture_output=True, text=True, timeout=45, check=False,
+    )
+    return proc.stdout
+
+
+class OracleRecentReader:
+    def __init__(self, jdbc_container: str, sidecar_url: str):
+        self._container = jdbc_container
+        self._url = sidecar_url
+
+    def fetch(
+        self,
+        q: OracleQuery,
+        password: str,
+        runner: Callable[[list[str], str], str] = _default_runner,
+    ) -> OracleResult:
+        body = build_post_body(q, password)
+        cmd = [
+            "docker", "exec", "-i", self._container, "wget", "-q", "--timeout=40",
+            "--header=Content-Type: application/x-www-form-urlencoded",
+            f"--post-data={body}", "-O", "-", f"{self._url}/select_recent",
+        ]
+        return parse_select_recent(runner(cmd, ""))
