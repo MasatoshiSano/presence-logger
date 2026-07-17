@@ -44,23 +44,29 @@ class OracleQuery:
     service: str
     user: str
     table: str
-    sta_no1: str
-    sta_no2: str
-    sta_no3: str
+    sta_no1: str = ""
+    sta_no2: str = ""
+    sta_no3: str = ""
+    mk_date_from: str = ""
+    mk_date_to: str = ""
+    t1_status: str = ""
     limit: int = 30
 
 
 def build_post_body(q: OracleQuery, password: str) -> str:
-    return urllib.parse.urlencode({
+    fields = {
         "url": f"jdbc:oracle:thin:@{q.host}:{q.port}/{q.service}",
         "user": q.user,
         "password": password,
         "table_name": q.table,
-        "sta_no1": q.sta_no1,
-        "sta_no2": q.sta_no2,
-        "sta_no3": q.sta_no3,
         "limit": str(q.limit),
-    })
+    }
+    # 任意フィルタは値があるときだけ送る（空欄=絞らない）
+    for key in ("sta_no1", "sta_no2", "sta_no3", "mk_date_from", "mk_date_to", "t1_status"):
+        val = getattr(q, key)
+        if val:
+            fields[key] = val
+    return urllib.parse.urlencode(fields)
 
 
 def _default_runner(cmd: list[str], stdin: str) -> str:
