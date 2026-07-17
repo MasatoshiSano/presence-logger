@@ -37,11 +37,20 @@ class InboxRow:
 
 
 @dataclass
+class DeviceAgg:
+    """record_inbox の device_id 別集計（DBが真実の「どの子が何件送ったか」）。"""
+    device_id: str
+    count: int
+    last_mk_date: str | None
+
+
+@dataclass
 class InboxView:
     rows: list[InboxRow]
     received: int                   # 滞留（未送信）件数
     sent: int
     total: int
+    devices: list[DeviceAgg] = field(default_factory=list)
 
 
 @dataclass

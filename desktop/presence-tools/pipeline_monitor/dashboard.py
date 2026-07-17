@@ -16,7 +16,7 @@ from pipeline_monitor.inbox_reader import RecordInboxReader
 from pipeline_monitor.linker import annotate_stages
 from pipeline_monitor.mqtt_tail import MqttTail
 from pipeline_monitor.oracle_reader import OracleRecentReader, OracleResult
-from pipeline_monitor.rollup import child_rollup
+from pipeline_monitor.rollup import merged_children
 
 ORACLE_REFRESH_S = 15.0
 HEARTBEAT_TIMEOUT_S = 60.0
@@ -64,13 +64,20 @@ def _draw_pane(parent, height, width, y, x, fn, *args):
             pass
 
 
-def _draw_children(win, msgs, now):
+def _draw_children(win, inbox_view, inbox_err, msgs, now):
     win.erase()
     win.box()
     _addstr(win, 0, 2, " ①子Pi別 受信 ", curses.A_BOLD)
-    stats = child_rollup(msgs, now=now, heartbeat_timeout=HEARTBEAT_TIMEOUT_S)
-    _addstr(win, 1, 2, f"{'device':<12}{'rec':>4} {'状態':<8}{'hb':>6} 最新mk")
-    for i, s in enumerate(stats, start=2):
+    # 「どの子から何件」は DB(record_inbox) が真実。MQTT で liveness を重ねる。
+    devices = inbox_view.devices if inbox_view else []
+    stats = merged_children(devices, msgs, now=now, heartbeat_timeout=HEARTBEAT_TIMEOUT_S)
+    if inbox_err:
+        _addstr(win, 1, 2, f"⚠ DB取得失敗(件数はMQTT分のみ): {inbox_err}")
+        start = 2
+    else:
+        start = 1
+    _addstr(win, start, 2, f"{'device':<12}{'rec':>4} {'状態':<8}{'hb':>6} 最新mk")
+    for i, s in enumerate(stats, start=start + 1):
         badge = {"online": "🟢", "offline": "🔴", "stale": "🟡"}.get(s.state, "⚪")
         hb = f"{int(s.last_heartbeat_age)}s" if s.last_heartbeat_age is not None else "-"
         mk = s.last_record_mk_date or "-"
@@ -90,11 +97,10 @@ def _draw_mqtt(win, msgs):
     win.noutrefresh()
 
 
-def _draw_inbox(win, msgs, inbox_reader):
+def _draw_inbox(win, view, err, msgs):
     win.erase()
     win.box()
     _addstr(win, 0, 2, " ③MQTT→Oracle (record_inbox) ", curses.A_BOLD)
-    view, err = _safe(inbox_reader.read, None)
     if err or view is None:
         _addstr(win, 1, 2, f"⚠ 取得失敗: {err}")
         win.noutrefresh()
@@ -160,6 +166,8 @@ def run(stdscr, deps: Deps) -> None:
                 refresh_oracle()
 
             msgs = deps.tail.messages()
+            # record_inbox は1フレーム1回だけ読み、①と③で共有する（二重読み回避）。
+            inbox_view, inbox_err = _safe(deps.inbox.read, None)
             h, w = stdscr.getmaxyx()
             mid_y, mid_x = h // 2, w // 2
             stdscr.erase()
@@ -171,11 +179,11 @@ def run(stdscr, deps: Deps) -> None:
             else:
                 # 各ペインを独立に描画。1ペインの例外は他ペインへ波及させない（§7）。
                 _draw_pane(stdscr, mid_y - 1, mid_x, 1, 0,
-                           _draw_children, msgs, now)
+                           _draw_children, inbox_view, inbox_err, msgs, now)
                 _draw_pane(stdscr, mid_y - 1, w - mid_x, 1, mid_x,
                            _draw_mqtt, msgs)
                 _draw_pane(stdscr, h - mid_y - 1, mid_x, mid_y, 0,
-                           _draw_inbox, msgs, deps.inbox)
+                           _draw_inbox, inbox_view, inbox_err, msgs)
                 _draw_pane(stdscr, h - mid_y - 1, w - mid_x, mid_y, mid_x,
                            _draw_oracle, oracle_result, oracle_err,
                            deps.ssid_getter(), oracle_last)

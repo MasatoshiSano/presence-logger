@@ -11,6 +11,7 @@ from pipeline_monitor.inbox_reader import RecordInboxReader, parse_container_out
 _SAMPLE = (
     "CNT\treceived\t71\n"
     "CNT\tsent\t49\n"
+    "DEV\tpizero2w\t120\t20260717091000\n"
     "ROW\t9a160dca1e\tpizero2w\t20260717090000\treceived\t0\t\t2026-07-17T09:00:00Z\t\n"
     "ROW\t532e09d250\tpizero2w\t20260717091000\tsent\t2\tORA-12514\t"
     "2026-07-17T09:10:00Z\t2026-07-17T09:10:05Z\n"
@@ -22,6 +23,10 @@ def test_parse_container_output_counts_and_rows():
     assert view.received == 71
     assert view.sent == 49
     assert view.total == 120
+    assert len(view.devices) == 1
+    assert view.devices[0].device_id == "pizero2w"
+    assert view.devices[0].count == 120
+    assert view.devices[0].last_mk_date == "20260717091000"
     assert view.rows[0].event_id == "9a160dca1e"
     assert view.rows[0].device_id == "pizero2w"
     assert view.rows[0].last_error is None       # empty field -> None

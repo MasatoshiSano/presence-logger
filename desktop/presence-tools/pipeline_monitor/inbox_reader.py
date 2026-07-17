@@ -13,7 +13,7 @@ import subprocess  # noqa: S404
 from collections.abc import Callable
 from pathlib import Path
 
-from pipeline_monitor.model import InboxRow, InboxView
+from pipeline_monitor.model import DeviceAgg, InboxRow, InboxView
 
 # bridge コンテナ内で実行する読取スクリプト（タブ区切りで stdout に出す）。
 # -c で渡すのでコンテナ側 python が \t/\n をタブ・改行として解釈する。
@@ -23,6 +23,9 @@ db, limit = sys.argv[1], int(sys.argv[2])
 c = sqlite3.connect(db); c.row_factory = sqlite3.Row
 for r in c.execute("select status, count(*) n from record_inbox group by status"):
     print("CNT\t%s\t%d" % (r["status"], r["n"]))
+for r in c.execute("select device_id, count(*) n, max(mk_date) mk "
+                   "from record_inbox group by device_id"):
+    print("DEV\t%s\t%d\t%s" % (r["device_id"] or "", r["n"], r["mk"] or ""))
 q = ("select event_id, device_id, mk_date, status, retry_count, last_error, "
      "received_at_iso, sent_at_iso from record_inbox order by received_at_iso desc limit ?")
 for r in c.execute(q, (limit,)):
@@ -46,6 +49,7 @@ def parse_container_output(text: str) -> InboxView:
     """bridge コンテナ内スクリプトのタブ区切り出力を InboxView に変換する（純関数）。"""
     received = sent = 0
     rows: list[InboxRow] = []
+    devices: list[DeviceAgg] = []
     for line in text.splitlines():
         parts = line.split("\t")
         if parts[0] == "CNT" and len(parts) == 3:
@@ -53,6 +57,12 @@ def parse_container_output(text: str) -> InboxView:
                 received = int(parts[2])
             elif parts[1] == "sent":
                 sent = int(parts[2])
+        elif parts[0] == "DEV" and len(parts) == 4:
+            devices.append(DeviceAgg(
+                device_id=parts[1] or "(不明)",
+                count=int(parts[2]),
+                last_mk_date=parts[3] or None,
+            ))
         elif parts[0] == "ROW" and len(parts) == 9:
             rows.append(InboxRow(
                 event_id=parts[1],
@@ -64,7 +74,8 @@ def parse_container_output(text: str) -> InboxView:
                 received_at_iso=parts[7],
                 sent_at_iso=parts[8] or None,
             ))
-    return InboxView(rows=rows, received=received, sent=sent, total=received + sent)
+    return InboxView(rows=rows, received=received, sent=sent,
+                     total=received + sent, devices=devices)
 
 
 class RecordInboxReader:
@@ -101,6 +112,16 @@ class RecordInboxReader:
                     received = r["n"]
                 elif r["status"] == "sent":
                     sent = r["n"]
+            devices = [
+                DeviceAgg(
+                    device_id=(r["device_id"] or "(不明)"),
+                    count=r["n"], last_mk_date=r["mk"],
+                )
+                for r in conn.execute(
+                    "SELECT device_id, COUNT(*) AS n, MAX(mk_date) AS mk "
+                    "FROM record_inbox GROUP BY device_id"
+                ).fetchall()
+            ]
             cur = conn.execute(
                 "SELECT event_id, device_id, mk_date, status, retry_count, "
                 "last_error, received_at_iso, sent_at_iso "
@@ -116,7 +137,8 @@ class RecordInboxReader:
                 )
                 for r in cur.fetchall()
             ]
-            return InboxView(rows=rows, received=received, sent=sent, total=received + sent)
+            return InboxView(rows=rows, received=received, sent=sent,
+                             total=received + sent, devices=devices)
         finally:
             conn.close()
 
