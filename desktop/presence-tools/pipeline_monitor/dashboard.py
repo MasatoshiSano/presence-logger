@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import curses
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -122,8 +123,13 @@ def _draw_oracle(win, result: OracleResult | None, err, ssid, last_at):
     win.erase()
     win.box()
     _addstr(win, 0, 2, " ④Oracle テーブル ([r]更新) ", curses.A_BOLD)
-    if err or result is None:
+    if err:
         _addstr(win, 1, 2, f"⚠ 取得失敗: {err}")
+        _addstr(win, 2, 2, f"SSID={ssid}（工場網でないと届きません）")
+        win.noutrefresh()
+        return
+    if result is None:
+        _addstr(win, 1, 2, "取得中…（[r]で即時 / 15秒毎に自動）")
         _addstr(win, 2, 2, f"SSID={ssid}（工場網でないと届きません）")
         win.noutrefresh()
         return
@@ -147,27 +153,55 @@ def run(stdscr, deps: Deps) -> None:
     curses.curs_set(0)
     stdscr.nodelay(True)
     deps.tail.start()
-    oracle_result: OracleResult | None = None
-    oracle_err: str | None = None
-    oracle_last = 0.0
 
-    def refresh_oracle():
-        nonlocal oracle_result, oracle_err, oracle_last
-        def _do():
-            q = deps.oracle_query_loader()
-            return deps.oracle.fetch(q, deps.password_getter())
-        oracle_result, oracle_err = _safe(_do, None)
-        oracle_last = time.time()
+    # I/O（record_inbox 読取・Oracle 照会・SSID 取得）は別スレッドで回し、描画
+    # ループは決してブロックしない。工場網未接続で Oracle 照会が数十秒かかっても
+    # 画面と [q] が固まらない（§7 の堅牢性を実運用まで担保する）。
+    lock = threading.Lock()
+    state: dict = {
+        "inbox_view": None, "inbox_err": None,
+        "oracle_result": None, "oracle_err": None, "oracle_at": 0.0,
+        "ssid": "(取得中)",
+    }
+    stop_event = threading.Event()
+    oracle_now = threading.Event()      # [r] 押下でのOracle即時取得トリガ
+
+    def _fetch_oracle():
+        q = deps.oracle_query_loader()
+        return deps.oracle.fetch(q, deps.password_getter())
+
+    def worker():
+        last_oracle = 0.0
+        while not stop_event.is_set():
+            inbox_view, inbox_err = _safe(deps.inbox.read, None)
+            ssid, _ = _safe(deps.ssid_getter, "(不明)")
+            with lock:
+                state["inbox_view"], state["inbox_err"] = inbox_view, inbox_err
+                state["ssid"] = ssid
+            now = time.time()
+            if now - last_oracle >= ORACLE_REFRESH_S or oracle_now.is_set():
+                oracle_result, oracle_err = _safe(_fetch_oracle, None)
+                with lock:
+                    state["oracle_result"], state["oracle_err"] = oracle_result, oracle_err
+                    state["oracle_at"] = time.time()
+                last_oracle = time.time()
+                oracle_now.clear()
+            stop_event.wait(1.0)        # inbox/SSID の更新間隔（UIスレッド外）
+
+    worker_thread = threading.Thread(target=worker, daemon=True)
+    worker_thread.start()
 
     try:
         while True:
             now = time.time()
-            if now - oracle_last >= ORACLE_REFRESH_S:
-                refresh_oracle()
-
             msgs = deps.tail.messages()
-            # record_inbox は1フレーム1回だけ読み、①と③で共有する（二重読み回避）。
-            inbox_view, inbox_err = _safe(deps.inbox.read, None)
+            with lock:
+                inbox_view = state["inbox_view"]
+                inbox_err = state["inbox_err"]
+                oracle_result = state["oracle_result"]
+                oracle_err = state["oracle_err"]
+                oracle_at = state["oracle_at"]
+                ssid = state["ssid"]
             h, w = stdscr.getmaxyx()
             mid_y, mid_x = h // 2, w // 2
             stdscr.erase()
@@ -185,8 +219,7 @@ def run(stdscr, deps: Deps) -> None:
                 _draw_pane(stdscr, h - mid_y - 1, mid_x, mid_y, 0,
                            _draw_inbox, inbox_view, inbox_err, msgs)
                 _draw_pane(stdscr, h - mid_y - 1, w - mid_x, mid_y, mid_x,
-                           _draw_oracle, oracle_result, oracle_err,
-                           deps.ssid_getter(), oracle_last)
+                           _draw_oracle, oracle_result, oracle_err, ssid, oracle_at)
             stdscr.noutrefresh()
             curses.doupdate()
 
@@ -194,7 +227,10 @@ def run(stdscr, deps: Deps) -> None:
             if ch in (ord("q"), ord("Q")):
                 break
             if ch in (ord("r"), ord("R")):
-                refresh_oracle()
-            time.sleep(1.0)
+                oracle_now.set()
+            time.sleep(0.3)
     finally:
+        stop_event.set()
+        oracle_now.set()
+        worker_thread.join(timeout=3.0)
         deps.tail.stop()

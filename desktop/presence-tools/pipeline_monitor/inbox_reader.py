@@ -20,7 +20,9 @@ from pipeline_monitor.model import DeviceAgg, InboxRow, InboxView
 _CONTAINER_QUERY = r'''
 import sqlite3, sys
 db, limit = sys.argv[1], int(sys.argv[2])
-c = sqlite3.connect(db); c.row_factory = sqlite3.Row
+# コンテナ内 root は -shm を書けるので WAL でも ?mode=ro で読める。
+# 本番DBへは絶対に書かない（read-only を守る）。
+c = sqlite3.connect("file:%s?mode=ro" % db, uri=True); c.row_factory = sqlite3.Row
 for r in c.execute("select status, count(*) n from record_inbox group by status"):
     print("CNT\t%s\t%d" % (r["status"], r["n"]))
 for r in c.execute("select device_id, count(*) n, max(mk_date) mk "
