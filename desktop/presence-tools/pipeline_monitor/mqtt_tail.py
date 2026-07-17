@@ -5,6 +5,12 @@
 from __future__ import annotations
 
 import json
+import shutil
+import subprocess  # noqa: S404
+import threading
+import time
+from collections import deque
+from collections.abc import Callable
 
 from pipeline_monitor.model import MqttMsg
 
@@ -73,3 +79,88 @@ def mqtt_summarize(topic: str, payload: str, *, now: float) -> MqttMsg:
         ts=now, topic=topic, kind=kind, device_id=device_id,
         event_id=event_id, summary=summary, raw=payload,
     )
+
+
+class MqttTail:
+    """`mosquitto_sub -v` を子プロセスで走らせ、行をリングバッファに溜める。
+
+    ingest_line() は純粋（テスト可能）。start()/stop() が subprocess を管理する。
+    """
+
+    def __init__(
+        self,
+        host: str,
+        port: int,
+        topic: str = "presence/#",
+        maxlen: int = 500,
+        clock: Callable[[], float] = time.time,
+    ):
+        self._host = host
+        self._port = port
+        self._topic = topic
+        self._clock = clock
+        self._buf: deque[MqttMsg] = deque(maxlen=maxlen)
+        self._lock = threading.Lock()
+        self._proc: subprocess.Popen | None = None
+        self._thread: threading.Thread | None = None
+        self._running = False
+
+    def ingest_line(self, line: str) -> None:
+        line = line.rstrip("\n")
+        if not line.strip():
+            return
+        # `-v` 出力は "<topic> <payload>"。payload に空白/JSON があるので1回だけ分割。
+        topic, _, payload = line.partition(" ")
+        msg = mqtt_summarize(topic, payload, now=self._clock())
+        with self._lock:
+            self._buf.append(msg)
+
+    def messages(self) -> list[MqttMsg]:
+        with self._lock:
+            return list(self._buf)
+
+    def event_ids(self) -> set[str]:
+        with self._lock:
+            return {m.event_id for m in self._buf if m.event_id}
+
+    # --- subprocess management (ユニットテスト対象外) ---
+    def _cmd(self) -> list[str]:
+        exe = shutil.which("mosquitto_sub")
+        if not exe:
+            msg = "mosquitto_sub が見つかりません（mosquitto-clients を入れてください）"
+            raise RuntimeError(msg)
+        return [exe, "-h", self._host, "-p", str(self._port), "-t", self._topic, "-v"]
+
+    def _run(self) -> None:
+        while self._running:
+            try:
+                self._proc = subprocess.Popen(  # noqa: S603
+                    self._cmd(), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                    text=True, bufsize=1,
+                )
+                assert self._proc.stdout is not None
+                for line in self._proc.stdout:
+                    if not self._running:
+                        break
+                    self.ingest_line(line)
+            except (RuntimeError, OSError):
+                pass
+            # 落ちたら少し待って再購読（broker 再起動・AP 再接続に追従）
+            for _ in range(20):
+                if not self._running:
+                    break
+                time.sleep(0.1)
+
+    def start(self) -> None:
+        self._running = True
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._running = False
+        if self._proc and self._proc.poll() is None:
+            self._proc.terminate()
+            try:
+                self._proc.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                self._proc.kill()
