@@ -11,6 +11,6 @@ ignore = ["S101"]  # allow assert in tests
 "tests/**" = ["S105", "S106"]
 
 [tool.pytest.ini_options]
-testpaths = ["services/detector/tests", "services/bridge/tests", "tests/integration"]
+testpaths = ["services/detector/tests", "services/bridge/tests", "tests/integration", "tests/desktop"]
 python_files = "test_*.py"
 addopts = "-v --tb=short --import-mode=importlib"
