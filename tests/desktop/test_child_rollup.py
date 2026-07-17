@@ -57,3 +57,72 @@ def test_result_sorted_by_device_id():
     msgs = [_rec("zero2", "20260717090000", 900.0), _rec("aaa", "20260717090000", 900.0)]
     stats = child_rollup(msgs, now=now, heartbeat_timeout=TIMEOUT)
     assert [s.device_id for s in stats] == ["aaa", "zero2"]
+
+
+def test_mk_date_missing_does_not_set_none_string():
+    """Regression test: record with missing mk_date should not set last_record_mk_date to "None"."""
+    now = 1000.0
+    msgs = [
+        # First record has no mk_date
+        MqttMsg(ts=900.0, topic="presence/record", kind="record",
+                device_id="zero2", event_id="e1", summary="", raw='{"event_id":"e1"}'),
+        # Second record has valid mk_date
+        MqttMsg(ts=950.0, topic="presence/record", kind="record",
+                device_id="zero2", event_id="e2", summary="", raw='{"mk_date":"20260717091000"}'),
+    ]
+    stats = {s.device_id: s for s in child_rollup(msgs, now=now, heartbeat_timeout=TIMEOUT)}
+    assert stats["zero2"].last_record_mk_date == "20260717091000"
+    assert stats["zero2"].last_record_mk_date != "None"
+
+
+def test_mk_date_null_does_not_set_none_string():
+    """Regression test: record with mk_date=null should not set last_record_mk_date to "None"."""
+    now = 1000.0
+    msgs = [
+        # Record with mk_date explicitly null
+        MqttMsg(ts=900.0, topic="presence/record", kind="record",
+                device_id="zero2", event_id="e1", summary="", raw='{"mk_date":null}'),
+        # Valid record after
+        MqttMsg(ts=950.0, topic="presence/record", kind="record",
+                device_id="zero2", event_id="e2", summary="", raw='{"mk_date":"20260717091000"}'),
+    ]
+    stats = {s.device_id: s for s in child_rollup(msgs, now=now, heartbeat_timeout=TIMEOUT)}
+    assert stats["zero2"].last_record_mk_date == "20260717091000"
+    assert stats["zero2"].last_record_mk_date != "None"
+
+
+def test_mk_date_missing_alone_yields_none_not_none_string():
+    """Regression test: record-only device with no mk_date should have None, not "None"."""
+    now = 1000.0
+    msgs = [
+        MqttMsg(ts=900.0, topic="presence/record", kind="record",
+                device_id="zero2", event_id="e1", summary="", raw='{"event_id":"e1"}'),
+    ]
+    stats = {s.device_id: s for s in child_rollup(msgs, now=now, heartbeat_timeout=TIMEOUT)}
+    assert stats["zero2"].last_record_mk_date is None
+
+
+def test_device_id_none_skipped():
+    """Regression test: message with device_id=None should be skipped."""
+    now = 1000.0
+    msgs = [
+        MqttMsg(ts=900.0, topic="presence/record", kind="record",
+                device_id=None, event_id="e1", summary="", raw='{"mk_date":"20260717090000"}'),
+        MqttMsg(ts=950.0, topic="presence/record", kind="record",
+                device_id="zero2", event_id="e2", summary="", raw='{"mk_date":"20260717091000"}'),
+    ]
+    stats = child_rollup(msgs, now=now, heartbeat_timeout=TIMEOUT)
+    assert len(stats) == 1
+    assert stats[0].device_id == "zero2"
+
+
+def test_record_only_device_state_unknown():
+    """Regression test: device with only records (no liveness signals) should have state unknown."""
+    now = 1000.0
+    msgs = [
+        MqttMsg(ts=900.0, topic="presence/record", kind="record",
+                device_id="zero2", event_id="e1", summary="", raw='{"mk_date":"20260717090000"}'),
+    ]
+    stats = child_rollup(msgs, now=now, heartbeat_timeout=TIMEOUT)
+    assert stats[0].state == "unknown"
+    assert stats[0].last_heartbeat_age is None

@@ -1,0 +1,24 @@
+pi@raspberrypi5:~/projects/presence-logger $ 
+pi@raspberrypi5:~/projects/presence-logger $ sudo bash desktop/presence-tools/mode-prod.sh 
+[sudo] password for pi: 
+
+=== 0) ドングル wlan1 を AP(presence-hub) に（先にAPを確保） ===
+
+=== 1) インターネット(UFI)を切り、工場 HIME-H-REAP を wlan0 に ===
+  ※ ここで UFI 経由のネット/Claude/SSH は切れます
+
+=== 確認 ===
+wlan0/1: 
+wlan1:connected:presence-hub-ap
+wlan0:connected:HIME-H-REAP
+AP種別: 
+	ssid presence-hub
+	type AP
+	channel 6 (2437 MHz), width: 20 MHz, center1: 2437 MHz
+工場接続(HIME): OK
+Oracle 10.166.5.93:1521: OPEN
+DHCPリース(子Pi): 
+1784186840 2c:cf:67:c1:1d:7b 10.42.0.51 pizero2w 01:2c:cf:67:c1:1d:7b
+
+→ 実運用モード。ネットは無し。開発に戻すには有線/別経路から:
+    sudo bash desktop/presence-tools/mode-dev.sh

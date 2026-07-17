@@ -50,7 +50,8 @@ def child_rollup(
             # mk_date は summary ではなく raw から取らず、record は event_id 経由で
             # 判別済み。mk は summary に含むが厳密比較のため raw を再解析する。
             try:
-                mk = str(json.loads(m.raw).get("mk_date"))
+                raw_mk = json.loads(m.raw).get("mk_date")
+                mk = str(raw_mk) if raw_mk is not None else None
             except (ValueError, TypeError, AttributeError):
                 mk = None
             if mk and (a.last_record_mk is None or mk > a.last_record_mk):
@@ -61,9 +62,11 @@ def child_rollup(
         elif m.kind == "status":
             state = m.raw.strip()
             if state == "online":
-                a.last_online_at = m.ts
+                if a.last_online_at is None or m.ts > a.last_online_at:
+                    a.last_online_at = m.ts
             elif state == "offline":
-                a.last_offline_at = m.ts
+                if a.last_offline_at is None or m.ts > a.last_offline_at:
+                    a.last_offline_at = m.ts
 
     out: list[ChildStat] = []
     for dev, a in accs.items():
