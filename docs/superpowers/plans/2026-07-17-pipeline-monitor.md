@@ -1585,16 +1585,18 @@ PYTHONPATH="$DIR" exec python3 -m pipeline_monitor
 
 Run: `chmod +x desktop/presence-tools/pipeline-monitor.sh`
 
-Create `desktop/launchers/パイプライン監視.desktop` (mirror an existing launcher's structure; check `desktop/launchers/記録モニタ.desktop` for the exact `Exec`/`Terminal`/`Path` conventions and match them):
+Create `desktop/launchers/パイプライン監視.desktop`. Match the exact convention of the existing `desktop/launchers/記録モニタ.desktop` (open its file and copy the `Exec`/`Terminal`/`Categories`/`Name[ja]` style verbatim — it uses `lxterminal -e bash /home/pi/Desktop/presence-tools/<script>` pointing at the DEPLOYED copy under `/home/pi/Desktop/presence-tools/`, with `Terminal=false`):
 ```ini
 [Desktop Entry]
 Type=Application
+Version=1.0
 Name=パイプライン監視
-Comment=子Pi→MQTT→Oracle を1画面で追う
-Terminal=true
-Exec=bash -lc 'cd "$HOME/projects/presence-logger" && bash desktop/presence-tools/pipeline-monitor.sh; exec bash'
+Name[ja]=パイプライン監視
+Comment=子Pi→MQTT→Oracle のデータの流れを1画面で追う
+Exec=lxterminal -t "パイプライン監視" -e bash /home/pi/Desktop/presence-tools/pipeline-monitor.sh
 Icon=utilities-system-monitor
-Categories=Utility;
+Terminal=false
+Categories=Network;
 ```
 
 - [ ] **Step 3: Verify — unit suite green**
