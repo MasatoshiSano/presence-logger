@@ -46,7 +46,7 @@ def _get_ssid() -> str:
 def main() -> int:
     deps = Deps(
         tail=MqttTail(MQTT_HOST, MQTT_PORT),
-        inbox=RecordInboxReader(INBOX_DB),
+        inbox=RecordInboxReader(INBOX_DB, bridge_container=BRIDGE_CONTAINER),
         oracle=OracleRecentReader(JDBC_CONTAINER, SIDECAR_URL),
         oracle_query_loader=lambda: load_oracle_query(PROFILES_YAML, PROFILE_NAME, LIMIT),
         password_getter=_get_password,
