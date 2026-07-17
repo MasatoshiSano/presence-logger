@@ -107,15 +107,14 @@ def _draw_oracle(win, result: OracleResult | None, err, ssid, last_at):
         win.noutrefresh()
         return
     updated = time.strftime("%H:%M:%S", time.localtime(last_at))
-    _addstr(win, 1, 2, f"{'日時':<19} {'種別':<7} STA(1/2/3)   最終更新={updated}")
-    badge = {"1": "🟢ENTER", "2": "🔴EXIT"}
+    _addstr(win, 1, 2, f"{'日時':<19} {'T1':<5} STA(1/2/3)   最終更新={updated}")
     h, _ = win.getmaxyx()
     for i, r in enumerate(result.rows[: h - 3], start=2):
         mk = r.mk_date
         disp = (f"{mk[0:4]}-{mk[4:6]}-{mk[6:8]} {mk[8:10]}:{mk[10:12]}:{mk[12:14]}"
                 if len(mk) == 14 and mk.isdigit() else mk)
-        b = badge.get(r.t1_status, f"?({r.t1_status})")
-        _addstr(win, i, 2, f"{disp:<19} {b:<7} {r.sta_no1}/{r.sta_no2}/{r.sta_no3}")
+        # T1_STATUS は入退室に限らないため生の数値を表示する。
+        _addstr(win, i, 2, f"{disp:<19} {r.t1_status:<5} {r.sta_no1}/{r.sta_no2}/{r.sta_no3}")
     win.noutrefresh()
 
 

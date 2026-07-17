@@ -19,12 +19,10 @@ STATUS_PREFIX = "presence/status/"
 HEARTBEAT_PREFIX = "presence/heartbeat/"
 _ACK_SUFFIX = "/ack"
 
-_T1_BADGE = {"1": "🟢ENTER", "2": "🔴EXIT"}
-
-
-def _t1_badge(t1: object) -> str:
-    key = str(t1)
-    return _T1_BADGE.get(key, f"?({key})")
+def _t1_label(t1: object) -> str:
+    # T1_STATUS は入退室に限らない任意コードなので、ENTER/EXIT に変換せず
+    # 生の数値をそのまま見せる（例: 1,2,3,...）。
+    return "T1=?" if t1 is None else f"T1={t1}"
 
 
 def _fmt_mk(mk: str) -> str:
@@ -49,7 +47,7 @@ def mqtt_summarize(topic: str, payload: str, *, now: float) -> MqttMsg:
             event_id = str(d["event_id"])
             device_id = d.get("device_id")
             summary = (
-                f"{device_id or '?'} {_t1_badge(d.get('t1_status'))} "
+                f"{device_id or '?'} {_t1_label(d.get('t1_status'))} "
                 f"{_fmt_mk(str(d.get('mk_date', '')))} id={_short(event_id)}"
             )
         except (ValueError, KeyError, TypeError):

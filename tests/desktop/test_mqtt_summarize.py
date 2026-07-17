@@ -16,7 +16,7 @@ def test_record_message_extracts_ids_and_summary():
     assert m.ts == NOW
     assert "zero2" in m.summary
     assert "20260717092300" in m.summary or "2026-07-17" in m.summary
-    assert "🟢" in m.summary  # t1_status=1 -> ENTER
+    assert "T1=1" in m.summary  # 生の T1_STATUS を表示（ENTER/EXIT には変換しない）
 
 
 def test_status_message_online_offline():
