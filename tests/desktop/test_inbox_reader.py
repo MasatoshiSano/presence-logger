@@ -46,6 +46,23 @@ def test_read_counts_and_orders_recent_first(tmp_path):
     assert view.rows[0].last_error == "ORA-12514"
 
 
+def test_read_counts_failed_separately(tmp_path):
+    db = tmp_path / "buf.db"
+    _make_db(db, [
+        ("e1", "20260717090000", "1", "2", "3", 1, "zero2", "{}", "sent",
+         "2026-07-17T09:00:00Z", "2026-07-17T09:00:01Z", 0, None),
+        ("e2", "20260717091000", "1", "2", "3", 2, "zero2", "{}", "received",
+         "2026-07-17T09:10:00Z", None, 0, None),
+        ("e3", "20260717091500", "1", "2", "3", 3, "zero2", "{}", "failed",
+         "2026-07-17T09:15:00Z", None, 6, "ORA-1: unique constraint violated"),
+    ])
+    view = RecordInboxReader(str(db)).read(limit=30)
+    assert view.total == 3
+    assert view.sent == 1
+    assert view.received == 1
+    assert view.failed == 1
+
+
 def test_missing_db_raises(tmp_path):
     with pytest.raises(FileNotFoundError):
         RecordInboxReader(str(tmp_path / "nope.db")).read()

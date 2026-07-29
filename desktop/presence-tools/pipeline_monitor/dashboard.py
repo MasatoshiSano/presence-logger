@@ -1,9 +1,15 @@
 """4ペイン curses ダッシュボード。描画とキー処理のみ。ロジックは各 reader が持つ。
 
 ペイン配置:
-   ┌ ①子Pi別受信 ─────┬ ②MQTT生ログ ─┐
-   ├─────────────────┼─────────────┤
-   └ ③record_inbox ──┴ ④Oracle ────┘
+   ┌ ①子Pi別受信 ─────┬ ②MQTT生ログ ─────┐
+   ├─────────────────┼─────────────────┤
+   └ ③record_inbox ──┴ ④アップロード履歴 ┘
+
+④は record_inbox の status=sent 行(=bridgeがOracle受理と判断した行)を、局番を
+先読みせずそのまま表示する。子PiのSTA_NO1-3は id_names_config.json 次第で
+何が来るか分からないため、固定フィルタでのOracle SELECTはしない(§関連の議論)。
+SSIDが一致しているときだけ、行ごとに自分のSTA_NO/MK_DATEでOracleへの実在を
+1行ずつ検証し、✓/⚠を付ける。
 """
 from __future__ import annotations
 
@@ -11,16 +17,17 @@ import curses
 import threading
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from datetime import datetime
 
 from pipeline_monitor.inbox_reader import RecordInboxReader
 from pipeline_monitor.linker import annotate_stages
-from pipeline_monitor.mqtt_tail import MqttTail
-from pipeline_monitor.oracle_reader import OracleRecentReader, OracleResult
+from pipeline_monitor.mqtt_tail import MqttTail, collapse_heartbeats
+from pipeline_monitor.oracle_reader import OracleRecentReader
 from pipeline_monitor.rollup import merged_children
 
-ORACLE_REFRESH_S = 15.0
 HEARTBEAT_TIMEOUT_S = 60.0
+VERIFY_BATCH = 1   # 1ループtickあたりに検証を試みる未検証行の数(ブロック時間を短く保つ)
 
 
 @dataclass
@@ -31,6 +38,7 @@ class Deps:
     oracle_query_loader: Callable[[], object]     # -> OracleQuery
     password_getter: Callable[[], str]
     ssid_getter: Callable[[], str]
+    expected_ssid: str
 
 
 def _safe(fn, default):
@@ -91,10 +99,12 @@ def _draw_mqtt(win, msgs):
     win.box()
     _addstr(win, 0, 2, " ②MQTT生ログ (presence/#) ", curses.A_BOLD)
     h, _ = win.getmaxyx()
-    visible = msgs[-(h - 2):] if len(msgs) > h - 2 else msgs
-    for i, m in enumerate(visible, start=1):
-        ts = time.strftime("%H:%M:%S", time.localtime(m.ts))
-        _addstr(win, i, 2, f"{ts} {m.summary}")
+    lines = collapse_heartbeats(msgs)
+    visible = lines[-(h - 2):] if len(lines) > h - 2 else lines
+    for i, ln in enumerate(visible, start=1):
+        ts = time.strftime("%H:%M:%S", time.localtime(ln.ts))
+        # heartbeatのまとめ行は薄く表示し、record/status/ack を目立たせる。
+        _addstr(win, i, 2, f"{ts} {ln.text}", curses.A_DIM if ln.dim else 0)
     win.noutrefresh()
 
 
@@ -107,7 +117,9 @@ def _draw_inbox(win, view, err, msgs):
         win.noutrefresh()
         return
     linked = annotate_stages(view.rows, {m.event_id for m in msgs if m.event_id})
-    _addstr(win, 1, 2, f"received(滞留)={view.received}  sent={view.sent}  合計={view.total}",
+    _addstr(win, 1, 2,
+            f"received(滞留)={view.received}  sent={view.sent}  "
+            f"failed(諦め)={view.failed}  合計={view.total}",
             curses.A_BOLD)
     h, _ = win.getmaxyx()
     for i, lk in enumerate(linked[: h - 3], start=2):
@@ -119,33 +131,50 @@ def _draw_inbox(win, view, err, msgs):
     win.noutrefresh()
 
 
-def _draw_oracle(win, result: OracleResult | None, err, ssid, last_at):
+def _fmt_mk(mk: str | None) -> str:
+    if mk and len(mk) == 14 and mk.isdigit():
+        return f"{mk[0:4]}-{mk[4:6]}-{mk[6:8]} {mk[8:10]}:{mk[10:12]}:{mk[12:14]}"
+    return mk or "-"
+
+
+def _fmt_sent_at(sent_at_iso: str | None) -> str:
+    """送信(Oracle受理)時刻をローカル時刻で表示する。mk_date(発生時刻)とは
+    別物であることを画面上でも区別できるようにするため。"""
+    if not sent_at_iso:
+        return "-"
+    try:
+        dt = datetime.fromisoformat(sent_at_iso).astimezone()
+    except ValueError:
+        return sent_at_iso[:16]
+    return dt.strftime("%m/%d %H:%M")
+
+
+def _draw_uploaded(win, view, err, verified: dict[str, bool], ssid, expected_ssid):
     win.erase()
     win.box()
-    _addstr(win, 0, 2, " ④Oracle テーブル ([r]更新) ", curses.A_BOLD)
-    if err:
+    _addstr(win, 0, 2, " ④アップロード履歴 ([r]再検証) ", curses.A_BOLD)
+    if err or view is None:
         _addstr(win, 1, 2, f"⚠ 取得失敗: {err}")
-        _addstr(win, 2, 2, f"SSID={ssid}（工場網でないと届きません）")
         win.noutrefresh()
         return
-    if result is None:
-        _addstr(win, 1, 2, "取得中…（[r]で即時 / 15秒毎に自動）")
-        _addstr(win, 2, 2, f"SSID={ssid}（工場網でないと届きません）")
-        win.noutrefresh()
-        return
-    if not result.ok:
-        _addstr(win, 1, 2, f"⚠ ORA-{result.ora_code} {result.error_message[:30]}")
-        win.noutrefresh()
-        return
-    updated = time.strftime("%H:%M:%S", time.localtime(last_at))
-    _addstr(win, 1, 2, f"{'日時':<19} {'T1':<5} STA(1/2/3)   最終更新={updated}")
+    sent_rows = sorted(
+        (r for r in view.rows if r.status == "sent"),
+        key=lambda r: r.sent_at_iso or "", reverse=True,
+    )
+    note = "" if ssid == expected_ssid else f"  (確認はSSID一致時のみ実行: 現在={ssid})"
+    _addstr(win, 1, 2, f"送信済み={len(sent_rows)}件{note}", curses.A_BOLD)
+    _addstr(win, 2, 2, f"{'発生(mk_date)':<19} {'送信時刻':<11} T1  STA(1/2/3)")
     h, _ = win.getmaxyx()
-    for i, r in enumerate(result.rows[: h - 3], start=2):
-        mk = r.mk_date
-        disp = (f"{mk[0:4]}-{mk[4:6]}-{mk[6:8]} {mk[8:10]}:{mk[10:12]}:{mk[12:14]}"
-                if len(mk) == 14 and mk.isdigit() else mk)
-        # T1_STATUS は入退室に限らないため生の数値を表示する。
-        _addstr(win, i, 2, f"{disp:<19} {r.t1_status:<5} {r.sta_no1}/{r.sta_no2}/{r.sta_no3}")
+    for i, r in enumerate(sent_rows[: h - 4], start=3):
+        v = verified.get(r.event_id)
+        mark = "✓確認" if v is True else ("⚠不一致" if v is False else "…未確認")
+        # T1_STATUS は入退室に限らないため生の数値を表示する。局番は子Piが
+        # 送ってきたそのままの値(固定フィルタで先読みしない)。発生時刻(mk_date)
+        # と送信(Oracle受理)時刻は別物なので両方出す(過去の送信を"今送った"と
+        # 誤読しないように)。
+        _addstr(win, i, 2,
+                f"{_fmt_mk(r.mk_date_committed):<19} {_fmt_sent_at(r.sent_at_iso):<11} "
+                f"T1={r.t1_status:<3} {r.sta_no1}/{r.sta_no2}/{r.sta_no3:<10} {mark}")
     win.noutrefresh()
 
 
@@ -160,33 +189,50 @@ def run(stdscr, deps: Deps) -> None:
     lock = threading.Lock()
     state: dict = {
         "inbox_view": None, "inbox_err": None,
-        "oracle_result": None, "oracle_err": None, "oracle_at": 0.0,
+        "verified": {},                 # event_id -> True(確認済)/False(不一致)
         "ssid": "(取得中)",
     }
     stop_event = threading.Event()
-    oracle_now = threading.Event()      # [r] 押下でのOracle即時取得トリガ
+    oracle_now = threading.Event()      # [r] 押下で verified キャッシュを全消去→再検証
 
-    def _fetch_oracle():
-        q = deps.oracle_query_loader()
-        return deps.oracle.fetch(q, deps.password_getter())
+    def _verify_row(row):
+        base = deps.oracle_query_loader()
+        mk = row.mk_date_committed or row.mk_date
+        q = replace(
+            base, sta_no1=row.sta_no1, sta_no2=row.sta_no2, sta_no3=row.sta_no3,
+            mk_date_from=mk, mk_date_to=mk, limit=1,
+        )
+        return deps.oracle.verify_exact(q, deps.password_getter())
 
     def worker():
-        last_oracle = 0.0
         while not stop_event.is_set():
             inbox_view, inbox_err = _safe(deps.inbox.read, None)
             ssid, _ = _safe(deps.ssid_getter, "(不明)")
             with lock:
                 state["inbox_view"], state["inbox_err"] = inbox_view, inbox_err
                 state["ssid"] = ssid
-            now = time.time()
-            if now - last_oracle >= ORACLE_REFRESH_S or oracle_now.is_set():
-                oracle_result, oracle_err = _safe(_fetch_oracle, None)
+
+            if oracle_now.is_set():
                 with lock:
-                    state["oracle_result"], state["oracle_err"] = oracle_result, oracle_err
-                    state["oracle_at"] = time.time()
-                last_oracle = time.time()
+                    state["verified"] = {}
                 oracle_now.clear()
-            stop_event.wait(1.0)        # inbox/SSID の更新間隔（UIスレッド外）
+
+            # 局番はここでは先読みしない。SSID一致時のみ、行自身の
+            # sta_no1-3/mk_date_committed で Oracle への実在を確認する。
+            if ssid == deps.expected_ssid and inbox_view is not None:
+                with lock:
+                    verified = dict(state["verified"])
+                pending = [
+                    r for r in inbox_view.rows
+                    if r.status == "sent" and r.event_id not in verified
+                ]
+                for row in pending[:VERIFY_BATCH]:
+                    result, verr = _safe(lambda row=row: _verify_row(row), None)
+                    if verr is None and result is not None:
+                        found = bool(result.ok and result.rows)
+                        with lock:
+                            state["verified"][row.event_id] = found
+            stop_event.wait(1.0)        # inbox/SSID/検証 の更新間隔（UIスレッド外）
 
     worker_thread = threading.Thread(target=worker, daemon=True)
     worker_thread.start()
@@ -198,15 +244,13 @@ def run(stdscr, deps: Deps) -> None:
             with lock:
                 inbox_view = state["inbox_view"]
                 inbox_err = state["inbox_err"]
-                oracle_result = state["oracle_result"]
-                oracle_err = state["oracle_err"]
-                oracle_at = state["oracle_at"]
+                verified = dict(state["verified"])
                 ssid = state["ssid"]
             h, w = stdscr.getmaxyx()
             mid_y, mid_x = h // 2, w // 2
             stdscr.erase()
             _addstr(stdscr, 0, 0,
-                    " presence パイプライン監視  [r]Oracle即時 [q]終了 ", curses.A_REVERSE)
+                    " presence パイプライン監視  [r]再検証 [q]終了 ", curses.A_REVERSE)
             # 端末が小さすぎて4分割できないときは、落とさず一言だけ出す。
             if mid_y - 1 < 3 or h - mid_y - 1 < 3 or mid_x < 12 or w - mid_x < 12:
                 _addstr(stdscr, 2, 0, "端末が小さすぎます。ウィンドウを広げてください。")
@@ -219,7 +263,8 @@ def run(stdscr, deps: Deps) -> None:
                 _draw_pane(stdscr, h - mid_y - 1, mid_x, mid_y, 0,
                            _draw_inbox, inbox_view, inbox_err, msgs)
                 _draw_pane(stdscr, h - mid_y - 1, w - mid_x, mid_y, mid_x,
-                           _draw_oracle, oracle_result, oracle_err, ssid, oracle_at)
+                           _draw_uploaded, inbox_view, inbox_err, verified, ssid,
+                           deps.expected_ssid)
             stdscr.noutrefresh()
             curses.doupdate()
 

@@ -48,6 +48,23 @@ def test_build_post_body_omits_blank_filter_fields():
         assert k not in body
 
 
+def test_verify_exact_hits_select_range_with_row_own_sta_no():
+    captured = {}
+
+    def fake_runner(cmd, stdin):
+        captured["cmd"] = cmd
+        return "count=1\nora_code=\nerror_message=\nrow=20260717090000,HIME,ABC,001,1,1\n"
+
+    reader = OracleRecentReader("presence-oracle-jdbc", "http://127.0.0.1:8086")
+    q = OracleQuery(host="h", port="1521", service="S", user="u", table="T",
+                     sta_no1="HIME", sta_no2="ABC", sta_no3="001",
+                     mk_date_from="20260717090000", mk_date_to="20260717090000", limit=1)
+    res = reader.verify_exact(q, "pw", runner=fake_runner)
+    assert res.ok
+    assert len(res.rows) == 1
+    assert "/select_range" in " ".join(captured["cmd"])
+
+
 def test_build_post_body_includes_only_provided_filters():
     q = OracleQuery(host="h", port="1521", service="S", user="u", table="T",
                     sta_no1="100", mk_date_from="20260717000000", t1_status="3",

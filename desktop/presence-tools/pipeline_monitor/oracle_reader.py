@@ -82,16 +82,38 @@ class OracleRecentReader:
         self._container = jdbc_container
         self._url = sidecar_url
 
+    def _call(
+        self,
+        endpoint: str,
+        q: OracleQuery,
+        password: str,
+        runner: Callable[[list[str], str], str],
+    ) -> OracleResult:
+        body = build_post_body(q, password)
+        cmd = [
+            "docker", "exec", "-i", self._container, "wget", "-q", "--timeout=40",
+            "--header=Content-Type: application/x-www-form-urlencoded",
+            f"--post-data={body}", "-O", "-", f"{self._url}{endpoint}",
+        ]
+        return parse_select_recent(runner(cmd, ""))
+
     def fetch(
         self,
         q: OracleQuery,
         password: str,
         runner: Callable[[list[str], str], str] = _default_runner,
     ) -> OracleResult:
-        body = build_post_body(q, password)
-        cmd = [
-            "docker", "exec", "-i", self._container, "wget", "-q", "--timeout=40",
-            "--header=Content-Type: application/x-www-form-urlencoded",
-            f"--post-data={body}", "-O", "-", f"{self._url}/select_recent",
-        ]
-        return parse_select_recent(runner(cmd, ""))
+        return self._call("/select_recent", q, password, runner)
+
+    def verify_exact(
+        self,
+        q: OracleQuery,
+        password: str,
+        runner: Callable[[list[str], str], str] = _default_runner,
+    ) -> OracleResult:
+        """行1件が実際にOracleに存在するかを確認する(/select_range)。
+
+        q.sta_no1-3 は子Piが送ってきたその行自身の値、q.mk_date_from==q.mk_date_to
+        はその行の mk_date_committed を渡すこと(局番を先読み/固定しない)。
+        """
+        return self._call("/select_range", q, password, runner)

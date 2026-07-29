@@ -12,7 +12,7 @@ import time
 from collections import deque
 from collections.abc import Callable
 
-from pipeline_monitor.model import MqttMsg
+from pipeline_monitor.model import LogLine, MqttMsg
 
 RECORD_TOPIC = "presence/record"
 STATUS_PREFIX = "presence/status/"
@@ -46,8 +46,10 @@ def mqtt_summarize(topic: str, payload: str, *, now: float) -> MqttMsg:
             d = json.loads(payload)
             event_id = str(d["event_id"])
             device_id = d.get("device_id")
+            sta = (f"{d.get('sta_no1', '?')}/{d.get('sta_no2', '?')}/"
+                   f"{d.get('sta_no3', '?')}")
             summary = (
-                f"{device_id or '?'} {_t1_label(d.get('t1_status'))} "
+                f"{device_id or '?'} {_t1_label(d.get('t1_status'))} STA={sta} "
                 f"{_fmt_mk(str(d.get('mk_date', '')))} id={_short(event_id)}"
             )
         except (ValueError, KeyError, TypeError):
@@ -77,6 +79,32 @@ def mqtt_summarize(topic: str, payload: str, *, now: float) -> MqttMsg:
         ts=now, topic=topic, kind=kind, device_id=device_id,
         event_id=event_id, summary=summary, raw=payload,
     )
+
+
+def collapse_heartbeats(msgs: list[MqttMsg]) -> list[LogLine]:
+    """②MQTT生ログ用: 連続する同一デバイスのheartbeatを1行にまとめる(純関数)。
+
+    record/status/ack など他の種別は1件ずつそのまま。heartbeatの連続が
+    他種別のメッセージで途切れれば新しいまとめ行になる。件数を失わず、
+    かつheartbeatの洪水で実データが埋もれるのを防ぐ。
+    """
+    out: list[LogLine] = []
+    i, n = 0, len(msgs)
+    while i < n:
+        m = msgs[i]
+        if m.kind == "heartbeat":
+            j = i
+            while j < n and msgs[j].kind == "heartbeat" and msgs[j].device_id == m.device_id:
+                j += 1
+            count = j - i
+            last = msgs[j - 1]
+            text = m.summary if count == 1 else f"{m.device_id or '?'} 💓 x{count}"
+            out.append(LogLine(ts=last.ts, text=text, dim=True))
+            i = j
+        else:
+            out.append(LogLine(ts=m.ts, text=m.summary, dim=False))
+            i += 1
+    return out
 
 
 class MqttTail:

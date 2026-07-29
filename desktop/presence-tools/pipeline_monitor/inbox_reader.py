@@ -29,12 +29,16 @@ for r in c.execute("select device_id, count(*) n, max(mk_date) mk "
                    "from record_inbox group by device_id"):
     print("DEV\t%s\t%d\t%s" % (r["device_id"] or "", r["n"], r["mk"] or ""))
 q = ("select event_id, device_id, mk_date, status, retry_count, last_error, "
-     "received_at_iso, sent_at_iso from record_inbox order by received_at_iso desc limit ?")
+     "received_at_iso, sent_at_iso, sta_no1, sta_no2, sta_no3, t1_status, "
+     "mk_date_committed from record_inbox order by received_at_iso desc limit ?")
 for r in c.execute(q, (limit,)):
     le = (r["last_error"] or "").replace("\t", " ").replace("\n", " ")
-    print("ROW\t%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s" % (
+    print("ROW\t%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s" % (
         r["event_id"], r["device_id"] or "", r["mk_date"], r["status"],
-        r["retry_count"], le, r["received_at_iso"], r["sent_at_iso"] or ""))
+        r["retry_count"], le, r["received_at_iso"], r["sent_at_iso"] or "",
+        r["sta_no1"] or "", r["sta_no2"] or "", r["sta_no3"] or "",
+        "" if r["t1_status"] is None else r["t1_status"],
+        r["mk_date_committed"] or ""))
 '''
 
 
@@ -49,7 +53,7 @@ def _default_runner(cmd: list[str]) -> str:
 
 def parse_container_output(text: str) -> InboxView:
     """bridge コンテナ内スクリプトのタブ区切り出力を InboxView に変換する（純関数）。"""
-    received = sent = 0
+    received = sent = failed = 0
     rows: list[InboxRow] = []
     devices: list[DeviceAgg] = []
     for line in text.splitlines():
@@ -59,13 +63,15 @@ def parse_container_output(text: str) -> InboxView:
                 received = int(parts[2])
             elif parts[1] == "sent":
                 sent = int(parts[2])
+            elif parts[1] == "failed":
+                failed = int(parts[2])
         elif parts[0] == "DEV" and len(parts) == 4:
             devices.append(DeviceAgg(
                 device_id=parts[1] or "(不明)",
                 count=int(parts[2]),
                 last_mk_date=parts[3] or None,
             ))
-        elif parts[0] == "ROW" and len(parts) == 9:
+        elif parts[0] == "ROW" and len(parts) == 14:
             rows.append(InboxRow(
                 event_id=parts[1],
                 device_id=parts[2] or None,
@@ -75,9 +81,14 @@ def parse_container_output(text: str) -> InboxView:
                 last_error=parts[6] or None,
                 received_at_iso=parts[7],
                 sent_at_iso=parts[8] or None,
+                sta_no1=parts[9],
+                sta_no2=parts[10],
+                sta_no3=parts[11],
+                t1_status=parts[12],
+                mk_date_committed=parts[13] or None,
             ))
-    return InboxView(rows=rows, received=received, sent=sent,
-                     total=received + sent, devices=devices)
+    return InboxView(rows=rows, received=received, sent=sent, failed=failed,
+                     total=received + sent + failed, devices=devices)
 
 
 class RecordInboxReader:
@@ -106,7 +117,7 @@ class RecordInboxReader:
         conn = sqlite3.connect(f"file:{self.db_path}?mode=ro", uri=True)
         conn.row_factory = sqlite3.Row
         try:
-            received = sent = 0
+            received = sent = failed = 0
             for r in conn.execute(
                 "SELECT status, COUNT(*) AS n FROM record_inbox GROUP BY status"
             ).fetchall():
@@ -114,6 +125,8 @@ class RecordInboxReader:
                     received = r["n"]
                 elif r["status"] == "sent":
                     sent = r["n"]
+                elif r["status"] == "failed":
+                    failed = r["n"]
             devices = [
                 DeviceAgg(
                     device_id=(r["device_id"] or "(不明)"),
@@ -126,7 +139,8 @@ class RecordInboxReader:
             ]
             cur = conn.execute(
                 "SELECT event_id, device_id, mk_date, status, retry_count, "
-                "last_error, received_at_iso, sent_at_iso "
+                "last_error, received_at_iso, sent_at_iso, sta_no1, sta_no2, "
+                "sta_no3, t1_status, mk_date_committed "
                 "FROM record_inbox ORDER BY received_at_iso DESC LIMIT ?",
                 (limit,),
             )
@@ -136,11 +150,15 @@ class RecordInboxReader:
                     mk_date=r["mk_date"], status=r["status"],
                     retry_count=r["retry_count"], last_error=r["last_error"],
                     received_at_iso=r["received_at_iso"], sent_at_iso=r["sent_at_iso"],
+                    sta_no1=r["sta_no1"] or "", sta_no2=r["sta_no2"] or "",
+                    sta_no3=r["sta_no3"] or "",
+                    t1_status="" if r["t1_status"] is None else str(r["t1_status"]),
+                    mk_date_committed=r["mk_date_committed"],
                 )
                 for r in cur.fetchall()
             ]
-            return InboxView(rows=rows, received=received, sent=sent,
-                             total=received + sent, devices=devices)
+            return InboxView(rows=rows, received=received, sent=sent, failed=failed,
+                             total=received + sent + failed, devices=devices)
         finally:
             conn.close()
 

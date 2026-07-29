@@ -12,9 +12,10 @@ _SAMPLE = (
     "CNT\treceived\t71\n"
     "CNT\tsent\t49\n"
     "DEV\tpizero2w\t120\t20260717091000\n"
-    "ROW\t9a160dca1e\tpizero2w\t20260717090000\treceived\t0\t\t2026-07-17T09:00:00Z\t\n"
+    "ROW\t9a160dca1e\tpizero2w\t20260717090000\treceived\t0\t\t2026-07-17T09:00:00Z\t\t"
+    "HIME\tABC\t001\t1\t\n"
     "ROW\t532e09d250\tpizero2w\t20260717091000\tsent\t2\tORA-12514\t"
-    "2026-07-17T09:10:00Z\t2026-07-17T09:10:05Z\n"
+    "2026-07-17T09:10:00Z\t2026-07-17T09:10:05Z\tSAND\tDEF\t012\t1\t20260717091000\n"
 )
 
 
@@ -35,6 +36,12 @@ def test_parse_container_output_counts_and_rows():
     assert view.rows[1].retry_count == 2
     assert view.rows[1].last_error == "ORA-12514"
     assert view.rows[1].sent_at_iso == "2026-07-17T09:10:05Z"
+    assert view.rows[0].sta_no1 == "HIME"
+    assert view.rows[0].sta_no3 == "001"
+    assert view.rows[0].mk_date_committed is None
+    assert view.rows[1].sta_no1 == "SAND"
+    assert view.rows[1].t1_status == "1"
+    assert view.rows[1].mk_date_committed == "20260717091000"
 
 
 def test_read_falls_back_to_container_on_operational_error(tmp_path, monkeypatch):
