@@ -31,6 +31,13 @@ class RecordSenderDeps:
     backoff_policy: BackoffPolicy = field(
         default_factory=lambda: BackoffPolicy(initial=5.0, multiplier=3.0, cap=600.0)
     )
+    # ORA番号(整数)。この行を送っても構造的に絶対成功しない(例: ORA-00001 主キー
+    # 重複=別の行が既に同じMK_DATE+STA_NOで成功済み)場合に、この行"だけ"を
+    # 諦める。breaker.permanent_codes とは別物: あちらはプロファイル全体の接続
+    # 不良を表しサーキットを開いて他の行も止めるが、主キー重複は他の正常な行
+    # まで止める理由にならないため、行単位でstatus='failed'にして無限リトライ
+    # を止めるだけに留める。
+    unretryable_ora_codes: frozenset[int] = frozenset()
 
 
 class RecordSender:
@@ -80,6 +87,20 @@ class RecordSender:
                     "t1_status": rec.t1_status,
                     "rows_affected": result.rows_affected,
                     "profile": profile_name,
+                },
+            )
+        elif result.ora_code in self._d.unretryable_ora_codes:
+            self._d.record_inbox.mark_failed(
+                rec.event_id, failed_at_iso=now.isoformat(),
+                last_error=f"ORA-{result.ora_code}: {result.error_message} (諦め)",
+            )
+            _log.warning(
+                "record_giveup",
+                extra={
+                    "event": "record_giveup",
+                    "event_id": rec.event_id,
+                    "ora_code": result.ora_code,
+                    "mk_date": rec.mk_date,
                 },
             )
         else:

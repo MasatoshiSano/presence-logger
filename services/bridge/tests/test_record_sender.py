@@ -53,7 +53,7 @@ def _seed(tmp_path, **kw):
     return r
 
 
-def _deps(tmp_path, *, ssid, oracle, mqtt):
+def _deps(tmp_path, *, ssid, oracle, mqtt, unretryable_ora_codes=frozenset()):
     return RecordSenderDeps(
         record_inbox=_seed(tmp_path),
         resolver=ProfileResolver(profiles={"HIME-H-REAP": PROFILE}, unknown_policy="drop"),
@@ -62,6 +62,7 @@ def _deps(tmp_path, *, ssid, oracle, mqtt):
         oracle=oracle,
         mqtt=mqtt,
         topic_ack="presence/record/ack",
+        unretryable_ora_codes=frozenset(unretryable_ora_codes),
     )
 
 
@@ -95,3 +96,29 @@ def test_skips_when_not_on_known_ssid(tmp_path):
     RecordSender(deps=d).run_once(now=NOW)
     assert oracle.calls == []  # never attempted off-profile
     assert d.record_inbox.count() == 1
+
+
+def test_unretryable_ora_code_gives_up_row_without_opening_breaker(tmp_path):
+    # ORA-00001: 主キー重複。再送しても解消しないので、この行だけ諦める。
+    oracle = _FakeOracle(_Result(ora_code=1, error_message="unique constraint violated"))
+    mqtt = _FakeMqtt()
+    d = _deps(tmp_path, ssid="HIME-H-REAP", oracle=oracle, mqtt=mqtt,
+               unretryable_ora_codes={1})
+    RecordSender(deps=d).run_once(now=NOW)
+    assert mqtt.acks == []
+    # 二度と送信対象にならない(無限リトライしない)
+    assert list(d.record_inbox.iter_received_due(now_iso=NOW.isoformat())) == []
+    # プロファイル全体のサーキットは開かない(他の正常な行を止めない)
+    assert d.breaker.state_for("HIME-H-REAP", now=NOW) == "closed"
+
+
+def test_non_unretryable_ora_code_still_retries_normally(tmp_path):
+    # unretryable_ora_codes に無いORA番号は、従来通り update_retry で後で再試行。
+    oracle = _FakeOracle(_Result(ora_code=12514, error_message="no listener"))
+    d = _deps(tmp_path, ssid="HIME-H-REAP", oracle=oracle, mqtt=_FakeMqtt(),
+               unretryable_ora_codes={1})
+    RecordSender(deps=d).run_once(now=NOW)
+    assert d.record_inbox.count() == 1
+    row = next(iter(d.record_inbox.iter_received_due(now_iso="2099-01-01T00:00:00+00:00")))
+    assert row.status == "received"
+    assert row.retry_count == 1

@@ -282,6 +282,9 @@ def main() -> int:    # pragma: no cover
             multiplier=bridge_cfg["retry"]["multiplier"],
             cap=bridge_cfg["retry"]["max_delay_seconds"],
         ),
+        unretryable_ora_codes=frozenset(
+            bridge_cfg["circuit_breaker"].get("unretryable_ora_codes", [])
+        ),
     ))
 
     running = True
