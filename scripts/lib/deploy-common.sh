@@ -184,12 +184,19 @@ FLEET_INVENTORY="${FLEET_INVENTORY:-$REPO_DIR/fleet/children.conf}"
 
 # インベントリを読み、SSH到達名を1行1件で標準出力へ返す。
 # '#' 以降はコメント、空行と前後の空白は無視する。有効ホストが0件ならエラー。
+#
+# 末尾空白の除去は CRLF(Windows で編集した場合の \r)も落とす。\r は [[:space:]] に
+# 含まれるため意図的にここで吸収している(将来 s/[[:space:]]*$// を単純化しないこと)。
+#
+# 重複行は取り除く(順序は保つ)。インベントリは手編集するファイルで、子を追加する際の
+# コピペ重複が現実に起こる。ここで1回だけ潰しておけば、配布ドライバ・状態表示・--only
+# 展開のすべてが守られ、同じ子へ二重配布・二重再起動することがない。
 fleet_read_inventory() {
   local f="${1:-$FLEET_INVENTORY}"
   [ -f "$f" ] || die "インベントリが無い: $f"
   local out
   out="$(sed -e 's/#.*//' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' "$f" \
-         | grep -v '^$' || true)"
+         | grep -v '^$' | awk '!seen[$0]++' || true)"
   [ -n "$out" ] || die "インベントリに有効なホストがありません: $f"
   printf '%s\n' "$out"
 }

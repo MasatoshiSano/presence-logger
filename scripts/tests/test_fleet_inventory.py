@@ -37,6 +37,23 @@ def test_accepts_mdns_names(tmp_path):
     assert _read(tmp_path, "pizero2w.local\n").stdout.splitlines() == ["pizero2w.local"]
 
 
+def test_deduplicates_repeated_hosts(tmp_path):
+    """手編集のコピペ重複で、同じ子へ二重配布・二重再起動しないこと。"""
+    content = "zero2\nzero2b\nzero2\n"
+    assert _read(tmp_path, content).stdout.splitlines() == ["zero2", "zero2b"]
+
+
+def test_dedup_preserves_first_occurrence_order(tmp_path):
+    content = "c\na\nc\nb\na\n"
+    assert _read(tmp_path, content).stdout.splitlines() == ["c", "a", "b"]
+
+
+def test_strips_cr_from_crlf_file(tmp_path):
+    """Windows で編集されたインベントリでもホスト名に \\r が残らないこと。"""
+    content = "zero2\r\nzero2b\r\n"
+    assert _read(tmp_path, content).stdout.splitlines() == ["zero2", "zero2b"]
+
+
 def test_fails_when_no_valid_host(tmp_path):
     assert _read(tmp_path, "# コメントだけ\n\n", check=False).returncode != 0
 
