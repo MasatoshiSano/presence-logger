@@ -21,11 +21,27 @@ KEEP_BACKUPS="${KEEP_BACKUPS:-5}"
 # 子アプリの「正」= リポジトリ child/ 配下。~ 直下(flat)へ配る。
 # runtime 状態(send_target_state.json / logs 等)は *絶対に* 触らない → 一覧に入れない。
 CHILD_CODE_FILES=(Picamera.py web_server.py child-csv-to-mqtt.py index.html)
-CHILD_CONFIG_FILES=(
-  crop_config.json id_names_config.json model_config.json
-  recognition_config.json save_config.json send_target_config.json
-  status_code_config.json threshold_config.json
+
+# フリート共通の設定。全機体で同じ値であるべきものだけを置く。
+# 子のWeb UIからも編集できるため、配布は --with-shared-config 指定時のみ(既定は配らない)。
+CHILD_SHARED_CONFIG_FILES=(status_code_config.json send_target_config.json)
+
+# 機体固有の設定。子のWeb UI(:8080)でオペレーターが設定する *端末の状態* であり、
+# 配布すると現場の設定を無警告で破壊する。どのフラグでも配布しない。
+#   id_names_config.json  : region_id -> STA_NO1..3 の割当。子ごとに必ず異なる。
+#                           Oracle の MERGE キーは device_id を含まないため、重複すると
+#                           レコードが無警告で欠落する(oracle_client.py の MERGE 条件参照)。
+#   threshold/recognition : カメラ個体ごとの検出調整・画角
+#   save_config           : 保存トグル(現場の一時設定)
+#   model_config          : モデル割当。deploy-model.sh が管理する。
+#   crop_config           : child/*.py から参照なし(未使用の可能性。削除判断は別途)
+CHILD_DEVICE_OWNED_FILES=(
+  id_names_config.json threshold_config.json recognition_config.json
+  save_config.json model_config.json crop_config.json
 )
+
+# バックアップ対象。配布しないファイルも退避しておく(復旧手段は維持する)。
+CHILD_ALL_CONFIG_FILES=("${CHILD_SHARED_CONFIG_FILES[@]}" "${CHILD_DEVICE_OWNED_FILES[@]}")
 CHILD_UNITS=(picamera web_server)
 
 # ---- ログ -------------------------------------------------------------------
