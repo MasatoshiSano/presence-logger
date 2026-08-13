@@ -1,0 +1,1 @@
+{"enabled": true, "host": "10.42.0.1", "port": 1883, "topic": "presence/record", "username": "", "password": "", "interval": 600, "time_sync_enabled": true, "time_sync_interval": 3600}

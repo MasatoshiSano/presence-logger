@@ -1,0 +1,12 @@
+[Unit]
+Description=My Custom Application
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /home/pi/Picamera.py
+Restart=on-failure
+User=pi
+
+[Install]
+WantedBy=multi-user.target

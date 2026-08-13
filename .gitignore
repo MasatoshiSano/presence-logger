@@ -46,3 +46,9 @@ AGENTS.md
 **/AGENTS.md
 scripts/_diag_frame.jpg
 .superpowers/
+
+# --- fleet deploy: モデルstoreの大きいバイナリはgitに載せない（親ローカル保管）---
+# 構造とREADMEは残し、実バイナリだけ無視する。
+models/**/*.rpk
+models/**/*.zip
+models/**/packerOut.zip
