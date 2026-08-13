@@ -57,6 +57,21 @@ scripts/deploy-model.sh signal_tower <新version>   # 配布 → picamera再起�
 scripts/deploy-model.sh signal_tower <旧version>
 ```
 
+### 複数の子へまとめて配る（フリート）
+
+対象一覧は `fleet/children.conf`（1行1台、SSH到達名のみ。IPは書かない）。
+
+```bash
+scripts/deploy-fleet.sh app --dry-run                 # 全子ぶんの差分を確認
+scripts/deploy-fleet.sh app --only zero2              # canary を1台だけ先行
+scripts/deploy-fleet.sh app                           # 全子へ 1台ずつ順に配布
+scripts/deploy-fleet.sh model signal_tower 20260422   # 全子へモデル配布
+```
+
+**既定は fail-fast**。1台で失敗したら以降へは配らない（不良リリースをフリート全体へ
+広げないため）。あえて続けるときだけ `--keep-going`。各子の配布・ヘルスチェック・
+自動ロールバックは `deploy-child.sh` / `deploy-model.sh` がそのまま担う。
+
 ### 親を更新する（GitHub 非接続前提）
 ```bash
 # 親の上で直接（社内ネット・ネット無しでOK）
