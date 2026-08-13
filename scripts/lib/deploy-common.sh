@@ -178,3 +178,18 @@ child_e2e_send_check() {
   ok "E2E 送信OK"
   return 0
 }
+
+# ---- フリート・インベントリ -------------------------------------------------
+FLEET_INVENTORY="${FLEET_INVENTORY:-$REPO_DIR/fleet/children.conf}"
+
+# インベントリを読み、SSH到達名を1行1件で標準出力へ返す。
+# '#' 以降はコメント、空行と前後の空白は無視する。有効ホストが0件ならエラー。
+fleet_read_inventory() {
+  local f="${1:-$FLEET_INVENTORY}"
+  [ -f "$f" ] || die "インベントリが無い: $f"
+  local out
+  out="$(sed -e 's/#.*//' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' "$f" \
+         | grep -v '^$' || true)"
+  [ -n "$out" ] || die "インベントリに有効なホストがありません: $f"
+  printf '%s\n' "$out"
+}
