@@ -12,8 +12,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 def run_bash(script: str, *, env: dict | None = None,
              check: bool = True) -> subprocess.CompletedProcess:
     """bash スニペットをリポジトリルートで実行して結果を返す。"""
-    return subprocess.run(
-        ["bash", "-c", script],
+    return subprocess.run(  # noqa: S603 (fixed argv, no shell)
+        ["/bin/bash", "-c", script],
         cwd=str(REPO_ROOT),
         env=env,
         capture_output=True,
