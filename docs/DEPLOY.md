@@ -116,7 +116,9 @@ scripts/deploy-parent.sh --fetch v1.2.3    # 別マシンで打ったタグを�
   （直近 `KEEP_BACKUPS=5` 世代を保持）。
 - **ヘルスチェック（3層）**：
   1. **即時**：サービス `active` + 数秒の安定確認（crash-loop 検出）+ web_server `:8080` 応答。
-  2. **readiness**：`/model_status`==`ready` かつ `/current_model` が期待モデルと一致
+  2. **readiness**：`/model_status` が `ready` かつ、同じ応答の `model_type` が期待モデルと一致
+     （`/current_model` は機体によっては `network`/`labels` しか返さず `model_type` を
+     持たないため見ない。見ると正常な配布でも必ず不一致になりロールバックする）
      （実トラフィックを待たず、モデル未ロード/誤モデルを決定論的に検出）。
      ※レコードはイベント駆動のため「実レコード到達待ち」は無人時に誤ロールバックを招く。だから採らない。
   3. **E2E（任意, `VERIFY_E2E=1`）**：`/send_logs_now` で1回送信 → `/send_target_status` の

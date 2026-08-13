@@ -140,12 +140,13 @@ child_healthcheck() {
 
 # 層2: 推論パイプラインの readiness を確認（実トラフィック不要・決定論的）。
 #   /model_status が "ready" になるまでポーリング（最大 MODEL_READY_WAIT 秒）。
-#   $1 に期待 model_type を渡すと /current_model と一致するかも確認する。
+#   $1 に期待 model_type を渡すと、同じ /model_status 応答に含まれる model_type と
+#   一致するかも確認する。
 child_model_ready() {
   local expect="${1:-}"
   local wait_max="${MODEL_READY_WAIT:-30}"
   local url="http://$CHILD_AP_IP:$CHILD_WEB_PORT"
-  local i st="" mt=""
+  local i st=""
   log "推論 readiness 確認 (/model_status, 最大 ${wait_max}s${expect:+, expect=$expect})"
   for ((i=0; i<wait_max; i+=2)); do
     st="$(curl -sf -m 5 "$url/model_status" 2>/dev/null || true)"
@@ -155,9 +156,13 @@ child_model_ready() {
   printf '%s' "$st" | grep -q '"status"[[:space:]]*:[[:space:]]*"ready"' \
     || { warn "model_status が ready にならない: ${st:-<no response>}"; return 1; }
   if [ -n "$expect" ]; then
-    mt="$(curl -sf -m 5 "$url/current_model" 2>/dev/null || true)"
-    printf '%s' "$mt" | grep -q "\"model_type\"[[:space:]]*:[[:space:]]*\"$expect\"" \
-      || { warn "有効モデルが期待と不一致 (expect=$expect): ${mt:-<no response>}"; return 1; }
+    # 照合は上で取得済みの /model_status 応答($st)から行う。ここには status と
+    # model_type の両方が入っている。
+    # /current_model を見てはいけない: 機体によっては network/labels しか返さず
+    # model_type を持たないため、正常に期待モデルで動いている子でも必ず不一致になり、
+    # deploy-model.sh が毎回ロールバックしてしまう(実機 zero2 で再現済み)。
+    printf '%s' "$st" | grep -q "\"model_type\"[[:space:]]*:[[:space:]]*\"$expect\"" \
+      || { warn "有効モデルが期待と不一致 (expect=$expect): ${st:-<no response>}"; return 1; }
   fi
   ok "推論 readiness OK (${expect:-model} ready)"
   return 0
