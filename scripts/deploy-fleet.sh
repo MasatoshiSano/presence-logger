@@ -36,6 +36,13 @@ esac
 MODEL_ARGS=()
 if [ "$MODE" = model ]; then
   [ $# -ge 2 ] || die "model モードは <name> <version> が必要"
+  # フラグは <name> <version> より後ろに置く。ここで弾かないと、フラグが
+  # そのままモデル名として子スクリプトへ渡り、しかも当のフラグは無視される。
+  for a in "$1" "$2"; do
+    case "$a" in
+      -*) die "model モードは <name> <version> をフラグより先に置いてください: '$a'" ;;
+    esac
+  done
   MODEL_ARGS=("$1" "$2"); shift 2
 fi
 
@@ -43,7 +50,7 @@ ONLY=""; KEEP_GOING=0; PASSTHRU=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --only)       shift; ONLY="${1:-}"; [ -n "$ONLY" ] || die "--only に値がありません" ;;
-    --only=*)     ONLY="${1#--only=}" ;;
+    --only=*)     ONLY="${1#--only=}"; [ -n "$ONLY" ] || die "--only に値がありません" ;;
     --keep-going) KEEP_GOING=1 ;;
     *)            PASSTHRU+=("$1") ;;
   esac
@@ -63,6 +70,11 @@ if [ -n "$ONLY" ]; then
     [ -n "$w" ] || continue
     printf '%s\n' "${ALL_HOSTS[@]}" | grep -qx -- "$w" \
       || die "--only の '$w' はインベントリにありません: $FLEET_INVENTORY"
+    # --only は利用者入力から組み立てるため fleet_read_inventory の重複除去を
+    # 通らない。同じ子へ二重配布・二重再起動しないよう、ここでも重複を落とす。
+    if [ ${#HOSTS[@]} -gt 0 ] && printf '%s\n' "${HOSTS[@]}" | grep -qx -- "$w"; then
+      continue
+    fi
     HOSTS+=("$w")
   done
   [ ${#HOSTS[@]} -gt 0 ] || die "--only に有効なホストがありません"

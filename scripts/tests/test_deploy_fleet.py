@@ -133,3 +133,36 @@ def test_missing_inventory_fails(tmp_path):
     env = _env(tmp_path, tmp_path / "nope.conf", stub)
     proc = run_bash("scripts/deploy-fleet.sh app", env=env, check=False)
     assert proc.returncode != 0
+
+
+def test_only_with_empty_value_is_rejected(tmp_path):
+    """--only= が空のとき、フィルタを黙って捨ててフリート全体へ配ってはいけない。"""
+    inv = _inventory(tmp_path, ["a", "b"])
+    stub = _stub(tmp_path, "child.sh", 'echo "$CHILD_SSH" >> "$FLEET_LOG"; exit 0')
+    env = _env(tmp_path, inv, stub)
+    proc = run_bash("scripts/deploy-fleet.sh app --only=", env=env, check=False)
+    assert proc.returncode != 0
+    assert (tmp_path / "fleet.log").read_text() == ""
+
+
+def test_model_mode_rejects_flag_before_name(tmp_path):
+    """フラグを <name> <version> より前に置くと、無視されたうえ名前が化ける。"""
+    inv = _inventory(tmp_path, ["a"])
+    model_stub = _stub(tmp_path, "model.sh", 'printf "%s|" "$@" >> "$FLEET_LOG"; exit 0')
+    env = _env(tmp_path, inv, _stub(tmp_path, "child.sh", "exit 0"))
+    env["FLEET_MODEL_SCRIPT"] = str(model_stub)
+    proc = run_bash(
+        "scripts/deploy-fleet.sh model --keep-going signal_tower 20260422",
+        env=env, check=False,
+    )
+    assert proc.returncode != 0
+    assert (tmp_path / "fleet.log").read_text() == ""
+
+
+def test_only_deduplicates_repeated_hosts(tmp_path):
+    """--only は利用者入力なのでパーサの重複除去を通らない。ここでも潰すこと。"""
+    inv = _inventory(tmp_path, ["a", "b"])
+    stub = _stub(tmp_path, "child.sh", 'echo "$CHILD_SSH" >> "$FLEET_LOG"; exit 0')
+    env = _env(tmp_path, inv, stub)
+    run_bash("scripts/deploy-fleet.sh app --only a,a", env=env, check=False)
+    assert (tmp_path / "fleet.log").read_text().split() == ["a"]
