@@ -39,6 +39,15 @@ scripts/deploy-child.sh --dry-run      # 送る差分を確認
 scripts/deploy-child.sh                # 配布 → 再起動 → 検証 →(失敗時)自動戻し
 ```
 
+**機体固有設定は配布されない。** `id_names_config.json`（region_id→STA_NO割当）・
+`threshold_config.json`・`recognition_config.json`・`save_config.json`・
+`model_config.json`・`crop_config.json` は、子のWeb UI(:8080)でオペレーターが
+設定する端末の状態であり、配布対象から外してある。設定は各子のWeb UIで行う。
+
+フリート共通の設定（`status_code_config.json`・`send_target_config.json`）を
+配りたいときだけ `--with-shared-config` を付ける。現場で `send_target_config` の
+`enabled` を一時的にoffにしている子があると再有効化される点に注意。
+
 ### 子のMLモデルを更新する
 ```bash
 # 1. models/<name>/<新version>/ に network.rpk / labels.txt / packerOut.zip を置く
@@ -62,8 +71,10 @@ scripts/deploy-parent.sh --fetch v1.2.3    # 別マシンで打ったタグを�
 
 ## 安全設計
 
-- **runtime 状態を絶対に触らない**：`send_target_state.json`（送信カーソル）や
-  `logs/`・`raw_images/` は配布対象外。上書きすると送信巻き戻り/実データ消失になるため。
+- **runtime 状態と機体固有設定を絶対に触らない**：`send_target_state.json`（送信カーソル）や
+  `logs/`・`raw_images/` に加え、機体固有設定（`id_names_config.json` 等、
+  `CHILD_DEVICE_OWNED_FILES`）も配布対象外。上書きすると送信巻き戻り/実データ消失、
+  および STA_NO 誤送信になるため。
 - **配布前バックアップ**：上書き対象の現行版を子の `~/.deploy-backups/<ts>/` に退避
   （直近 `KEEP_BACKUPS=5` 世代を保持）。
 - **ヘルスチェック（3層）**：
