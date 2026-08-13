@@ -89,5 +89,9 @@ scripts/deploy-parent.sh --fetch v1.2.3    # 別マシンで打ったタグを�
 
 ## 上書き可能な設定（環境変数）
 
-`CHILD_SSH`(既定 zero2) / `CHILD_AP_IP`(10.42.0.51) / `CHILD_WEB_PORT`(8080) /
-`KEEP_BACKUPS`(5) / `HEALTH_STABLE_WAIT`(6秒) — 詳細は `scripts/lib/deploy-common.sh`。
+`CHILD_SSH`(既定 zero2) / `CHILD_AP_IP`(既定は空＝子から自動取得) /
+`CHILD_WEB_PORT`(8080) / `KEEP_BACKUPS`(5) / `HEALTH_STABLE_WAIT`(6秒)
+— 詳細は `scripts/lib/deploy-common.sh`。
+
+子のIPは親APのDHCP動的割当のため、既定では**デプロイ時に子自身から取得**する
+（`hostname -I` の先頭IPv4）。固定したい場合のみ `CHILD_AP_IP` を明示指定する。

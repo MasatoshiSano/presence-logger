@@ -13,7 +13,9 @@ set -euo pipefail
 # ---- 定数（実機構成に一致。variables で上書き可）----------------------------
 REPO_DIR="${REPO_DIR:-/home/pi/projects/presence-logger}"
 CHILD_SSH="${CHILD_SSH:-zero2}"          # ~/.ssh/config の Host エントリ
-CHILD_AP_IP="${CHILD_AP_IP:-10.42.0.52}" # 親AP(wlan1 10.42.0.1)配下の子IP(DHCP、変わりうる)
+# 子IP。空 = デプロイ時に子自身から取得する(DHCP動的割当のため固定値を持たない)。
+# 明示指定した場合はそれを優先する。
+CHILD_AP_IP="${CHILD_AP_IP:-}"
 CHILD_WEB_PORT="${CHILD_WEB_PORT:-8080}" # web_server.py の PORT
 CHILD_BACKUP_DIR="${CHILD_BACKUP_DIR:-.deploy-backups}" # 子の ~ 配下
 KEEP_BACKUPS="${KEEP_BACKUPS:-5}"
@@ -55,10 +57,24 @@ die()  { echo -e "$(_c '1;31')FAIL$(_c 0) $*" >&2; exit 1; }
 rc()   { timeout "${SSH_TIMEOUT:-30}" ssh "$CHILD_SSH" "$@"; }        # remote command
 rsudo(){ timeout "${SSH_TIMEOUT:-30}" ssh "$CHILD_SSH" "sudo $*"; }   # remote sudo
 
+# ---- 子IPの解決 -------------------------------------------------------------
+# 子の実IPを子自身から取得する。親APのDHCPでIPが変わっても、常に正しい相手を
+# ヘルスチェックできる。インベントリに固定IPを持たせないための土台でもある。
+child_resolve_ap_ip() {
+  [ -z "$CHILD_AP_IP" ] || { ok "子IP(指定値): $CHILD_AP_IP"; return 0; }
+  local ip=""
+  ip="$(rc 'hostname -I' 2>/dev/null | tr ' ' '\n' \
+        | grep -E '^[0-9]+(\.[0-9]+){3}$' | head -n1)" || true
+  [ -n "$ip" ] || die "子($CHILD_SSH)のIPv4アドレスを取得できません"
+  CHILD_AP_IP="$ip"
+  ok "子IP(子から取得): $CHILD_AP_IP"
+}
+
 # ---- 事前チェック -----------------------------------------------------------
 require_child_reachable() {
   log "子($CHILD_SSH) 到達確認"
   rc 'echo ok >/dev/null' || die "$CHILD_SSH に SSH できません"
+  child_resolve_ap_ip
   local free_mb; free_mb=$(rc "df -Pm \$HOME | awk 'NR==2{print \$4}'") || free_mb=0
   [ "${free_mb:-0}" -gt 100 ] || die "子のディスク空きが少なすぎます (${free_mb}MB)"
   ok "到達OK / 空き ${free_mb}MB"
