@@ -42,6 +42,13 @@ POLL_SECONDS = float(os.environ.get("POLL_SECONDS", "5"))
 _MK_DATE_RE = re.compile(r"^\d{14}$")
 SCHEMA_VERSION = 1
 
+# 生存(liveness)トピック。ハブの bridge(liveness.py) と監視TUI(①) が読む。
+#   presence/status/<id>   : retained。接続時 online / 切断時 offline
+#   presence/heartbeat/<id>: 定期。アプリが生きて heartbeat している証拠
+STATUS_TOPIC = f"presence/status/{DEVICE_ID}"
+HEARTBEAT_TOPIC = f"presence/heartbeat/{DEVICE_ID}"
+HEARTBEAT_SECONDS = float(os.environ.get("HEARTBEAT_SECONDS", "15"))
+
 
 def parse_line(line: str) -> dict | None:
     """CSV1行 -> record dict。不正な行は None(スキップ)。"""
@@ -96,9 +103,15 @@ def main() -> int:
     ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
     client = mqtt.Client(client_id=f"child-csv-{DEVICE_ID}", protocol=mqtt.MQTTv311)
     client.reconnect_delay_set(min_delay=1, max_delay=60)
+    # 異常切断(電源断・NW断)時にブローカーが offline を出す遺言。connect前に設定。
+    client.will_set(STATUS_TOPIC, payload="offline", qos=1, retain=True)
     client.connect(MQTT_HOST, MQTT_PORT, keepalive=30)
     client.loop_start()
+    # 接続直後に online を retained で通知（監視TUIが後から購読しても分かる）。
+    client.publish(STATUS_TOPIC, "online", qos=1, retain=True)
     print(f"child-csv-to-mqtt: {MQTT_HOST}:{MQTT_PORT} {TOPIC} device={DEVICE_ID}", flush=True)
+    start = time.monotonic()
+    last_hb = 0.0
     try:
         while True:
             for path in sorted(WATCH_DIR.glob("*.csv")):
@@ -107,10 +120,24 @@ def main() -> int:
                     shutil.move(str(path), str(ARCHIVE_DIR / path.name))
                 else:
                     print(f"  発行未完→次回再試行: {path.name}", flush=True)
+            now = time.monotonic()
+            if now - last_hb >= HEARTBEAT_SECONDS:
+                client.publish(
+                    HEARTBEAT_TOPIC,
+                    json.dumps({"uptime_s": int(now - start)}),
+                    qos=0,
+                )
+                last_hb = now
             time.sleep(POLL_SECONDS)
     except KeyboardInterrupt:
         pass
     finally:
+        # 正常終了は遺言が発火しないので、明示的に offline を出してから切断する。
+        info = client.publish(STATUS_TOPIC, "offline", qos=1, retain=True)
+        try:
+            info.wait_for_publish(timeout=5)
+        except (ValueError, RuntimeError):
+            pass
         client.loop_stop()
         client.disconnect()
     return 0
