@@ -18,6 +18,7 @@ _spec.loader.exec_module(sta_no_report)
 
 find_duplicate_stations = sta_no_report.find_duplicate_stations
 format_report = sta_no_report.format_report
+find_malformed_hosts = sta_no_report.find_malformed_hosts
 
 
 def test_no_duplicates_returns_empty():
@@ -92,3 +93,55 @@ def test_cli_exits_0_when_clean():
         capture_output=True, text=True, check=False,
     )
     assert proc.returncode == 0
+
+
+def test_legacy_single_string_matches_list_form():
+    """子の id_name_parts は旧形式の単一文字列を ["旧名","",""] とみなす。
+    ここで文字単位に分解すると、同じ局の2台を見逃す。"""
+    per_host = {"zero2": {"1": "HIME"}, "zero2b": {"1": ["HIME", "", ""]}}
+    dups = find_duplicate_stations(per_host)
+    assert sorted(dups[("HIME", "", "")]) == ["zero2:1", "zero2b:1"]
+
+
+def test_none_element_is_empty_not_the_text_none():
+    per_host = {
+        "zero2": {"1": ["HIME", None, "004020"]},
+        "zero2b": {"1": ["HIME", "", "004020"]},
+    }
+    dups = find_duplicate_stations(per_host)
+    assert sorted(dups[("HIME", "", "004020")]) == ["zero2:1", "zero2b:1"]
+
+
+def test_non_list_region_value_does_not_crash():
+    assert find_duplicate_stations({"zero2": {"1": 5}}) == {}
+
+
+def test_malformed_host_is_skipped_not_crashed():
+    per_host = {"zero2": "not-a-dict", "zero2b": {"1": ["A", "B", "C"]}}
+    assert find_duplicate_stations(per_host) == {}
+    assert find_malformed_hosts(per_host) == ["zero2"]
+    assert "zero2" in format_report(per_host)
+
+
+def test_cli_exits_2_when_a_host_cannot_be_checked():
+    payload = json.dumps({"zero2": "not-a-dict", "zero2b": {"1": ["A", "B", "C"]}})
+    proc = subprocess.run(  # noqa: S603
+        ["python3", str(MODULE_PATH)], input=payload,  # noqa: S607
+        capture_output=True, text=True, check=False,
+    )
+    assert proc.returncode == 2
+    assert "Traceback" not in proc.stderr
+
+
+def test_cli_prefers_exit_1_when_duplicates_and_malformed_coexist():
+    payload = json.dumps({
+        "bad": "not-a-dict",
+        "a": {"1": ["A", "B", "C"]},
+        "b": {"1": ["A", "B", "C"]},
+    })
+    proc = subprocess.run(  # noqa: S603
+        ["python3", str(MODULE_PATH)], input=payload,  # noqa: S607
+        capture_output=True, text=True, check=False,
+    )
+    assert proc.returncode == 1
+    assert "Traceback" not in proc.stderr
