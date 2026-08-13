@@ -25,7 +25,9 @@ for a in "$@"; do case "$a" in
   --code-only)   ;;  # 非推奨: 既定と同義。既存手順を壊さないため受理のみする
   --dry-run)     DRY_RUN=1 ;;
   --no-rollback) ROLLBACK=0 ;;
-  -h|--help)     sed -n '2,20p' "$0"; exit 0 ;;
+  # 冒頭コメントを最初の空行まで出す。行番号を固定しないので、
+  # コメントを増減しても -h がソースを漏らさない。
+  -h|--help)     sed -n '2,/^$/p' "$0"; exit 0 ;;
   *) die "unknown arg: $a" ;;
 esac; done
 
