@@ -94,6 +94,105 @@ T1_STATUS` のみで `device_id` を含まないため、子同士で STA_NO が
 **`2` を `0` と混同しないこと。**「安全」ではなく「確かめられていない」を意味する。
 `2` のまま子を追加すると、未検査の機体と衝突している可能性が残る。
 
+#### 子を増やす（3台目以降も同じ手順）
+
+> **SDカードのコピーで増やす場合は、この順序を必ず守ること。**
+> 2台目の投入時に実際に事故が起きた（下の「なぜこの順序か」参照）。
+> 電源を入れる前に読むこと。
+
+**手順**
+
+1. **電源を入れる前に、既存機の一覧を確認しておく**
+   ```bash
+   scripts/fleet-status.sh          # 既存が exit 0 であることを確認
+   ip -4 neigh | grep 10.42.0       # 今いる子のIPを控える
+   ```
+
+2. **新機を親APに接続し、電源投入**。ここで新機は**まだ既存機と同じ名前**なので、
+   長時間放置しない。次の手順3をすぐ行う。
+   ```bash
+   ip -4 neigh | grep 10.42.0       # 手順1と比べて増えたIPが新機
+   ```
+
+3. **送信を止める（最優先）**
+   ```bash
+   ssh pi@<新機IP> 'sudo systemctl stop child-csv-to-mqtt.service'
+   ```
+   クローンだと MQTT の `client_id` が既存機と同一になり、
+   **2台が互いの接続を切断し合う**。まず止める。
+
+4. **STA_NO を空にする**（誤った局番号で記録させないため）
+   ```bash
+   ssh pi@<新機IP> 'cp -a ~/id_names_config.json ~/id_names_config.json.clone-backup'
+   ssh pi@<新機IP> 'python3 -c "
+   import json; p=\"/home/pi/id_names_config.json\"
+   d=json.load(open(p)); json.dump({\"id_names\":{k:[\"\",\"\",\"\"] for k in d[\"id_names\"]}}, open(p,\"w\"))"'
+   ```
+
+5. **ホスト名を一意にして再起動**
+   ```bash
+   ssh pi@<新機IP> 'sudo hostnamectl set-hostname pizero2w-3'
+   ssh pi@<新機IP> 'sudo sed -i "s/\bpizero2w\b/pizero2w-3/g" /etc/hosts'
+   ssh pi@<新機IP> 'sudo reboot'
+   ```
+   ホスト名が `device_id` と MQTT `client_id` の両方を決める。ここが分かれれば競合は終わる。
+
+6. **mDNS を正常化**（クローン時は既存機の avahi が衝突回避で勝手に改名していることがある）
+   ```bash
+   for h in <既存機...> ; do ssh $h 'sudo systemctl restart avahi-daemon'; done
+   ssh pi@<新機IP> 'sudo systemctl restart avahi-daemon'
+   getent hosts pizero2w-3.local    # 新機のIPを指すこと
+   ```
+
+7. **SSH の host key を登録**（しないと `fleet-status.sh` が「到達できません」になる）
+   ```bash
+   ssh-keyscan -H pizero2w-3.local >> ~/.ssh/known_hosts
+   ```
+
+8. **インベントリに追加**
+   ```bash
+   echo 'pizero2w-3.local' >> fleet/children.conf
+   scripts/fleet-status.sh          # 新機が見えること。STA_NO は「未割当」でよい
+   ```
+
+9. **STA_NO を設定**（新機のWeb UI `http://<新機IP>:8080`）
+   他機と**重複しない**値を入れる。設定後:
+   ```bash
+   scripts/fleet-status.sh          # exit 0 を確認。1 なら重複しているので直す
+   ```
+
+10. **入力途中のゴミレコードを掃除**（下記の注意を参照）
+
+**なぜこの順序か**
+
+2台目投入時、SDカード完全コピーだったため次が同時に起きた。
+
+- ホスト名が同一 → `child-csv-to-mqtt.py` の `client_id=f"child-csv-{DEVICE_ID}"` が衝突。
+  MQTT は同一 client_id の新規接続時に既存接続を切断するため、
+  **2台が互いを蹴り合う無限ループ**になり、両方の送信サービスがクラッシュ→再起動を反復した。
+  20秒間に `presence/status/<id> offline` を16回以上観測。
+- STA_NO も同一 → 送信が安定していれば Oracle でレコードが無警告に欠落していた。
+- mDNS 名も奪い合い、既存機の avahi が自分を `pizero2w-2` に自動改名していた。
+
+手順3（送信停止）を最初に置くのは、この競合を止めるのが最優先だからである。
+
+**STA_NO 設定時の注意 — 入力途中の値が記録される**
+
+Web UI は1文字入力するたびに全体を保存する
+（`index.html` の `input.addEventListener('input', ... saveIdNames())`）。
+一方 `Picamera.py` の `SendLogger` は「3項目のうち1つでも入っていれば送信対象」と判定するため、
+`004020` と打つ途中の `[HIME][][]` や `[HIME][T120][]` が**そのままレコードになる**。
+
+設定直後に不完全なレコードを掃除する:
+```bash
+docker exec presence-bridge python3 -c "
+import sqlite3
+c=sqlite3.connect('/var/lib/presence-logger/bridge_record_buf.db')
+n=c.execute(\"delete from record_inbox where status='received' and (sta_no2='' or sta_no3='')\").rowcount
+c.commit(); print('削除:', n, '件')"
+```
+`status='received'`（Oracle未送信）だけを対象にしているので、送信済みには触れない。
+
 ### 親を更新する（GitHub 非接続前提）
 ```bash
 # 親の上で直接（社内ネット・ネット無しでOK）
