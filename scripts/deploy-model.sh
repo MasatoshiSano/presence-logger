@@ -78,15 +78,17 @@ ok "配布 & 有効化"
 
 # 4) picamera のみ再起動 → 5) ヘルスチェック + readiness(層2) → 失敗なら復元
 #    ※期待モデル($NAME)が実際に ready で有効化されたかまで確認する
-child_restart_units picamera
-if child_healthcheck picamera && child_model_ready "$NAME" \
+# 再起動そのものの失敗も if の条件に含める(含めないとロールバックへ到達しない)。
+if child_restart_units picamera \
+   && child_healthcheck picamera && child_model_ready "$NAME" \
    && { [ "${VERIFY_E2E:-0}" != 1 ] || child_e2e_send_check; }; then
   child_prune_backups
   ok "モデル更新成功: $NAME/$VER"
 else
   warn "picamera が不健全 → モデルをロールバック"
   child_restore "$TS"
-  child_restart_units picamera
+  # 復元後の再起動が失敗しても止めない(下の判定に「ロールバックも不健全」を出させる)。
+  child_restart_units picamera || true
   { child_healthcheck picamera && child_model_ready; } \
     && die "モデル更新失敗→ロールバック成功。旧モデルで稼働中" \
     || die "モデル更新失敗→ロールバックも不健全。手動対応 (~/$CHILD_BACKUP_DIR/$TS)"

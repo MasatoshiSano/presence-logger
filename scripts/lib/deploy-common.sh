@@ -109,7 +109,13 @@ child_restart_units() {
   local units=("$@")
   log "子サービス再起動: ${units[*]}"
   rsudo "systemctl daemon-reload"
-  for u in "${units[@]}"; do rsudo "systemctl restart $u.service" || die "restart $u 失敗"; done
+  # die してはいけない。ここで exit すると呼び出し側のロールバック処理へ到達せず、
+  # 「起動しない不良リリースが載ったまま子が壊れて残る」状態になる。
+  # 戻り値で失敗を伝え、分岐は呼び出し側に任せる。
+  for u in "${units[@]}"; do
+    rsudo "systemctl restart $u.service" || { warn "restart $u 失敗"; return 1; }
+  done
+  return 0
 }
 
 # ---- 子ヘルスチェック -------------------------------------------------------

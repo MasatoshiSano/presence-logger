@@ -69,8 +69,10 @@ done
 ok "配布完了"
 
 # 3) 再起動 → 4) ヘルスチェック → 失敗なら 5) ロールバック
-child_restart_units "${CHILD_UNITS[@]}"
-if child_healthcheck "${CHILD_UNITS[@]}" && child_model_ready \
+# 再起動そのものの失敗も if の条件に含める。含めないと「起動しない」ケースで
+# ロールバックへ到達せず、不良リリースが載ったまま子が壊れて残る。
+if child_restart_units "${CHILD_UNITS[@]}" \
+   && child_healthcheck "${CHILD_UNITS[@]}" && child_model_ready \
    && { [ "${VERIFY_E2E:-0}" != 1 ] || child_e2e_send_check; }; then
   child_prune_backups
   ok "デプロイ成功 (tag=$TS)。~/$CHILD_BACKUP_DIR/$TS に旧版を保持"
@@ -81,7 +83,9 @@ else
       rc "[ -f ~/'$CHILD_BACKUP_DIR/$TS/$u.service' ]" && \
         rsudo "install -m 644 ~/$CHILD_BACKUP_DIR/$TS/$u.service /etc/systemd/system/$u.service" || true
     done
-    child_restart_units "${CHILD_UNITS[@]}"
+    # 復元後の再起動が失敗しても、ここで止めない。下の健全性判定に「ロールバックも
+    # 不健全」を報告させる必要があるため(set -e で抜けると診断が出ない)。
+    child_restart_units "${CHILD_UNITS[@]}" || true
     if child_healthcheck "${CHILD_UNITS[@]}" && child_model_ready; then
       die "デプロイ失敗→ロールバック成功。旧版で稼働中。原因を調査してください"
     else
