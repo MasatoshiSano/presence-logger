@@ -113,6 +113,59 @@ def _gather() -> dict:
     return build_fleet_view(neighbors=neighbors, inventory_ips=inv, statuses=statuses)
 
 
+# ブラウザからの CSRF を防ぐための独自ヘッダ。単純リクエストでは付けられず、
+# 付けようとすると preflight が走る。こちらは CORS ヘッダを返さないので preflight は
+# 失敗する。localhost に bind していても、操作者が開いた別サイトから
+# /api/step を叩かれる経路は塞いでおく。
+CSRF_HEADER = "X-Fleet-UI"
+
+
+def run_step(req: dict) -> dict:
+    """登録ウィザードの1工程を実行する。
+
+    hostname は ssh-keyscan の argv や children.conf の中身になるため、
+    分岐に入る *前* にまとめて検証する。rename にだけ検証を置くと
+    hostkey / inventory から素通りしてしまう。
+    """
+    step = req.get("step")
+    ip = req.get("ip") or ""
+    mac = req.get("mac") or ""
+    new_hostname = req.get("hostname") or ""
+
+    needs_hostname = step in ("rename", "hostkey", "inventory")
+    if needs_hostname:
+        err = validate_hostname(new_hostname, _read_inventory())
+        if err:
+            return {"ok": False, "message": err}
+
+    # 登録ウィザードはインベントリに載っていない端末しか受け付けない。
+    # 稼働中の子を誤って再プロビジョニングしないため。
+    inv = resolve_inventory_ips(_read_inventory())
+    if ip in {v for v in inv.values() if v}:
+        return {"ok": False, "message": "この端末は既にインベントリに登録されています"}
+
+    if step == "stop":
+        r = provision.stop_publisher(ip)
+    elif step == "blank":
+        r = provision.blank_sta_no(ip)
+    elif step == "rename":
+        r = provision.rename_and_reboot(ip, new_hostname)
+        if r.ok:
+            w = provision.wait_for_return(mac)
+            return {"ok": w.ok, "message": f"{r.message} / {w.message}",
+                    "output": w.output}
+    elif step == "mdns":
+        targets = [v for v in inv.values() if v] + ([ip] if ip else [])
+        r = provision.restart_mdns(targets)
+    elif step == "hostkey":
+        r = provision.register_host_key(f"{new_hostname}.local")
+    elif step == "inventory":
+        r = provision.add_to_inventory(f"{new_hostname}.local")
+    else:
+        return {"ok": False, "message": f"不明な工程: {step}"}
+    return {"ok": r.ok, "message": r.message, "output": r.output}
+
+
 class Handler(BaseHTTPRequestHandler):
     def _json(self, obj, code=200):
         body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
@@ -137,6 +190,10 @@ class Handler(BaseHTTPRequestHandler):
         self._json({"error": "not found"}, 404)
 
     def do_POST(self):  # noqa: N802
+        # 独自ヘッダが無い POST は受け付けない(CSRF対策)。
+        if self.headers.get(CSRF_HEADER) != "1":
+            self._json({"ok": False, "message": f"{CSRF_HEADER} ヘッダが必要です"}, 403)
+            return
         length = int(self.headers.get("Content-Length") or 0)
         try:
             req = json.loads(self.rfile.read(length) or b"{}")
@@ -146,43 +203,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.path != "/api/step":
             self._json({"error": "not found"}, 404)
             return
-        self._json(self._run_step(req))
-
-    def _run_step(self, req: dict) -> dict:
-        step = req.get("step")
-        ip = req.get("ip") or ""
-        mac = req.get("mac") or ""
-        new_hostname = req.get("hostname") or ""
-
-        # 登録ウィザードはインベントリに載っていない端末しか受け付けない。
-        # 稼働中の子を誤って再プロビジョニングしないため。
-        inv = resolve_inventory_ips(_read_inventory())
-        if ip in {v for v in inv.values() if v}:
-            return {"ok": False, "message": "この端末は既にインベントリに登録されています"}
-
-        if step == "stop":
-            r = provision.stop_publisher(ip)
-        elif step == "blank":
-            r = provision.blank_sta_no(ip)
-        elif step == "rename":
-            err = validate_hostname(new_hostname, _read_inventory())
-            if err:
-                return {"ok": False, "message": err}
-            r = provision.rename_and_reboot(ip, new_hostname)
-            if r.ok:
-                w = provision.wait_for_return(mac)
-                return {"ok": w.ok, "message": f"{r.message} / {w.message}",
-                        "output": w.output}
-        elif step == "mdns":
-            targets = [v for v in inv.values() if v] + ([ip] if ip else [])
-            r = provision.restart_mdns(targets)
-        elif step == "hostkey":
-            r = provision.register_host_key(f"{new_hostname}.local")
-        elif step == "inventory":
-            r = provision.add_to_inventory(f"{new_hostname}.local")
-        else:
-            return {"ok": False, "message": f"不明な工程: {step}"}
-        return {"ok": r.ok, "message": r.message, "output": r.output}
+        self._json(run_step(req))
 
     def log_message(self, fmt, *args):
         print(f"[fleet-ui] {fmt % args}")

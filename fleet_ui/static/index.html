@@ -18,8 +18,10 @@
   .step.done { border-color: #2f7a4f; }
   .step.failed { border-color: #a13d5c; }
   button { font: inherit; padding: 6px 14px; cursor: pointer; }
-  pre { background: #f4f4f4; padding: 8px; overflow-x: auto; font-size: 12px; }
+  pre { background: #f4f4f4; padding: 8px; overflow-x: auto; font-size: 12px;
+        white-space: pre-wrap; }
   .target { font-size: 12px; color: #666; }
+  .dim { opacity: .55; }
 </style>
 
 <h1>フリート管理</h1>
@@ -37,8 +39,26 @@
 <div id="candidates"></div>
 
 <script>
+'use strict';
+
+// このページに来る値(ホスト名・STA_NO・コマンド出力)は *子から* 来る。
+// 子の web_server は認証が無く、APに繋がる者が /set_id_names を書き換えられるため、
+// 表示は必ず textContent で行い、innerHTML に値を差し込まない。
+// ここで XSS が通ると、この画面から /api/step 経由で全子への SSH+sudo に到達する。
+
 let VIEW = null;
 let WIZARD_ACTIVE = false;
+
+const CSRF_HEADER = 'X-Fleet-UI';
+
+function el(tag, text, cls) {
+  const e = document.createElement(tag);
+  if (text !== undefined && text !== null) e.textContent = String(text);
+  if (cls) e.className = cls;
+  return e;
+}
+
+function clear(node) { while (node.firstChild) node.removeChild(node.firstChild); }
 
 async function load() {
   const r = await fetch('/api/fleet');
@@ -46,35 +66,58 @@ async function load() {
   render();
 }
 
-function render() {
+function staCell(idNames) {
+  const td = el('td');
+  const named = Object.entries(idNames || {}).filter(([, v]) => v.some(x => x));
+  if (!named.length) { td.textContent = '(未割当)'; return td; }
+  named.forEach(([k, v], i) => {
+    if (i) td.appendChild(document.createElement('br'));
+    td.appendChild(document.createTextNode(`${k}: ${v.join(' / ')}`));
+  });
+  return td;
+}
+
+function renderChildren() {
   const tb = document.querySelector('#children tbody');
-  tb.innerHTML = '';
+  clear(tb);
   for (const c of VIEW.children) {
     const tr = document.createElement('tr');
-    const sta = Object.entries(c.id_names || {})
-      .filter(([, v]) => v.some(x => x))
-      .map(([k, v]) => `${k}: ${v.join(' / ')}`).join('<br>') || '(未割当)';
-    tr.innerHTML = `<td class="mac">${c.mac || '-'}</td><td>${c.ip || '-'}</td>
-      <td>${c.hostname || c.entry || '-'}</td><td>${c.picamera || '-'}</td>
-      <td>${c.web_server || '-'}</td><td>${c.model || '-'}</td>
-      <td>${c.ready || '-'}</td><td>${sta}</td>`;
-    if (c.kind === 'unresolved' || c.kind === 'unverified') tr.style.opacity = '.55';
+    tr.appendChild(el('td', c.mac || '-', 'mac'));
+    tr.appendChild(el('td', c.ip || '-'));
+    tr.appendChild(el('td', c.hostname || c.entry || '-'));
+    tr.appendChild(el('td', c.picamera || '-'));
+    tr.appendChild(el('td', c.web_server || '-'));
+    tr.appendChild(el('td', c.model || '-'));
+    tr.appendChild(el('td', c.ready || '-'));
+    tr.appendChild(staCell(c.id_names));
+    if (c.kind === 'unresolved' || c.kind === 'unverified') tr.classList.add('dim');
     tb.appendChild(tr);
   }
+}
 
+function renderDuplicates() {
   const d = document.getElementById('dups');
-  d.innerHTML = VIEW.duplicates.length
-    ? `<div class="warn"><b>STA_NO が重複しています。</b>
-       Oracle の MERGE キーは device_id を含まないため、同時刻・同ステータスの
-       レコードが無警告で欠落します。<br>` +
-      VIEW.duplicates.map(x => `${x.sta_no.join(' / ')} → ${x.where.join(', ')}`).join('<br>') +
-      `</div>`
-    : '';
+  clear(d);
+  if (!VIEW.duplicates.length) return;
+  const box = el('div', null, 'warn');
+  const b = el('b', 'STA_NO が重複しています。');
+  box.appendChild(b);
+  box.appendChild(document.createTextNode(
+    ' Oracle の MERGE キーは device_id を含まないため、同時刻・同ステータスの' +
+    'レコードが無警告で欠落します。'));
+  for (const x of VIEW.duplicates) {
+    box.appendChild(document.createElement('br'));
+    box.appendChild(document.createTextNode(
+      `${x.sta_no.join(' / ')} → ${x.where.join(', ')}`));
+  }
+  d.appendChild(box);
+}
 
+function renderCandidates() {
   const box = document.getElementById('candidates');
-  box.innerHTML = '';
+  clear(box);
   if (VIEW.blocked_reason) {
-    box.innerHTML = `<div class="warn">${VIEW.blocked_reason}</div>`;
+    box.appendChild(el('div', VIEW.blocked_reason, 'warn'));
     return;
   }
   if (!VIEW.candidates.length) {
@@ -82,31 +125,51 @@ function render() {
     return;
   }
   for (const c of VIEW.candidates) {
-    const div = document.createElement('div');
-    div.className = 'step';
-    div.innerHTML = `<div class="target">MAC <span class="mac">${c.mac}</span> /
-      IP <span class="mac">${c.ip}</span></div>`;
-    const btn = document.createElement('button');
-    btn.textContent = 'この端末を登録する';
+    const div = el('div', null, 'step');
+    const t = el('div', null, 'target');
+    t.appendChild(document.createTextNode('MAC '));
+    t.appendChild(el('span', c.mac, 'mac'));
+    t.appendChild(document.createTextNode(' / IP '));
+    t.appendChild(el('span', c.ip, 'mac'));
+    div.appendChild(t);
+    const btn = el('button', 'この端末を登録する');
     btn.onclick = () => startWizard(c);
     div.appendChild(btn);
     box.appendChild(div);
   }
 }
 
+function render() {
+  renderChildren();
+  renderDuplicates();
+  renderCandidates();
+}
+
 function startWizard(cand) {
   WIZARD_ACTIVE = true;   // 自動更新を止める(DOMを作り直すと入力と結果が消えるため)
   const box = document.getElementById('candidates');
-  box.innerHTML = `<div class="target">登録中の端末 — MAC
-    <span class="mac">${cand.mac}</span> / IP <span class="mac">${cand.ip}</span></div>
-    <p>新しいホスト名:
-      <input id="newname" value="${VIEW.suggested_hostname}" size="20"></p>`;
+  clear(box);
+
+  const t = el('div', null, 'target');
+  t.appendChild(document.createTextNode('登録中の端末 — MAC '));
+  t.appendChild(el('span', cand.mac, 'mac'));
+  t.appendChild(document.createTextNode(' / IP '));
+  t.appendChild(el('span', cand.ip, 'mac'));
+  box.appendChild(t);
+
+  const p = el('p');
+  p.appendChild(document.createTextNode('新しいホスト名: '));
+  const input = document.createElement('input');
+  input.id = 'newname';
+  input.size = 20;
+  input.value = VIEW.suggested_hostname;   // 属性に埋め込まず代入する
+  p.appendChild(input);
+  box.appendChild(p);
+
   for (const s of VIEW.steps) {
-    const div = document.createElement('div');
-    div.className = 'step';
+    const div = el('div', null, 'step');
     div.id = 'step-' + s.id;
-    const btn = document.createElement('button');
-    btn.textContent = s.label;
+    const btn = el('button', s.label);
     btn.onclick = () => runStep(s.id, cand, div, btn);
     div.appendChild(btn);
     box.appendChild(div);
@@ -116,23 +179,31 @@ function startWizard(cand) {
 async function runStep(id, cand, div, btn) {
   if (id === 'rename' &&
       !confirm('子を再起動します。記録が一時的に止まります。続けますか？')) return;
+  const label = btn.textContent;
   btn.disabled = true;
-  btn.textContent += ' … 実行中';
-  const r = await fetch('/api/step', {
-    method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({
-      step: id, ip: cand.ip, mac: cand.mac,
-      hostname: document.getElementById('newname').value,
-    }),
-  });
-  const res = await r.json();
+  btn.textContent = label + ' … 実行中';
+  let res;
+  try {
+    const r = await fetch('/api/step', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json', [CSRF_HEADER]: '1'},
+      body: JSON.stringify({
+        step: id, ip: cand.ip, mac: cand.mac,
+        hostname: document.getElementById('newname').value,
+      }),
+    });
+    res = await r.json();
+  } catch (e) {
+    res = {ok: false, message: '通信に失敗しました: ' + e};
+  }
   div.className = 'step ' + (res.ok ? 'done' : 'failed');
-  const p = document.createElement('div');
-  p.innerHTML = `<b>${res.ok ? 'OK' : '失敗'}</b> ${res.message}` +
-    (res.output ? `<pre>${res.output}</pre>` : '');
-  div.appendChild(p);
+  const out = el('div');
+  out.appendChild(el('b', res.ok ? 'OK' : '失敗'));
+  out.appendChild(document.createTextNode(' ' + (res.message || '')));
+  if (res.output) out.appendChild(el('pre', res.output));
+  div.appendChild(out);
   btn.disabled = false;
-  btn.textContent = btn.textContent.replace(' … 実行中', '');
+  btn.textContent = label;
   if (res.ok && id === 'inventory') { WIZARD_ACTIVE = false; load(); }
 }
 
