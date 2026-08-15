@@ -48,7 +48,39 @@ def test_unresolvable_entry_is_not_treated_as_new():
     rows = classify(parse_neigh(SAMPLE), {"zero2": "10.42.0.52", "kodomo3": None})
     unresolved = [r for r in rows if r.kind == "unresolved"]
     assert [r.entry for r in unresolved] == ["kodomo3"]
-    assert all(r.entry != "kodomo3" for r in rows if r.kind == "new")
+
+
+def test_live_child_whose_ip_drifted_is_not_offered_for_registration():
+    """稼働中の子が登録候補に出てはいけない。
+
+    ssh_config は `HostName 10.42.0.52` のようにIPをハードコードする。実IPが
+    DHCPでドリフトすると、その項目は unresolved になる一方、同じ個体のARP行は
+    誰にも claim されず new に落ちる。そのまま登録すると本番機の送信停止・
+    STA_NO消去・改名・再起動が走る。
+    """
+    arp = parse_neigh("10.42.0.77 lladdr 2c:cf:67:c1:1d:7b REACHABLE\n")
+    rows = classify(arp, {"zero2": "10.42.0.52"})
+    assert [r.kind for r in rows if r.mac == "2c:cf:67:c1:1d:7b"] == ["unverified"]
+    assert not [r for r in rows if r.kind == "new"]
+
+
+def test_no_registration_candidates_while_any_entry_is_unresolved():
+    """絵が不完全な間は登録候補を出さない。
+
+    unresolved が1つでもある限り、ARP上のどの端末が既知の子なのか断定できない。
+    """
+    arp = parse_neigh(SAMPLE)
+    rows = classify(arp, {"zero2": "10.42.0.52", "kodomo3": None})
+    assert not [r for r in rows if r.kind == "new"]
+    assert [r.ip for r in rows if r.kind == "unverified"] == ["10.42.0.194"]
+
+
+def test_new_devices_are_offered_once_every_entry_resolves():
+    """全項目が解決してARPと一致していれば、残りは本当に未知の端末。"""
+    arp = parse_neigh(SAMPLE)
+    rows = classify(arp, {"zero2": "10.42.0.52"})
+    assert [r.ip for r in rows if r.kind == "new"] == ["10.42.0.194"]
+    assert not [r for r in rows if r.kind == "unverified"]
 
 
 def test_entry_resolving_to_absent_ip_is_unresolved():

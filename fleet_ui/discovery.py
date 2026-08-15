@@ -40,6 +40,8 @@ class FleetRow:
     kind:
       known      … インベントリに載っていてAPにも居る
       new        … APに居るがインベントリのどのIPとも一致しない(登録候補)
+      unverified … new に見えるが、unresolved な項目があるため断定できない。
+                   稼働中の子がIPドリフトでここに現れうるので登録候補にしない。
       unresolved … インベントリにあるがIPを解決できない/APに居ない
                    **新機扱いにしない**。既存の子を新機と誤認すると、
                    登録ウィザードで稼働中の機体を再プロビジョニングしかねない。
@@ -111,21 +113,36 @@ def resolve_inventory_ips(
 def classify(
     neighbors: list[Neighbor], inventory_ips: dict[str, str | None]
 ) -> list[FleetRow]:
-    """ARPの観測結果とインベントリを突き合わせて分類する。"""
+    """ARPの観測結果とインベントリを突き合わせて分類する。
+
+    突き合わせはIPで行うが、IPはDHCPでドリフトする。ssh_config が
+    `HostName 10.42.0.52` のようにIPをハードコードしている場合、実IPが変わると
+    その項目は unresolved になる一方、同じ個体のARP行は誰にも claim されない。
+    素直に new とすると **稼働中の子が登録候補として画面に出る**。そのまま登録を
+    実行すれば、本番機の送信停止・STA_NO消去・改名・再起動が走ってしまう。
+
+    そこで unresolved が1つでもある間は、残りの端末を new にせず unverified とする。
+    この危険が成立するには unresolved の存在が必要で、逆に全項目が解決してARPと
+    一致していれば既知の子はすべて claim 済みなので、残りは本当に未知の端末である。
+    「絵が不完全な間は登録候補を出さない」で穴は塞がる。
+    """
     by_ip = {n.ip: n for n in neighbors}
     rows: list[FleetRow] = []
     claimed: set[str] = set()
+    has_unresolved = False
 
     for entry, ip in inventory_ips.items():
         n = by_ip.get(ip) if ip else None
         if n is None:
+            has_unresolved = True
             rows.append(FleetRow(mac=None, ip=ip, entry=entry, kind="unresolved"))
             continue
         claimed.add(n.ip)
         rows.append(FleetRow(mac=n.mac, ip=n.ip, entry=entry, kind="known"))
 
+    leftover = "unverified" if has_unresolved else "new"
     for n in neighbors:
         if n.ip not in claimed:
-            rows.append(FleetRow(mac=n.mac, ip=n.ip, entry=None, kind="new"))
+            rows.append(FleetRow(mac=n.mac, ip=n.ip, entry=None, kind=leftover))
 
     return rows
