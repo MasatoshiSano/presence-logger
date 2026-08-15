@@ -8,6 +8,7 @@ docs/DEPLOY.md の10工程のうち、1(既存確認)は一覧表示そのもの
 """
 from __future__ import annotations
 
+import re
 import shlex
 import time
 from collections.abc import Callable
@@ -15,6 +16,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from fleet_ui.discovery import parse_neigh, run_cmd
+
+# ホスト名として安全な形。sed/printf へ素で埋め込むため、ここを緩めてはいけない。
+_SAFE_HOSTNAME_RE = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
 
 INVENTORY = Path("fleet/children.conf")
 
@@ -83,6 +87,16 @@ def rename_and_reboot(
 
     ホスト名が device_id と MQTT client_id の両方を決める。ここが分かれれば競合は終わる。
     """
+    # 呼び出し側の検証に依存せず、この関数自身で不正な値を弾く。
+    # new_hostname は sed の置換文字列と printf の中へ *素で* 埋め込まれるため、
+    # 引用符やスラッシュが混ざると子の上で任意のコマンドが走る。
+    # (例: `x/"; touch /tmp/PWNED; echo "` は sed の二重引用符から抜ける)
+    # server.py は validate_hostname で先に弾くが、公開関数として自衛しておく。
+    if not _SAFE_HOSTNAME_RE.match(new_hostname):
+        return StepResult(
+            ok=False,
+            message=f"ホスト名に使えない文字が含まれています: {new_hostname!r}",
+        )
     q = shlex.quote(new_hostname)
     # /etc/hosts は「127.0.1.1 の行を丸ごと差し替える」形で更新する。
     #

