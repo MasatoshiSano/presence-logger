@@ -1,0 +1,13 @@
+[Unit]
+Description=Fleet management UI (parent-side, localhost only)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/pi/projects/presence-logger
+ExecStart=/home/pi/projects/presence-logger/.venv/bin/python -m fleet_ui.server
+Restart=on-failure
+User=pi
+
+[Install]
+WantedBy=multi-user.target
