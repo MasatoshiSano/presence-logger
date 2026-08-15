@@ -354,7 +354,9 @@ for a in "$@"; do case "$a" in
   --code-only)   ;;  # 非推奨: 既定と同義。既存手順を壊さないため受理のみする
   --dry-run)     DRY_RUN=1 ;;
   --no-rollback) ROLLBACK=0 ;;
-  -h|--help)     sed -n '2,20p' "$0"; exit 0 ;;
+  # 冒頭コメントを最初の空行まで出す。行番号を固定しないので、
+  # コメントを増減しても -h がソースを漏らさない。
+  -h|--help)     sed -n '2,/^$/p' "$0"; exit 0 ;;
   *) die "unknown arg: $a" ;;
 esac; done
 ```
@@ -614,6 +616,23 @@ def test_accepts_mdns_names(tmp_path):
     assert _read(tmp_path, "pizero2w.local\n").stdout.splitlines() == ["pizero2w.local"]
 
 
+def test_deduplicates_repeated_hosts(tmp_path):
+    """手編集のコピペ重複で、同じ子へ二重配布・二重再起動しないこと。"""
+    content = "zero2\nzero2b\nzero2\n"
+    assert _read(tmp_path, content).stdout.splitlines() == ["zero2", "zero2b"]
+
+
+def test_dedup_preserves_first_occurrence_order(tmp_path):
+    content = "c\na\nc\nb\na\n"
+    assert _read(tmp_path, content).stdout.splitlines() == ["c", "a", "b"]
+
+
+def test_strips_cr_from_crlf_file(tmp_path):
+    """Windows で編集されたインベントリでもホスト名に \\r が残らないこと。"""
+    content = "zero2\r\nzero2b\r\n"
+    assert _read(tmp_path, content).stdout.splitlines() == ["zero2", "zero2b"]
+
+
 def test_fails_when_no_valid_host(tmp_path):
     assert _read(tmp_path, "# コメントだけ\n\n", check=False).returncode != 0
 
@@ -664,12 +683,19 @@ FLEET_INVENTORY="${FLEET_INVENTORY:-$REPO_DIR/fleet/children.conf}"
 
 # インベントリを読み、SSH到達名を1行1件で標準出力へ返す。
 # '#' 以降はコメント、空行と前後の空白は無視する。有効ホストが0件ならエラー。
+#
+# 末尾空白の除去は CRLF(Windows で編集した場合の \r)も落とす。\r は [[:space:]] に
+# 含まれるため意図的にここで吸収している(将来 s/[[:space:]]*$// を単純化しないこと)。
+#
+# 重複行は取り除く(順序は保つ)。インベントリは手編集するファイルで、子を追加する際の
+# コピペ重複が現実に起こる。ここで1回だけ潰しておけば、配布ドライバ・状態表示・--only
+# 展開のすべてが守られ、同じ子へ二重配布・二重再起動することがない。
 fleet_read_inventory() {
   local f="${1:-$FLEET_INVENTORY}"
   [ -f "$f" ] || die "インベントリが無い: $f"
   local out
   out="$(sed -e 's/#.*//' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' "$f" \
-         | grep -v '^$' || true)"
+         | grep -v '^$' | awk '!seen[$0]++' || true)"
   [ -n "$out" ] || die "インベントリに有効なホストがありません: $f"
   printf '%s\n' "$out"
 }
@@ -846,6 +872,39 @@ def test_missing_inventory_fails(tmp_path):
     env = _env(tmp_path, tmp_path / "nope.conf", stub)
     proc = run_bash("scripts/deploy-fleet.sh app", env=env, check=False)
     assert proc.returncode != 0
+
+
+def test_only_with_empty_value_is_rejected(tmp_path):
+    """--only= が空のとき、フィルタを黙って捨ててフリート全体へ配ってはいけない。"""
+    inv = _inventory(tmp_path, ["a", "b"])
+    stub = _stub(tmp_path, "child.sh", 'echo "$CHILD_SSH" >> "$FLEET_LOG"; exit 0')
+    env = _env(tmp_path, inv, stub)
+    proc = run_bash("scripts/deploy-fleet.sh app --only=", env=env, check=False)
+    assert proc.returncode != 0
+    assert (tmp_path / "fleet.log").read_text() == ""
+
+
+def test_model_mode_rejects_flag_before_name(tmp_path):
+    """フラグを <name> <version> より前に置くと、無視されたうえ名前が化ける。"""
+    inv = _inventory(tmp_path, ["a"])
+    model_stub = _stub(tmp_path, "model.sh", 'printf "%s|" "$@" >> "$FLEET_LOG"; exit 0')
+    env = _env(tmp_path, inv, _stub(tmp_path, "child.sh", "exit 0"))
+    env["FLEET_MODEL_SCRIPT"] = str(model_stub)
+    proc = run_bash(
+        "scripts/deploy-fleet.sh model --keep-going signal_tower 20260422",
+        env=env, check=False,
+    )
+    assert proc.returncode != 0
+    assert (tmp_path / "fleet.log").read_text() == ""
+
+
+def test_only_deduplicates_repeated_hosts(tmp_path):
+    """--only は利用者入力なのでパーサの重複除去を通らない。ここでも潰すこと。"""
+    inv = _inventory(tmp_path, ["a", "b"])
+    stub = _stub(tmp_path, "child.sh", 'echo "$CHILD_SSH" >> "$FLEET_LOG"; exit 0')
+    env = _env(tmp_path, inv, stub)
+    run_bash("scripts/deploy-fleet.sh app --only a,a", env=env, check=False)
+    assert (tmp_path / "fleet.log").read_text().split() == ["a"]
 ```
 
 - [ ] **Step 2: テストを実行して失敗を確認する**
@@ -888,13 +947,21 @@ MODEL_SCRIPT="${FLEET_MODEL_SCRIPT:-$HERE/deploy-model.sh}"
 MODE="$1"; shift
 case "$MODE" in
   app|model) ;;
-  -h|--help) sed -n '2,22p' "$0"; exit 0 ;;
+  # 冒頭コメントを最初の空行まで出す(行番号を固定しない)。
+  -h|--help) sed -n '2,/^$/p' "$0"; exit 0 ;;
   *) die "不明なモード: $MODE（app または model）" ;;
 esac
 
 MODEL_ARGS=()
 if [ "$MODE" = model ]; then
   [ $# -ge 2 ] || die "model モードは <name> <version> が必要"
+  # フラグは <name> <version> より後ろに置く。ここで弾かないと、フラグがそのまま
+  # モデル名として子スクリプトへ渡り、しかも当のフラグは無視される(二重に壊れる)。
+  for a in "$1" "$2"; do
+    case "$a" in
+      -*) die "model モードは <name> <version> をフラグより先に置いてください: '$a'" ;;
+    esac
+  done
   MODEL_ARGS=("$1" "$2"); shift 2
 fi
 
@@ -902,7 +969,9 @@ ONLY=""; KEEP_GOING=0; PASSTHRU=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --only)       shift; ONLY="${1:-}"; [ -n "$ONLY" ] || die "--only に値がありません" ;;
-    --only=*)     ONLY="${1#--only=}" ;;
+    # 空の値を黙って無視すると、--only=$VAR が未展開だった場合に canary の
+    # つもりでフリート全体へ配ってしまう。空白形式と同じく必ず弾く。
+    --only=*)     ONLY="${1#--only=}"; [ -n "$ONLY" ] || die "--only に値がありません" ;;
     --keep-going) KEEP_GOING=1 ;;
     *)            PASSTHRU+=("$1") ;;
   esac
@@ -922,6 +991,11 @@ if [ -n "$ONLY" ]; then
     [ -n "$w" ] || continue
     printf '%s\n' "${ALL_HOSTS[@]}" | grep -qx -- "$w" \
       || die "--only の '$w' はインベントリにありません: $FLEET_INVENTORY"
+    # --only は利用者入力から組み立てるため fleet_read_inventory の重複除去を
+    # 通らない。同じ子を二重に扱わないよう、ここでも重複を落とす。
+    if [ ${#HOSTS[@]} -gt 0 ] && printf '%s\n' "${HOSTS[@]}" | grep -qx -- "$w"; then
+      continue
+    fi
     HOSTS+=("$w")
   done
   [ ${#HOSTS[@]} -gt 0 ] || die "--only に有効なホストがありません"
@@ -1146,7 +1220,11 @@ Oracle の MERGE キーは (MK_DATE, STA_NO1..3, T1_STATUS) のみで device_id 
 このチェックを通すことで、その事故を運用前に検出する。
 
 標準入力: {"<host>": {"<region_id>": ["名前1", "名前2", "名前3"], ...}, ...}
-終了コード: 重複があれば 1、無ければ 0。
+終了コード:
+  0 = 検査済みで重複なし
+  1 = 重複あり(最も実行可能な合図なので、検査不能な子があっても優先する)
+  2 = 入力が使えず検査しきれていない(JSONが壊れている / 割当が dict でない子がある)
+※ 2 を 0 と混同しないこと。「安全」ではなく「確かめられていない」を意味する。
 """
 import json
 import sys
@@ -1155,12 +1233,29 @@ Assignments = dict[str, dict[str, list[str]]]
 Triple = tuple[str, str, str]
 
 
-def _triple(parts: list[str]) -> Triple:
-    """3要素へ正規化する（欠けは空文字で埋める）。"""
-    p = [str(x).strip() for x in (parts or [])][:3]
+def _triple(parts: object) -> Triple:
+    """3要素へ正規化する。子側 child/Picamera.py の id_name_parts と同じ規則に揃える。
+
+    - リスト以外(旧形式の単一文字列)は ["旧名", "", ""] とみなす。文字単位に分解しない。
+    - None は空文字にする(str(None) の "None" にしてはいけない)。
+    - 前後の空白を除去する(子が strip してから CSV に書くため)。
+    3要素に満たない場合は空文字で埋める。
+
+    ここが子の正規化とずれると、同じ局を指す2台の子を「別物」と誤判定し、
+    Oracle でレコードが無警告に欠落するのを見逃す。
+    """
+    if isinstance(parts, list):
+        p = [("" if x is None else str(x)).strip() for x in parts][:3]
+    else:
+        p = ["" if parts is None else str(parts).strip()]
     while len(p) < 3:
         p.append("")
     return (p[0], p[1], p[2])
+
+
+def find_malformed_hosts(per_host: Assignments) -> list[str]:
+    """割当が dict になっておらず検査できないホスト名を返す。"""
+    return sorted(h for h in per_host if not isinstance(per_host[h], dict))
 
 
 def find_duplicate_stations(per_host: Assignments) -> dict[Triple, list[str]]:
@@ -1171,8 +1266,11 @@ def find_duplicate_stations(per_host: Assignments) -> dict[Triple, list[str]]:
     """
     seen: dict[Triple, list[str]] = {}
     for host in sorted(per_host):
-        for region in sorted(per_host[host], key=lambda r: (len(r), r)):
-            triple = _triple(per_host[host][region])
+        regions = per_host[host]
+        if not isinstance(regions, dict):
+            continue          # 検査不能。main() が別途警告する。
+        for region in sorted(regions, key=lambda r: (len(str(r)), str(r))):
+            triple = _triple(regions[region])
             if not any(triple):
                 continue
             seen.setdefault(triple, []).append(f"{host}:{region}")
@@ -1183,8 +1281,11 @@ def format_report(per_host: Assignments) -> str:
     """全機体の STA_NO 割当一覧を人が読める形にする。"""
     lines: list[str] = []
     for host in sorted(per_host):
-        regions = per_host[host] or {}
+        regions = per_host[host]
         lines.append(f"[{host}]")
+        if not isinstance(regions, dict):
+            lines.append("    (割当を読めませんでした)")
+            continue
         assigned = [
             (r, _triple(regions[r]))
             for r in sorted(regions, key=lambda r: (len(r), r))
@@ -1204,17 +1305,28 @@ def main() -> int:
     except json.JSONDecodeError as e:
         print(f"入力JSONを解析できません: {e}", file=sys.stderr)
         return 2
+    if not isinstance(per_host, dict):
+        print("入力JSONの最上位は {ホスト名: 割当} である必要があります", file=sys.stderr)
+        return 2
     print(format_report(per_host))
+    bad = find_malformed_hosts(per_host)
     dups = find_duplicate_stations(per_host)
-    if not dups:
-        print("\nSTA_NO 重複: なし")
-        return 0
-    print("\n!! STA_NO 重複を検出 !!")
-    for triple, labels in dups.items():
-        print(f"    {triple[0]} / {triple[1]} / {triple[2]}  <- {', '.join(labels)}")
-    print("\nOracle の MERGE キーは device_id を含まないため、このままでは")
-    print("同時刻・同ステータスのレコードが無警告で欠落します。割当を修正してください。")
-    return 1
+    if bad:
+        print("\n!! 割当を読めなかった子があります(この子は検査できていません) !!")
+        for h in bad:
+            print(f"    {h}")
+    if dups:
+        print("\n!! STA_NO 重複を検出 !!")
+        for triple, labels in dups.items():
+            print(f"    {triple[0]} / {triple[1]} / {triple[2]}  <- {', '.join(labels)}")
+        print("\nOracle の MERGE キーは device_id を含まないため、このままでは")
+        print("同時刻・同ステータスのレコードが無警告で欠落します。割当を修正してください。")
+        return 1
+    if bad:
+        print("\n上記の子を検査できていないため、重複なしとは断定できません。")
+        return 2
+    print("\nSTA_NO 重複: なし")
+    return 0
 
 
 if __name__ == "__main__":
@@ -1369,8 +1481,10 @@ ONLY=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --only)    shift; ONLY="${1:-}"; [ -n "$ONLY" ] || die "--only に値がありません" ;;
-    --only=*)  ONLY="${1#--only=}" ;;
-    -h|--help) sed -n '2,17p' "$0"; exit 0 ;;
+    # 空の値を黙って無視しない(空白形式と同じ扱いにする)。
+    --only=*)  ONLY="${1#--only=}"; [ -n "$ONLY" ] || die "--only に値がありません" ;;
+    # 冒頭コメントを最初の空行まで出す(行番号を固定しない)。
+    -h|--help) sed -n '2,/^$/p' "$0"; exit 0 ;;
     *)         die "unknown arg: $1" ;;
   esac
   shift
@@ -1388,6 +1502,11 @@ if [ -n "$ONLY" ]; then
     [ -n "$w" ] || continue
     printf '%s\n' "${ALL_HOSTS[@]}" | grep -qx -- "$w" \
       || die "--only の '$w' はインベントリにありません: $FLEET_INVENTORY"
+    # --only は利用者入力から組み立てるため fleet_read_inventory の重複除去を
+    # 通らない。同じ子を二重に扱わないよう、ここでも重複を落とす。
+    if [ ${#HOSTS[@]} -gt 0 ] && printf '%s\n' "${HOSTS[@]}" | grep -qx -- "$w"; then
+      continue
+    fi
     HOSTS+=("$w")
   done
 else
@@ -1413,11 +1532,13 @@ for h in "${HOSTS[@]}"; do
   pica="$(rc 'systemctl is-active picamera.service' 2>/dev/null || echo unknown)"
   web="$(rc 'systemctl is-active web_server.service' 2>/dev/null || echo unknown)"
   url="http://$CHILD_AP_IP:$CHILD_WEB_PORT"
-  model="$(curl -sf -m 5 "$url/current_model" 2>/dev/null \
-           | grep -o '"model_type"[[:space:]]*:[[:space:]]*"[^"]*"' \
+  # model_type と status は両方 /model_status に入っている。1回の取得で足りる。
+  # /current_model からは読まないこと: 実機 zero2 では network/labels しか返らず
+  # model_type が無いため、常に不明扱いになる。
+  st="$(curl -sf -m 5 "$url/model_status" 2>/dev/null || true)"
+  model="$(printf '%s' "$st" | grep -o '"model_type"[[:space:]]*:[[:space:]]*"[^"]*"' \
            | sed 's/.*"\([^"]*\)"$/\1/' || true)"
-  ready="$(curl -sf -m 5 "$url/model_status" 2>/dev/null \
-           | grep -o '"status"[[:space:]]*:[[:space:]]*"[^"]*"' \
+  ready="$(printf '%s' "$st" | grep -o '"status"[[:space:]]*:[[:space:]]*"[^"]*"' \
            | sed 's/.*"\([^"]*\)"$/\1/' || true)"
   printf '  %-16s %-8s %-10s %-12s %s\n' \
     "$h" "$pica" "$web" "${model:-?}" "${ready:-?}"
@@ -1437,7 +1558,10 @@ for host in sys.argv[2:]:
         data = json.loads((tmp / f"{host}.json").read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         data = {}
-    out[host] = data.get("id_names", {}) if isinstance(data, dict) else {}
+    # 最上位が dict でも id_names の中身が dict とは限らない({"id_names": "壊れた文字列"}
+    # のような子が実在しうる)。両方を確かめないと sta_no_report.py へ壊れた形を渡してしまう。
+    ids = data.get("id_names") if isinstance(data, dict) else None
+    out[host] = ids if isinstance(ids, dict) else {}
 print(json.dumps(out))
 PY
 
@@ -1445,9 +1569,17 @@ DUP_RC=0
 python3 "$HERE/lib/sta_no_report.py" < "$TMP/all.json" || DUP_RC=$?
 
 if [ "$UNREACHABLE" -ne 0 ]; then
-  warn "到達できない子があります"
+  warn "到達できない子があります(この子は検査できていません)"
 fi
-[ "$DUP_RC" -eq 0 ] && [ "$UNREACHABLE" -eq 0 ] || exit 1
+
+# 1(重複あり)は最も実行可能な合図なので、検査不能な子があっても優先する。
+if [ "$DUP_RC" -eq 1 ]; then
+  exit 1
+fi
+# 到達できない子、または割当を読めない子があれば「確かめられていない」。
+if [ "$DUP_RC" -ne 0 ] || [ "$UNREACHABLE" -ne 0 ]; then
+  exit 2
+fi
 exit 0
 ```
 
