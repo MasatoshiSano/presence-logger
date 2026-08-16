@@ -17,9 +17,10 @@ SSID="$(nmcli -t -f ACTIVE,SSID dev wifi 2>/dev/null | awk -F: '$1=="yes"{print 
 echo "===================================================================="
 echo " presence パイプライン監視（子Pi→MQTT→Oracle）"
 echo "   現在のSSID : ${SSID:-(不明)}"
-echo "   ①子Pi別受信  ②MQTT生ログ  ③record_inbox  ④Oracleテーブル"
-echo "   [r] Oracle即時更新   [q] 終了"
-echo "   ※④は SSID が工場網(既定 HIME-H-REAP)のときだけ表示されます"
+echo "   ①子Pi別受信  ②MQTT生ログ  ③record_inbox  ④アップロード履歴"
+echo "   [r] 再検証   [q] 終了"
+echo "   ※④は常時表示（record_inboxのsent行）。✓確認はSSIDが工場網"
+echo "     (既定 HIME-H-REAP)のときだけ、行ごとの局番でOracleへ実在確認します"
 echo "===================================================================="
 
 # パッケージの親を PYTHONPATH に載せて -m 実行。

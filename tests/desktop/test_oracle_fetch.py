@@ -1,3 +1,5 @@
+from urllib.parse import parse_qs
+
 from pipeline_monitor.oracle_reader import (
     OracleQuery,
     OracleRecentReader,
@@ -32,3 +34,45 @@ def test_fetch_parses_runner_output():
     assert res.rows[0].mk_date == "20260717090000"
     assert "presence-oracle-jdbc" in captured["cmd"]
     assert "/select_recent" in " ".join(captured["cmd"])
+
+
+def test_build_post_body_omits_blank_filter_fields():
+    q = OracleQuery(host="h", port="1521", service="S", user="u", table="T",
+                    limit=30)  # sta/date/status すべて既定(空)
+    body = parse_qs(build_post_body(q, "pw"), keep_blank_values=True)
+    # 常に含む
+    assert body["table_name"] == ["T"]
+    assert body["limit"] == ["30"]
+    # 空欄は送らない
+    for k in ("sta_no1", "sta_no2", "sta_no3", "mk_date_from", "mk_date_to", "t1_status"):
+        assert k not in body
+
+
+def test_verify_exact_hits_select_range_with_row_own_sta_no():
+    captured = {}
+
+    def fake_runner(cmd, stdin):
+        captured["cmd"] = cmd
+        return "count=1\nora_code=\nerror_message=\nrow=20260717090000,HIME,ABC,001,1,1\n"
+
+    reader = OracleRecentReader("presence-oracle-jdbc", "http://127.0.0.1:8086")
+    q = OracleQuery(host="h", port="1521", service="S", user="u", table="T",
+                     sta_no1="HIME", sta_no2="ABC", sta_no3="001",
+                     mk_date_from="20260717090000", mk_date_to="20260717090000", limit=1)
+    res = reader.verify_exact(q, "pw", runner=fake_runner)
+    assert res.ok
+    assert len(res.rows) == 1
+    assert "/select_range" in " ".join(captured["cmd"])
+
+
+def test_build_post_body_includes_only_provided_filters():
+    q = OracleQuery(host="h", port="1521", service="S", user="u", table="T",
+                    sta_no1="100", mk_date_from="20260717000000", t1_status="3",
+                    limit=50)
+    body = parse_qs(build_post_body(q, "pw"), keep_blank_values=True)
+    assert body["sta_no1"] == ["100"]
+    assert body["mk_date_from"] == ["20260717000000"]
+    assert body["t1_status"] == ["3"]
+    assert "sta_no2" not in body          # 与えていない
+    assert "mk_date_to" not in body
+    assert body["limit"] == ["50"]

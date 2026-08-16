@@ -12,6 +12,8 @@ def _stage(status: str, mqtt_seen: bool) -> str:
     head = "MQTT→" if mqtt_seen else ""
     if status == "sent":
         return f"{head}inbox→Oracle✓"
+    if status == "failed":
+        return f"{head}inbox✗諦め"
     return f"{head}inbox(滞留)"
 
 

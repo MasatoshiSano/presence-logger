@@ -51,6 +51,7 @@ def main() -> int:
         oracle_query_loader=lambda: load_oracle_query(PROFILES_YAML, PROFILE_NAME, LIMIT),
         password_getter=_get_password,
         ssid_getter=_get_ssid,
+        expected_ssid=PROFILE_NAME,
     )
     curses.wrapper(run, deps)
     return 0

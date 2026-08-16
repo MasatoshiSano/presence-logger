@@ -22,16 +22,54 @@ CREATE TABLE IF NOT EXISTS record_inbox (
   t1_status           INTEGER NOT NULL,
   device_id           TEXT,
   raw_payload         TEXT NOT NULL,
-  status              TEXT NOT NULL CHECK(status IN ('received','sent')),
+  status              TEXT NOT NULL CHECK(status IN ('received','sent','failed')),
   received_at_iso     TEXT NOT NULL,
   sent_at_iso         TEXT,
   mk_date_committed   TEXT,
   retry_count         INTEGER NOT NULL DEFAULT 0,
   next_retry_at_iso   TEXT,
-  last_error          TEXT
+  last_error          TEXT,
+  failed_at_iso       TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_record_inbox_status_retry
   ON record_inbox(status, next_retry_at_iso);
+"""
+
+# 既存DB(本番)は 'failed' 追加前の CHECK 制約・列構成で作られている。SQLiteは
+# CHECK制約もCOLUMN追加もALTERで直接は変えられないため、テーブル作り直しで
+# 移行する。failed_at_iso列の有無で移行済みかを判定する(冪等)。
+_MIGRATE_ADD_FAILED_STATUS = """
+BEGIN;
+ALTER TABLE record_inbox RENAME TO record_inbox_old;
+CREATE TABLE record_inbox (
+  event_id            TEXT PRIMARY KEY,
+  mk_date             TEXT NOT NULL,
+  sta_no1             TEXT NOT NULL,
+  sta_no2             TEXT NOT NULL,
+  sta_no3             TEXT NOT NULL,
+  t1_status           INTEGER NOT NULL,
+  device_id           TEXT,
+  raw_payload         TEXT NOT NULL,
+  status              TEXT NOT NULL CHECK(status IN ('received','sent','failed')),
+  received_at_iso     TEXT NOT NULL,
+  sent_at_iso         TEXT,
+  mk_date_committed   TEXT,
+  retry_count         INTEGER NOT NULL DEFAULT 0,
+  next_retry_at_iso   TEXT,
+  last_error          TEXT,
+  failed_at_iso       TEXT
+);
+INSERT INTO record_inbox (event_id, mk_date, sta_no1, sta_no2, sta_no3, t1_status,
+  device_id, raw_payload, status, received_at_iso, sent_at_iso, mk_date_committed,
+  retry_count, next_retry_at_iso, last_error)
+SELECT event_id, mk_date, sta_no1, sta_no2, sta_no3, t1_status,
+  device_id, raw_payload, status, received_at_iso, sent_at_iso, mk_date_committed,
+  retry_count, next_retry_at_iso, last_error
+FROM record_inbox_old;
+DROP TABLE record_inbox_old;
+CREATE INDEX IF NOT EXISTS idx_record_inbox_status_retry
+  ON record_inbox(status, next_retry_at_iso);
+COMMIT;
 """
 
 PRAGMAS = ["PRAGMA journal_mode = WAL", "PRAGMA synchronous = NORMAL"]
@@ -54,6 +92,7 @@ class RecordInboxEvent:
     retry_count: int
     next_retry_at_iso: str | None
     last_error: str | None
+    failed_at_iso: str | None = None
 
 
 class RecordInboxRepository:
@@ -66,6 +105,14 @@ class RecordInboxRepository:
             for p in PRAGMAS:
                 c.execute(p)
             c.executescript(SCHEMA)
+            self._migrate_add_failed_status(c)
+
+    @staticmethod
+    def _migrate_add_failed_status(c: sqlite3.Connection) -> None:
+        cols = {r["name"] for r in c.execute("PRAGMA table_info(record_inbox)").fetchall()}
+        if "failed_at_iso" in cols:
+            return  # 移行済み
+        c.executescript(_MIGRATE_ADD_FAILED_STATUS)
 
     @contextmanager
     def _conn(self) -> Iterator[sqlite3.Connection]:
@@ -97,6 +144,19 @@ class RecordInboxRepository:
                 "UPDATE record_inbox SET status='sent', mk_date_committed=?, sent_at_iso=? "
                 "WHERE event_id=?",
                 (mk_date_committed, sent_at_iso, event_id),
+            )
+
+    def mark_failed(self, event_id: str, *, failed_at_iso: str, last_error: str) -> None:
+        """このevent_idは二度と成功しないと判断して諦める(以後リトライしない)。
+
+        主キー重複(ORA-00001)など、再送しても変わらない理由での失敗専用。
+        接続断など一時的な理由は update_retry() のまま(自動で再試行を続ける)。
+        """
+        with self._conn() as c:
+            c.execute(
+                "UPDATE record_inbox SET status='failed', failed_at_iso=?, last_error=? "
+                "WHERE event_id=?",
+                (failed_at_iso, last_error, event_id),
             )
 
     def update_retry(self, event_id: str, *, retry_count: int, next_retry_at_iso: str,
@@ -131,7 +191,7 @@ class RecordInboxRepository:
         with self._conn() as c:
             current = c.execute("SELECT COUNT(*) FROM record_inbox").fetchone()[0]
             to_delete = max(0, current - max_rows)
-            for status in ("sent", "received"):
+            for status in ("sent", "failed", "received"):
                 if to_delete == 0:
                     break
                 cur = c.execute(
@@ -166,4 +226,5 @@ class RecordInboxRepository:
             retry_count=row["retry_count"],
             next_retry_at_iso=row["next_retry_at_iso"],
             last_error=row["last_error"],
+            failed_at_iso=row["failed_at_iso"],
         )

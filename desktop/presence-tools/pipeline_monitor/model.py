@@ -16,6 +16,14 @@ class MqttMsg:
 
 
 @dataclass
+class LogLine:
+    """②MQTT生ログの表示用1行（連続heartbeatはまとめて1行になる）。"""
+    ts: float
+    text: str
+    dim: bool                       # heartbeatまとめ行は目立たせない
+
+
+@dataclass
 class ChildStat:
     device_id: str
     record_count: int
@@ -34,6 +42,11 @@ class InboxRow:
     last_error: str | None
     received_at_iso: str
     sent_at_iso: str | None
+    sta_no1: str = ""
+    sta_no2: str = ""
+    sta_no3: str = ""
+    t1_status: str = ""
+    mk_date_committed: str | None = None
 
 
 @dataclass
@@ -51,6 +64,7 @@ class InboxView:
     sent: int
     total: int
     devices: list[DeviceAgg] = field(default_factory=list)
+    failed: int = 0                 # 諦めた件数（主キー重複など、再送しても解消しない）
 
 
 @dataclass

@@ -1,0 +1,3614 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Zero 2 W 出力結果</title>
+    <style>
+        body {
+            text-align: center;
+            background: #222;
+            margin: 0;
+            padding: 10px;
+        }
+        .img-container {
+            overflow: auto;
+            text-align: center;
+        }
+        .img-container.fit img {
+            max-width: 100%;
+            border: none;
+        }
+        .img-container.actual img {
+            max-width: none;
+            border: none;
+        }
+        .button-container {
+            margin-top: 15px;
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+        }
+        .model-btn {
+            box-sizing: border-box;
+            width: 130px;
+            min-height: 52px;
+            padding: 14px 8px;
+            font-size: 16px;
+            font-weight: bold;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-align: center;
+        }
+        .model-btn.active {
+            background: #4CAF50;
+            color: white;
+        }
+        .model-btn:not(.active) {
+            background: #666;
+            color: #ccc;
+        }
+        .model-btn:hover:not(.active) {
+            background: #888;
+        }
+        .model-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .controls-row {
+            margin-top: 15px;
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+            flex-wrap: wrap;
+        }
+        .save-control {
+            padding: 15px;
+            background: #333;
+            border-radius: 8px;
+            display: inline-flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 6px;
+        }
+        .save-control label {
+            color: #fff;
+            font-size: 18px;
+            font-weight: bold;
+        }
+        .toggle-btn {
+            min-height: 52px;
+            padding: 14px 28px;
+            font-size: 17px;
+            font-weight: bold;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        .toggle-btn.on {
+            background: #4CAF50;
+            color: white;
+        }
+        .toggle-btn.off {
+            background: #f44336;
+            color: white;
+        }
+        .toggle-btn:hover {
+            opacity: 0.8;
+        }
+        .threshold-control {
+            padding: 15px;
+            background: #333;
+            border-radius: 8px;
+            display: inline-flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 6px;
+        }
+        .threshold-control label {
+            color: #fff;
+            font-size: 18px;
+            font-weight: bold;
+        }
+        .threshold-control .value-display {
+            color: #4CAF50;
+            font-size: 20px;
+            font-weight: bold;
+            margin: 0 8px;
+            min-width: 40px;
+            display: inline-block;
+            text-align: center;
+        }
+        .pm-btn {
+            width: 52px;
+            height: 52px;
+            font-size: 26px;
+            font-weight: bold;
+            line-height: 1;
+            border: none;
+            border-radius: 6px;
+            background: #555;
+            color: #fff;
+            cursor: pointer;
+            transition: background 0.2s;
+            vertical-align: middle;
+        }
+        .pm-btn:hover {
+            background: #888;
+        }
+        .pm-btn:active {
+            background: #4CAF50;
+        }
+        .overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+        .overlay.show {
+            display: flex;
+        }
+        /* シャットダウン後の全画面ブラックアウト（最前面） */
+        .blackout {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: #000;
+            z-index: 99999;
+        }
+        .blackout.show {
+            display: block;
+        }
+        .loading-box {
+            background: #333;
+            padding: 30px 50px;
+            border-radius: 10px;
+            text-align: center;
+        }
+        .loading-box h2 {
+            color: #fff;
+            margin: 0 0 15px 0;
+            font-size: 20px;
+        }
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid #555;
+            border-top: 4px solid #4CAF50;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .recognition-control {
+            padding: 15px;
+            background: #333;
+            border-radius: 8px;
+            display: inline-flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 6px;
+        }
+        .recognition-control label {
+            color: #fff;
+            font-size: 18px;
+            font-weight: bold;
+        }
+        .resolution-label {
+            color: #4CAF50;
+            font-size: 18px;
+            font-weight: bold;
+            margin-left: 10px;
+            min-width: 70px;
+            display: inline-block;
+            text-align: left;
+        }
+        .crop-size-btn {
+            box-sizing: border-box;
+            width: 80px;
+            min-height: 52px;
+            padding: 14px 4px;
+            font-size: 16px;
+            font-weight: bold;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-align: center;
+        }
+        .crop-size-btn.active {
+            background: #4CAF50;
+            color: white;
+        }
+        .crop-size-btn:not(.active) {
+            background: #666;
+            color: #ccc;
+        }
+        .crop-size-btn:hover:not(.active) {
+            background: #888;
+        }
+        .crop-size-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .shutdown-btn {
+            min-height: 52px;
+            padding: 14px 24px;
+            font-size: 17px;
+            font-weight: bold;
+            border: none;
+            border-radius: 6px;
+            background: #b71c1c;
+            color: white;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .shutdown-btn:hover {
+            background: #d32f2f;
+        }
+        .shutdown-btn:active {
+            background: #7f0000;
+        }
+        .confirm-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.75);
+            z-index: 2000;
+            justify-content: center;
+            align-items: center;
+        }
+        .confirm-overlay.show {
+            display: flex;
+        }
+        .confirm-box {
+            background: #333;
+            padding: 30px 40px;
+            border-radius: 10px;
+            text-align: center;
+        }
+        .confirm-box p {
+            color: #fff;
+            font-size: 18px;
+            margin: 0 0 20px 0;
+            white-space: pre-line;
+        }
+        .confirm-box .btn-yes {
+            min-height: 52px;
+            padding: 14px 36px;
+            font-size: 17px;
+            font-weight: bold;
+            border: none;
+            border-radius: 6px;
+            background: #b71c1c;
+            color: white;
+            cursor: pointer;
+            margin-right: 15px;
+        }
+        .confirm-box .btn-yes:hover { background: #d32f2f; }
+        .confirm-box .btn-no {
+            min-height: 52px;
+            padding: 14px 36px;
+            font-size: 17px;
+            font-weight: bold;
+            border: none;
+            border-radius: 6px;
+            background: #555;
+            color: white;
+            cursor: pointer;
+        }
+        .confirm-box .btn-no:hover { background: #888; }
+        .confirm-box .btn-proceed {
+            min-height: 52px;
+            padding: 14px 36px;
+            font-size: 17px;
+            font-weight: bold;
+            border: none;
+            border-radius: 6px;
+            background: #1565C0;
+            color: white;
+            cursor: pointer;
+            margin-right: 15px;
+        }
+        .confirm-box .btn-proceed:hover { background: #1976D2; }
+        .log-section {
+            margin: 20px auto 10px;
+            padding: 12px 15px;
+            background: #1a1a1a;
+            border-radius: 8px;
+            max-width: 960px;
+            text-align: left;
+        }
+        .log-section-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 8px;
+        }
+        .log-section-header h3 {
+            color: #4CAF50;
+            margin: 0;
+            font-size: 15px;
+        }
+        .log-count {
+            color: #888;
+            font-size: 13px;
+        }
+        .log-scroll {
+            max-height: 320px;
+            overflow-y: auto;
+        }
+        .log-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+            font-family: monospace;
+        }
+        .log-table th {
+            background: #2a2a2a;
+            color: #aaa;
+            padding: 5px 8px;
+            text-align: left;
+            border-bottom: 1px solid #3a3a3a;
+            position: sticky;
+            top: 0;
+            z-index: 1;
+        }
+        .log-table td {
+            color: #ddd;
+            padding: 3px 8px;
+            border-bottom: 1px solid #222;
+            white-space: nowrap;
+        }
+        .log-table tr:hover td {
+            background: #252525;
+        }
+        .log-type-object { color: #64B5F6; }
+        .log-type-signal { color: #FFB74D; }
+        .change-log-section {
+            margin: 20px auto 0;
+            padding: 12px 15px;
+            background: #1a1a1a;
+            border-radius: 8px;
+            max-width: 960px;
+            text-align: left;
+            border-left: 3px solid #FFB74D;
+        }
+        .change-log-section .log-section-header h3 {
+            color: #FFB74D;
+        }
+        .id-names-section {
+            margin: 20px auto 10px;
+            padding: 12px 15px;
+            background: #1a1a1a;
+            border-radius: 8px;
+            max-width: 960px;
+            text-align: left;
+            border-left: 3px solid #4CAF50;
+        }
+        .id-names-section .log-section-header h3 {
+            color: #4CAF50;
+        }
+        .id-name-input {
+            background: #2a2a2a;
+            border: 1px solid #444;
+            border-radius: 4px;
+            color: #fff;
+            font-size: 13px;
+            padding: 4px 8px;
+            width: 200px;
+            outline: none;
+            font-family: monospace;
+        }
+        .id-name-input:focus {
+            border-color: #4CAF50;
+        }
+        .id-name-del-btn {
+            background: #555;
+            border: none;
+            border-radius: 4px;
+            color: #ccc;
+            cursor: pointer;
+            font-size: 12px;
+            padding: 3px 8px;
+        }
+        .id-name-del-btn:hover {
+            background: #b71c1c;
+            color: #fff;
+        }
+        .id-name-add-row {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            margin-top: 10px;
+        }
+        .id-name-add-input {
+            background: #2a2a2a;
+            border: 1px solid #444;
+            border-radius: 4px;
+            color: #fff;
+            font-size: 13px;
+            padding: 6px 10px;
+            width: 100px;
+            outline: none;
+            font-family: monospace;
+        }
+        .id-name-add-input:focus {
+            border-color: #4CAF50;
+        }
+        .id-name-add-btn {
+            background: #4CAF50;
+            border: none;
+            border-radius: 4px;
+            color: #fff;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: bold;
+            padding: 6px 16px;
+        }
+        .id-name-add-btn:hover {
+            background: #388E3C;
+        }
+        .status-code-section {
+            margin: 20px auto 10px;
+            padding: 12px 15px;
+            background: #1a1a1a;
+            border-radius: 8px;
+            max-width: 960px;
+            text-align: left;
+            border-left: 3px solid #FF9800;
+        }
+        .status-code-section .log-section-header h3 {
+            color: #FF9800;
+        }
+        .status-code-desc {
+            color: #999;
+            font-size: 12px;
+            margin: 4px 0 10px;
+            line-height: 1.5;
+        }
+        .status-code-section .log-table th,
+        .status-code-section .log-table td {
+            text-align: center;
+            white-space: nowrap;
+        }
+        .sc-state-select {
+            background: #2a2a2a;
+            border: 1px solid #444;
+            border-radius: 4px;
+            color: #fff;
+            font-size: 12px;
+            padding: 3px 4px;
+            outline: none;
+        }
+        .sc-state-select:focus {
+            border-color: #FF9800;
+        }
+        .sc-code-input {
+            background: #2a2a2a;
+            border: 1px solid #444;
+            border-radius: 4px;
+            color: #fff;
+            font-size: 13px;
+            padding: 4px 8px;
+            width: 70px;
+            outline: none;
+            font-family: monospace;
+            text-align: center;
+        }
+        .sc-code-input:focus {
+            border-color: #FF9800;
+        }
+        .sc-note-input {
+            background: #2a2a2a;
+            border: 1px solid #444;
+            border-radius: 4px;
+            color: #fff;
+            font-size: 13px;
+            padding: 4px 8px;
+            width: 160px;
+            outline: none;
+        }
+        .sc-note-input:focus {
+            border-color: #FF9800;
+        }
+        .sc-default-row {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            margin-top: 12px;
+            color: #ccc;
+            font-size: 13px;
+        }
+        .sc-add-btn {
+            background: #FF9800;
+            border: none;
+            border-radius: 4px;
+            color: #1a1a1a;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: bold;
+            padding: 6px 16px;
+            margin-top: 10px;
+        }
+        .sc-add-btn:hover {
+            background: #F57C00;
+        }
+        .graph-section {
+            margin: 20px auto 20px;
+            padding: 12px 15px;
+            background: #1a1a1a;
+            border-radius: 8px;
+            max-width: 960px;
+            text-align: left;
+            border-left: 3px solid #64B5F6;
+            overflow: hidden;
+        }
+        .graph-section .log-section-header h3 {
+            color: #64B5F6;
+        }
+        .graph-canvas-scroll {
+            overflow-x: auto;
+            overflow-y: hidden;
+            width: 100%;
+        }
+        #change_log_graph {
+            display: block;
+        }
+        .graph-legend {
+            display: flex;
+            gap: 16px;
+            margin-top: 8px;
+            flex-wrap: wrap;
+        }
+        .graph-legend-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            color: #aaa;
+            font-size: 12px;
+            font-family: monospace;
+        }
+        .legend-bar {
+            width: 28px;
+            height: 14px;
+            border-radius: 2px;
+        }
+        .log-files-section {
+            margin: 20px auto 20px;
+            padding: 12px 15px;
+            background: #1a1a1a;
+            border-radius: 8px;
+            max-width: 960px;
+            text-align: left;
+            border-left: 3px solid #9C27B0;
+        }
+        .log-files-section .log-section-header h3 {
+            color: #CE93D8;
+        }
+        .log-files-section .log-section-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 8px;
+        }
+        .log-file-list {
+            max-height: 240px;
+            overflow-y: auto;
+        }
+        .log-file-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+            font-family: monospace;
+        }
+        .log-file-table th {
+            background: #2a2a2a;
+            color: #aaa;
+            padding: 5px 8px;
+            text-align: left;
+            border-bottom: 1px solid #3a3a3a;
+            position: sticky;
+            top: 0;
+            z-index: 1;
+        }
+        .log-file-table td {
+            color: #ddd;
+            padding: 3px 8px;
+            border-bottom: 1px solid #222;
+            white-space: nowrap;
+        }
+        .log-file-table tr:hover td {
+            background: #252525;
+        }
+        .log-file-link {
+            color: #CE93D8;
+            text-decoration: none;
+            cursor: pointer;
+        }
+        .log-file-link:hover {
+            color: #E1BEE7;
+            text-decoration: underline;
+        }
+        .send-log-graph-link {
+            color: #4FC3F7;
+            text-decoration: underline;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        .send-log-graph-link:hover {
+            color: #81D4FA;
+        }
+        .send-log-legend {
+            margin-top: 14px;
+            padding: 10px 12px;
+            background: #1e1e1e;
+            border-radius: 6px;
+        }
+        .send-log-legend-title {
+            color: #aaa;
+            font-size: 12px;
+            margin-bottom: 8px;
+        }
+        .send-log-legend-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 3px 0;
+            font-family: monospace;
+            font-size: 13px;
+        }
+        .send-log-legend-swatch {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border-radius: 3px;
+            border: 1px solid rgba(0,0,0,0.4);
+            flex: 0 0 auto;
+        }
+        .send-log-legend-code {
+            color: #fff;
+            min-width: 80px;
+        }
+        .send-log-legend-note {
+            color: #bbb;
+        }
+        .log-files-refresh-btn {
+            background: #555;
+            border: none;
+            border-radius: 4px;
+            color: #ccc;
+            cursor: pointer;
+            font-size: 12px;
+            padding: 3px 10px;
+        }
+        .log-files-refresh-btn:hover {
+            background: #777;
+        }
+        .log-num-btn {
+            background: none;
+            border: none;
+            color: #CE93D8;
+            font-size: 12px;
+            font-family: monospace;
+            font-weight: bold;
+            cursor: pointer;
+            padding: 0;
+            text-decoration: underline;
+        }
+        .log-num-btn:hover { color: #E1BEE7; }
+        .log-graph-modal {
+            display: none;
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            background: rgba(0,0,0,0.88);
+            z-index: 3500;
+            justify-content: center;
+            align-items: flex-start;
+            padding-top: 40px;
+            box-sizing: border-box;
+        }
+        .log-graph-modal.show { display: flex; }
+        .log-graph-modal-box {
+            background: #222;
+            border-radius: 10px;
+            width: 92%;
+            max-width: 960px;
+            max-height: 78vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        .log-graph-modal-header {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 14px;
+            background: #2a2a2a;
+            border-bottom: 1px solid #333;
+            flex-shrink: 0;
+        }
+        .log-graph-modal-title {
+            color: #CE93D8;
+            font-size: 12px;
+            font-family: monospace;
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .log-graph-modal-close {
+            background: none;
+            border: none;
+            color: #aaa;
+            font-size: 22px;
+            cursor: pointer;
+            line-height: 1;
+            padding: 0 2px;
+        }
+        .log-graph-modal-close:hover { color: #fff; }
+        .log-graph-modal-content {
+            overflow: auto;
+            flex: 1;
+            padding: 12px;
+        }
+        .wifi-section {
+            margin: 20px auto 20px;
+            padding: 12px 15px;
+            background: #1a1a1a;
+            border-radius: 8px;
+            max-width: 960px;
+            text-align: left;
+            border-left: 3px solid #00BCD4;
+        }
+        .wifi-section .log-section-header h3 { color: #80DEEA; }
+        .wifi-status-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 14px;
+            font-family: monospace;
+            font-size: 13px;
+        }
+        .wifi-status-label { color: #aaa; }
+        .wifi-ssid { color: #80DEEA; font-weight: bold; }
+        .wifi-ip { color: #666; }
+        .wifi-form {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            max-width: 520px;
+        }
+        .wifi-form-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .wifi-form-label {
+            color: #aaa;
+            font-size: 13px;
+            min-width: 90px;
+            font-family: monospace;
+        }
+        .wifi-input {
+            flex: 1;
+            background: #2a2a2a;
+            border: 1px solid #444;
+            border-radius: 4px;
+            color: #fff;
+            font-size: 13px;
+            padding: 7px 10px;
+            outline: none;
+            font-family: monospace;
+        }
+        .wifi-input:focus { border-color: #00BCD4; }
+        .send-target-toggle {
+            flex: 1;
+            color: #ddd;
+            font-size: 13px;
+            font-family: monospace;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .wifi-sub-btn {
+            background: #333;
+            border: none;
+            border-radius: 4px;
+            color: #ccc;
+            cursor: pointer;
+            font-size: 12px;
+            padding: 7px 12px;
+            white-space: nowrap;
+        }
+        .wifi-sub-btn:hover { background: #555; }
+        .wifi-sub-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+        .wifi-scan-results {
+            display: none;
+            background: #252525;
+            border: 1px solid #333;
+            border-radius: 4px;
+            max-height: 160px;
+            overflow-y: auto;
+            margin-left: 98px;
+        }
+        .wifi-network-item {
+            padding: 6px 10px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            border-bottom: 1px solid #2a2a2a;
+            font-family: monospace;
+            font-size: 12px;
+        }
+        .wifi-network-item:hover { background: #2e2e2e; }
+        .wifi-network-ssid { color: #ddd; flex: 1; }
+        .wifi-network-signal { color: #888; font-size: 11px; min-width: 40px; text-align: right; }
+        .wifi-network-security { color: #FFB74D; font-size: 11px; min-width: 40px; }
+        .wifi-warning {
+            color: #FFB74D;
+            font-size: 12px;
+            font-family: monospace;
+            padding: 4px 0 4px 98px;
+        }
+        .wifi-connect-btn {
+            align-self: flex-start;
+            margin-left: 98px;
+            min-height: 40px;
+            padding: 10px 28px;
+            font-size: 15px;
+            font-weight: bold;
+            border: none;
+            border-radius: 6px;
+            background: #00838F;
+            color: white;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .wifi-connect-btn:hover { background: #00ACC1; }
+        .wifi-connect-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .wifi-result {
+            display: none;
+            margin-left: 98px;
+            margin-top: 4px;
+            padding: 7px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-family: monospace;
+        }
+        .wifi-result.ok { display: block; background: #1B5E20; color: #A5D6A7; }
+        .wifi-result.err { display: block; background: #B71C1C; color: #FFCDD2; }
+        .wifi-result.info { display: block; background: #1A237E; color: #C5CAE9; }
+        .image-files-section {
+            margin: 20px auto 20px;
+            padding: 12px 15px;
+            background: #1a1a1a;
+            border-radius: 8px;
+            max-width: 960px;
+            text-align: left;
+            border-left: 3px solid #0288D1;
+        }
+        .image-files-section .log-section-header h3 {
+            color: #81D4FA;
+        }
+        .image-tab-bar {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 10px;
+        }
+        .image-tab-btn {
+            padding: 5px 18px;
+            border: none;
+            border-radius: 4px;
+            font-size: 13px;
+            font-weight: bold;
+            cursor: pointer;
+            background: #333;
+            color: #aaa;
+            transition: background 0.2s;
+        }
+        .image-tab-btn.active {
+            background: #0288D1;
+            color: #fff;
+        }
+        .image-tab-btn:hover:not(.active) {
+            background: #444;
+        }
+        .image-file-list {
+            max-height: 280px;
+            overflow-y: auto;
+        }
+        .image-file-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+            font-family: monospace;
+        }
+        .image-file-table th {
+            background: #2a2a2a;
+            color: #aaa;
+            padding: 5px 8px;
+            text-align: left;
+            border-bottom: 1px solid #3a3a3a;
+            position: sticky;
+            top: 0;
+            z-index: 1;
+        }
+        .image-file-table td {
+            color: #ddd;
+            padding: 3px 8px;
+            border-bottom: 1px solid #222;
+            white-space: nowrap;
+        }
+        .image-file-table tr:hover td {
+            background: #252525;
+        }
+        .image-file-thumb {
+            width: 48px;
+            height: 36px;
+            object-fit: cover;
+            border-radius: 3px;
+            cursor: pointer;
+            vertical-align: middle;
+            border: 1px solid #333;
+        }
+        .image-file-link {
+            color: #81D4FA;
+            text-decoration: none;
+            cursor: pointer;
+        }
+        .image-file-link:hover {
+            color: #B3E5FC;
+            text-decoration: underline;
+        }
+        .image-lightbox {
+            display: none;
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            background: rgba(0,0,0,0.88);
+            z-index: 3000;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+        }
+        .image-lightbox.show {
+            display: flex;
+        }
+        .image-lightbox img {
+            max-width: 92vw;
+            max-height: 82vh;
+            border-radius: 4px;
+            box-shadow: 0 0 30px rgba(0,0,0,0.7);
+        }
+        .image-lightbox-close {
+            position: absolute;
+            top: 16px;
+            right: 24px;
+            font-size: 32px;
+            color: #fff;
+            cursor: pointer;
+            line-height: 1;
+            background: none;
+            border: none;
+        }
+        .image-lightbox-name {
+            color: #aaa;
+            font-size: 12px;
+            font-family: monospace;
+            margin-top: 10px;
+        }
+    </style>
+    <script>
+        // 映像更新は「前回の読み込み完了を待ってから次を要求する」方式にする。
+        // setIntervalで無条件にimg.srcを再代入すると、応答が1秒を超えた場合に
+        // 毎秒「中断→再リクエスト」を繰り返して一度も完了せず、映像が固まったまま
+        // 回復しなくなる（ワーカー逼迫時に発生）。完了を待つことで再リクエストの
+        // 連打を防ぎ、ワーカーが空き次第自然に復帰する。
+        // 注意: この<script>は<head>内（<body>より前）で実行されるため、
+        // ここでgetElementByIdしてもnullになる。初期化はwindow.onload後に
+        // startMonitor()で行うこと（headでmonitorImg.onload=...するとnull参照で
+        // スクリプト全体が停止し、画面が「接続中」のまま固まる）。
+        var monitorImg = null;
+        var monitorWatchdog = null;
+
+        function scheduleNextFrame(delay) {
+            clearTimeout(monitorWatchdog);
+            monitorWatchdog = setTimeout(updateMonitor, delay);
+        }
+
+        function updateMonitor() {
+            if (!monitorImg) return;
+            // 応答が一定時間無い場合は作り直して回復させるウォッチドッグ
+            clearTimeout(monitorWatchdog);
+            monitorWatchdog = setTimeout(updateMonitor, 5000);
+            // ブラウザのキャッシュを回避するためにタイムスタンプを付与
+            monitorImg.src = "result.jpg?t=" + new Date().getTime();
+        }
+
+        function startMonitor() {
+            monitorImg = document.getElementById("result_img");
+            if (!monitorImg) return;
+            // 読み込み完了/失敗のたびに1秒後の次フレームを予約（1FPS相当）
+            monitorImg.onload = function() { scheduleNextFrame(1000); };
+            monitorImg.onerror = function() { scheduleNextFrame(1000); };
+            updateMonitor();  // 初回起動
+        }
+
+        var statusCheckInterval = null;
+        var currentModel = 'object_detection';
+        var recognitionEnabled = true;
+
+        // サービス再起動を検知するバックグラウンド監視（3秒ごと）
+        setInterval(function() {
+            if (statusCheckInterval) return;
+            fetch('/model_status')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status !== 'ready') {
+                        showLoadingText('接続中...');
+                        showLoading(true);
+                        disableButtons(true);
+                        startStatusCheck(null);
+                    }
+                })
+                .catch(function() {
+                    // サーバー接続不可＝再起動中
+                    showLoadingText('接続中...');
+                    showLoading(true);
+                    disableButtons(true);
+                    startStatusCheck(null);
+                });
+        }, 3000);
+
+        // タッチパネルからの設定変更をWeb画面へ反映する専用ポーリング（4秒ごと）
+        // オーバーレイ制御とは完全に分離。エラーが起きても画面表示に影響しない。
+        setInterval(function() {
+            if (statusCheckInterval) return;  // 起動・切替中は同期しない
+            fetch('/all_settings')
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    try { syncSettingsFromStatus(data); } catch(e) { console.error('syncSettings error:', e); }
+                })
+                .catch(function(err) { console.error('Settings sync fetch error:', err); });
+        }, 4000);
+
+        function syncSettingsFromStatus(data) {
+            if ('save_result' in data) updateSaveButtonState('result', data.save_result);
+            if ('save_raw' in data) updateSaveButtonState('raw', data.save_raw);
+            if ('threshold' in data) {
+                var thr = Math.max(0.25, data.threshold || 0.25);
+                currentThreshold = thr;
+                document.getElementById('threshold_value').textContent = thr.toFixed(2);
+            }
+            if ('recognition_enabled' in data) {
+                recognitionEnabled = data.recognition_enabled;
+                if (recognitionEnabled) {
+                    updateButtonState(currentModel);
+                } else {
+                    updateButtonState(null);
+                }
+            }
+            if (data.resolution) {
+                var pct = Math.max(1, Math.min(100, parseInt(data.resolution) || 100));
+                currentResolution = pct;
+                document.getElementById('resolution_value').textContent = pct >= 100 ? '全画角' : pct + '%';
+            }
+        }
+
+        function switchModel(modelType) {
+            var msg;
+            if (modelType === currentModel && recognitionEnabled) {
+                msg = '認識をオフにしますか？';
+            } else if (!recognitionEnabled && modelType === currentModel) {
+                msg = '認識をオンにしますか？';
+            } else {
+                var name = modelType === 'object_detection' ? '物体認識' : 'シグナルタワー';
+                if (!recognitionEnabled) {
+                    msg = 'モデルを「' + name + '」に切り替えて\n認識をオンにしますか？\n（再起動が必要です）';
+                } else {
+                    msg = 'モデルを「' + name + '」に切り替えますか？\n（再起動が必要です）';
+                }
+            }
+            showSwitchConfirm(msg, function() { _doSwitchModel(modelType); });
+        }
+
+        function _doSwitchModel(modelType) {
+            // 実行中のモデルと同じ場合は認識OFFに切り替え
+            if (modelType === currentModel && recognitionEnabled) {
+                showLoadingText('認識オフに切り替え中...');
+                showLoading(true);
+                disableButtons(true);
+                recognitionEnabled = false;
+                updateButtonState(null);
+                fetch('/toggle_recognition?value=false')
+                    .then(response => response.json())
+                    .then(data => {
+                        startStatusCheck(null);
+                    })
+                    .catch(error => {
+                        console.error('Error:', error);
+                        showLoading(false);
+                        disableButtons(false);
+                    });
+                return;
+            }
+            // 認識OFFの場合はONに戻す
+            if (!recognitionEnabled) {
+                recognitionEnabled = true;
+                updateButtonState(modelType);
+                if (modelType === currentModel) {
+                    // 同じモデルでONに戻す
+                    showLoadingText('認識オンに切り替え中...');
+                    showLoading(true);
+                    disableButtons(true);
+                    fetch('/toggle_recognition?value=true')
+                        .then(response => response.json())
+                        .then(data => {
+                            startStatusCheck(null);
+                        })
+                        .catch(error => {
+                            console.error('Error:', error);
+                            showLoading(false);
+                            disableButtons(false);
+                        });
+                } else {
+                    // 別モデルに切り替え＋ONに戻す
+                    showLoadingText('モデル切り替え中...');
+                    showLoading(true);
+                    disableButtons(true);
+                    fetch('/toggle_recognition?value=true')
+                        .then(response => response.json())
+                        .then(function() {
+                            return fetch('/switch_model?model=' + modelType);
+                        })
+                        .then(response => response.json())
+                        .then(data => {
+                            currentModel = modelType;
+                            startStatusCheck(null);
+                        })
+                        .catch(error => {
+                            console.error('Error:', error);
+                            showLoading(false);
+                            disableButtons(false);
+                        });
+                }
+                return;
+            }
+            // 認識ONで別モデルに切り替え
+            showLoadingText('モデル切り替え中...');
+            showLoading(true);
+            disableButtons(true);
+            fetch('/switch_model?model=' + modelType)
+                .then(response => response.json())
+                .then(data => {
+                    currentModel = modelType;
+                    updateButtonState(modelType);
+                    startStatusCheck(null);
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    showLoading(false);
+                    disableButtons(false);
+                });
+        }
+
+        function startStatusCheck(expectedModel) {
+            var checkCount = 0;
+            var maxChecks = 120; // 最大120秒待機
+
+            if (statusCheckInterval) {
+                clearInterval(statusCheckInterval);
+            }
+
+            statusCheckInterval = setInterval(function() {
+                checkCount++;
+                fetch('/model_status')
+                    .then(response => response.json())
+                    .then(data => {
+                        console.log('Status check:', data);
+                        if (data.status === 'ready') {
+                            // 準備完了
+                            clearInterval(statusCheckInterval);
+                            statusCheckInterval = null;
+                            showLoading(false);
+                            disableButtons(false);
+                            if (data.model_type === 'object_detection' || data.model_type === 'signal_tower') {
+                                currentModel = data.model_type;
+                            }
+                            loadCameraResolution().then(function() { loadRecognitionSettings(); loadLogs(); loadChangeLogs(); });
+                        } else if (checkCount >= maxChecks) {
+                            // タイムアウト
+                            clearInterval(statusCheckInterval);
+                            statusCheckInterval = null;
+                            showLoading(false);
+                            disableButtons(false);
+                            console.log('Status check timeout');
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Status check error:', error);
+                    });
+            }, 1000); // 1秒ごとにチェック
+        }
+
+        function showLoading(show) {
+            var overlay = document.getElementById('loading_overlay');
+            if (show) {
+                overlay.classList.add('show');
+            } else {
+                overlay.classList.remove('show');
+            }
+        }
+
+        function showLoadingText(text) {
+            document.getElementById('loading_text').textContent = text;
+        }
+
+        function disableButtons(disabled) {
+            document.getElementById('btn_object').disabled = disabled;
+            document.getElementById('btn_signal').disabled = disabled;
+            document.getElementById('btn_cam_fhd').disabled = disabled;
+            document.getElementById('btn_cam_640').disabled = disabled;
+            ['640', '1280', '1920', '2560', 'full'].forEach(function(s) {
+                var el = document.getElementById('btn_crop_' + s);
+                if (el) el.disabled = disabled;
+            });
+        }
+
+        function updateButtonState(modelType) {
+            document.getElementById('btn_object').classList.remove('active');
+            document.getElementById('btn_signal').classList.remove('active');
+            if (modelType === 'object_detection') {
+                document.getElementById('btn_object').classList.add('active');
+            } else if (modelType === 'signal_tower') {
+                document.getElementById('btn_signal').classList.add('active');
+            }
+            // ID設定・IDリセットボタンはシグナルタワーモード時のみ表示
+            document.getElementById('btn_set_signal_ids').style.display =
+                (modelType === 'signal_tower') ? '' : 'none';
+            document.getElementById('btn_reset_signal_ids').style.display =
+                (modelType === 'signal_tower') ? '' : 'none';
+            // modelType === null の場合は全ボタン非アクティブ（認識OFF）
+        }
+
+        function setSignalIds() {
+            fetch('/set_signal_ids')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        console.log('ID設定を送信しました');
+                    }
+                })
+                .catch(error => console.error('Error setting signal IDs:', error));
+        }
+
+        function resetSignalIds() {
+            fetch('/reset_signal_ids')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        console.log('IDリセットを送信しました');
+                    }
+                })
+                .catch(error => console.error('Error resetting signal IDs:', error));
+        }
+
+function toggleSave(saveType) {
+            fetch('/toggle_save?type=' + saveType)
+                .then(response => response.json())
+                .then(data => {
+                    console.log('Save toggle:', data);
+                    updateSaveButtonState(saveType, data.enabled);
+                })
+                .catch(error => console.error('Error toggling save:', error));
+        }
+
+        function updateSaveButtonState(saveType, enabled) {
+            var btn = document.getElementById('btn_save_' + saveType);
+            btn.classList.remove('on', 'off');
+            if (enabled) {
+                btn.classList.add('on');
+                btn.textContent = 'ON';
+            } else {
+                btn.classList.add('off');
+                btn.textContent = 'OFF';
+            }
+        }
+
+        function loadSaveSettings() {
+            fetch('/save_settings')
+                .then(response => response.json())
+                .then(data => {
+                    updateSaveButtonState('result', data.save_result);
+                    updateSaveButtonState('raw', data.save_raw);
+                })
+                .catch(error => console.error('Error loading save settings:', error));
+        }
+
+        var currentThreshold = 0.25;
+        var currentResolution = 100;
+        var CROP_STEPS = [10, 12, 17, 24, 34, 49, 70, 100];
+
+        function updateThreshold(value) {
+            var threshold = parseFloat(value);
+            threshold = Math.round(threshold * 100) / 100;
+            threshold = Math.max(0.25, Math.min(0.95, threshold));
+            currentThreshold = threshold;
+            document.getElementById('threshold_value').textContent = threshold.toFixed(2);
+
+            // サーバーに送信
+            fetch('/set_threshold?value=' + threshold)
+                .then(response => response.json())
+                .then(data => {
+                    console.log('Threshold updated:', data);
+                    if (data.success) {
+                        console.log('実際に設定された値:', data.threshold);
+                    }
+                })
+                .catch(error => console.error('Error updating threshold:', error));
+        }
+
+        function changeThreshold(delta) {
+            updateThreshold(currentThreshold + delta);
+        }
+
+        function loadThreshold() {
+            fetch('/get_threshold')
+                .then(response => response.json())
+                .then(data => {
+                    var threshold = data.threshold || 0.25;
+                    if (threshold < 0.25) threshold = 0.25;
+                    currentThreshold = threshold;
+                    document.getElementById('threshold_value').textContent = threshold.toFixed(2);
+                    console.log('読み込まれたしきい値:', threshold);
+                })
+                .catch(error => console.error('Error loading threshold:', error));
+        }
+
+        function changeResolution(value) {
+            fetch('/set_resolution?value=' + value)
+                .then(response => response.json())
+                .then(data => {
+                    console.log('Resolution changed:', data);
+                })
+                .catch(error => console.error('Error changing resolution:', error));
+        }
+
+        function changeResolutionStep(delta) {
+            var idx = CROP_STEPS.indexOf(currentResolution);
+            if (idx === -1) {
+                // 最も近いステップを探す
+                idx = CROP_STEPS.reduce(function(best, v, i) {
+                    return Math.abs(v - currentResolution) < Math.abs(CROP_STEPS[best] - currentResolution) ? i : best;
+                }, 0);
+            }
+            idx = Math.max(0, Math.min(CROP_STEPS.length - 1, idx + delta));
+            var pct = CROP_STEPS[idx];
+            currentResolution = pct;
+            document.getElementById('resolution_value').textContent = pct >= 100 ? '全画角' : pct + '%';
+            changeResolution(String(pct));
+        }
+
+        function loadRecognitionSettings() {
+            fetch('/recognition_settings')
+                .then(response => response.json())
+                .then(data => {
+                    recognitionEnabled = data.enabled;
+                    if (recognitionEnabled) {
+                        updateButtonState(currentModel);
+                    } else {
+                        updateButtonState(null);
+                    }
+                    if (data.resolution) {
+                        var intVal = parseInt(data.resolution);
+                        if (isNaN(intVal) || intVal <= 0) intVal = 100;
+                        var pct = Math.max(1, Math.min(100, intVal));
+                        currentResolution = pct;
+                        document.getElementById('resolution_value').textContent = pct >= 100 ? '全画角' : pct + '%';
+                    }
+                })
+                .catch(error => console.error('Error loading recognition settings:', error));
+        }
+
+        var currentCameraResolution = '1920x1080';
+
+        function loadCameraResolution() {
+            return fetch('/get_camera_resolution')
+                .then(response => response.json())
+                .then(data => {
+                    currentCameraResolution = data.camera_resolution || '1920x1080';
+                    updateCameraResolutionButtons(currentCameraResolution);
+                })
+                .catch(error => console.error('Error loading camera resolution:', error));
+        }
+
+        function updateCameraResolutionButtons(res) {
+            ['btn_cam_fhd', 'btn_cam_640'].forEach(function(id) {
+                document.getElementById(id).classList.remove('active');
+            });
+            if (res === '1920x1080') {
+                document.getElementById('btn_cam_fhd').classList.add('active');
+            } else if (res === '640x640') {
+                document.getElementById('btn_cam_640').classList.add('active');
+            }
+            document.getElementById('crop_pct_control').style.display = '';
+            document.getElementById('crop_size_control').style.display = 'none';
+        }
+
+        function updateCropSizeButtons(size) {
+            ['640', '1280', '1920', '2560', 'full'].forEach(function(s) {
+                var el = document.getElementById('btn_crop_' + s);
+                if (el) el.classList.remove('active');
+            });
+            var el = document.getElementById('btn_crop_' + size);
+            if (el) el.classList.add('active');
+        }
+
+        function setCropSize(size) {
+            var value = (size === 'full') ? '100' : size;
+            fetch('/set_resolution?value=' + value)
+                .then(response => response.json())
+                .then(function(data) {
+                    if (data.success) {
+                        currentCropSize = size;
+                        updateCropSizeButtons(size);
+                    }
+                })
+                .catch(error => console.error('Error setting crop size:', error));
+        }
+
+        function setCameraResolution(res) {
+            if (res === currentCameraResolution) return;
+            var name = res === '1920x1080' ? 'FHD (1920×1080)' : '640×640';
+            showSwitchConfirm('カメラ解像度を「' + name + '」に\n切り替えますか？\n（再起動が必要です）', function() {
+                _doSetCameraResolution(res);
+            });
+        }
+
+        function _doSetCameraResolution(res) {
+            showLoadingText('解像度切り替え中...');
+            showLoading(true);
+            disableButtons(true);
+            fetch('/set_camera_resolution?value=' + res)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        currentCameraResolution = res;
+                        updateCameraResolutionButtons(res);
+                        startStatusCheck(null);
+                    } else {
+                        showLoading(false);
+                        disableButtons(false);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error setting camera resolution:', error);
+                    showLoading(false);
+                    disableButtons(false);
+                });
+        }
+
+        function showShutdownConfirm() {
+            document.getElementById('shutdown_confirm').classList.add('show');
+        }
+
+        function hideShutdownConfirm() {
+            document.getElementById('shutdown_confirm').classList.remove('show');
+        }
+
+        function executeShutdown() {
+            hideShutdownConfirm();
+            // シャットダウン後は接続が切れ「シャットダウン中...」表示が残るため、
+            // 15秒後に画面全体を真っ黒にする（電源断の見た目に合わせる）
+            setTimeout(function() {
+                document.getElementById('blackout').classList.add('show');
+            }, 15000);
+            fetch('/shutdown')
+                .then(response => response.json())
+                .then(data => {
+                    showLoadingText('シャットダウン中...');
+                    showLoading(true);
+                    disableButtons(true);
+                })
+                .catch(error => {
+                    // シャットダウン直後は接続が切れるため、エラーは無視
+                    showLoadingText('シャットダウン中...');
+                    showLoading(true);
+                    disableButtons(true);
+                });
+        }
+
+        var _switchConfirmCallback = null;
+
+        function showSwitchConfirm(message, callback) {
+            _switchConfirmCallback = callback;
+            document.getElementById('switch_confirm_msg').textContent = message;
+            document.getElementById('switch_confirm').classList.add('show');
+        }
+
+        function hideSwitchConfirm() {
+            _switchConfirmCallback = null;
+            document.getElementById('switch_confirm').classList.remove('show');
+        }
+
+        function executeSwitchConfirm() {
+            var cb = _switchConfirmCallback;
+            hideSwitchConfirm();
+            if (cb) cb();
+        }
+
+        function buildLogRow(idx, entry) {
+            var tr = document.createElement('tr');
+            var typeClass = entry.type === '物体認識' ? 'log-type-object' : 'log-type-signal';
+            var td0 = document.createElement('td'); td0.textContent = idx + 1;
+            var td1 = document.createElement('td'); td1.textContent = entry.datetime;
+            var td2 = document.createElement('td'); td2.className = typeClass; td2.textContent = entry.type;
+            var td3 = document.createElement('td'); td3.textContent = entry.data.join(', ');
+            tr.appendChild(td0); tr.appendChild(td1); tr.appendChild(td2); tr.appendChild(td3);
+            return tr;
+        }
+
+        function buildChangeLogRow(idx, entry) {
+            var tr = document.createElement('tr');
+            var td0 = document.createElement('td'); td0.textContent = idx + 1;
+            var td1 = document.createElement('td'); td1.textContent = entry.datetime || '';
+            var td2 = document.createElement('td');
+            var idStr = String(entry.id !== undefined ? entry.id : '');
+            var name = nameLabel(idNames[idStr]);
+            td2.textContent = (name && name !== '') ? idStr + ' (' + name + ')' : idStr;
+            var colorMap = { red: '#f48', yellow: '#FFB74D', green: '#66BB6A', blue: '#29B6F6' };
+            var td3 = document.createElement('td');
+            td3.textContent = entry.color || '';
+            td3.style.color = colorMap[entry.color] || '#ddd';
+            var td4 = document.createElement('td');
+            td4.textContent = (entry.old_state || '') + ' → ' + (entry.new_state || '');
+            td4.style.color = entry.new_state === 'on' ? '#66BB6A' : entry.new_state === 'blink' ? '#FFD600' : '#f44336';
+            tr.appendChild(td0); tr.appendChild(td1); tr.appendChild(td2);
+            tr.appendChild(td3); tr.appendChild(td4);
+            return tr;
+        }
+
+        function buildObjectChangeLogRow(idx, entry) {
+            var tr = document.createElement('tr');
+            var td0 = document.createElement('td'); td0.textContent = idx + 1;
+            var td1 = document.createElement('td'); td1.textContent = entry.datetime || '';
+            var td2 = document.createElement('td'); td2.textContent = entry.label || '';
+            var td3 = document.createElement('td');
+            td3.textContent = entry.event || '';
+            td3.style.color = entry.event === 'detected' ? '#66BB6A' : '#f44336';
+            tr.appendChild(td0); tr.appendChild(td1); tr.appendChild(td2); tr.appendChild(td3);
+            return tr;
+        }
+
+        function updateChangeLogHeaders(isObjectDetection) {
+            var tr = document.querySelector('#change_log_tbody').closest('table').querySelector('thead tr');
+            if (isObjectDetection) {
+                tr.innerHTML = '<th>#</th><th>日時</th><th>ラベル</th><th>イベント</th>';
+            } else {
+                tr.innerHTML = '<th>#</th><th>日時</th><th>ID / 名前</th><th>色</th><th>状態変化</th>';
+            }
+        }
+
+        function loadChangeLogs() {
+            var isObjectDetection = recognitionEnabled && currentModel === 'object_detection';
+            fetch('/change_logs?model_type=' + (recognitionEnabled ? currentModel : ''))
+                .then(function(response) { return response.json(); })
+                .then(function(data) {
+                    var ctbody = document.getElementById('change_log_tbody');
+                    ctbody.innerHTML = '';
+                    document.getElementById('change_log_count').textContent = data.entries.length + '件';
+                    updateChangeLogHeaders(isObjectDetection);
+                    if (!isObjectDetection) {
+                        collectIdsFromLogs(data.entries);
+                    }
+                    data.entries.forEach(function(entry, idx) {
+                        ctbody.appendChild(
+                            isObjectDetection ? buildObjectChangeLogRow(idx, entry) : buildChangeLogRow(idx, entry)
+                        );
+                    });
+                    renderChangeLogGraph(data.entries, isObjectDetection);
+                })
+                .catch(function(err) { console.error('Change log load error:', err); });
+        }
+
+        function loadLogs() {
+            fetch('/logs?model_type=' + (recognitionEnabled ? currentModel : ''))
+                .then(function(response) { return response.json(); })
+                .then(function(data) {
+                    var tbody = document.getElementById('log_tbody');
+                    tbody.innerHTML = '';
+                    document.getElementById('log_count').textContent = data.entries.length + '件';
+                    data.entries.forEach(function(entry, idx) {
+                        tbody.appendChild(buildLogRow(idx, entry));
+                    });
+                })
+                .catch(function(err) { console.error('Log load error:', err); });
+        }
+
+        // ログ系のポーリングは「ログセクションが画面に表示されている」かつ
+        // 「タブがアクティブ」なときだけ実行する。/logs・/change_logs はSDから
+        // CSVを読むため、ログを見ていない間も5秒ごとに読み続けると6ワーカー固定の
+        // サーバーを圧迫し、映像配信(result.jpg)の遅延・停止を招くため。
+        var logSectionsVisible = false;
+
+        function logPollingActive() {
+            return logSectionsVisible &&
+                   document.visibilityState !== 'hidden' &&
+                   !statusCheckInterval;  // 起動・切替中は同期しない
+        }
+
+        function refreshLogsNow() {
+            if (document.visibilityState !== 'hidden' && !statusCheckInterval) {
+                loadLogs();
+                loadChangeLogs();
+            }
+        }
+
+        // 注意: この<script>は<head>内（<body>より前）で実行されるため、
+        // DOM要素を参照するこの関数はwindow.onload後に呼び出す必要がある。
+        function setupLogVisibility() {
+            var targets = [
+                document.querySelector('.change-log-section'),
+                document.querySelector('.log-section')
+            ].filter(Boolean);
+            if ('IntersectionObserver' in window && targets.length) {
+                var visibleSet = new Set();
+                var io = new IntersectionObserver(function(entries) {
+                    var wasVisible = logSectionsVisible;
+                    entries.forEach(function(e) {
+                        if (e.isIntersecting) visibleSet.add(e.target);
+                        else visibleSet.delete(e.target);
+                    });
+                    logSectionsVisible = visibleSet.size > 0;
+                    // 非表示→表示になった瞬間は即時更新（5秒待たない）
+                    if (!wasVisible && logSectionsVisible) refreshLogsNow();
+                }, { threshold: 0 });
+                targets.forEach(function(t) { io.observe(t); });
+            } else {
+                logSectionsVisible = true;  // 非対応環境は従来通り常時ポーリング
+            }
+        }
+
+        // タブに戻ってきたとき、表示中なら即時更新
+        document.addEventListener('visibilitychange', function() {
+            if (document.visibilityState !== 'hidden' && logSectionsVisible) refreshLogsNow();
+        });
+
+        setInterval(function() { if (logPollingActive()) loadLogs(); }, 5000);
+        setInterval(function() { if (logPollingActive()) loadChangeLogs(); }, 5000);
+
+        // ID名前管理
+        var idNames = {};
+
+        // ID名前の値を3項目の文字列配列に正規化（旧形式の単一文字列にも対応）
+        function nameParts(v) {
+            var arr = Array.isArray(v) ? v.slice(0, 3) : [(v == null ? '' : v)];
+            while (arr.length < 3) arr.push('');
+            return arr.map(function(x) { return x == null ? '' : String(x); });
+        }
+        // 3項目をスペース連結した表示用ラベル（空項目は除外）
+        function nameLabel(v) {
+            return nameParts(v).filter(function(x) { return x !== ''; }).join(' ');
+        }
+
+        function loadIdNames() {
+            return fetch('/get_id_names')
+                .then(function(response) { return response.json(); })
+                .then(function(data) {
+                    idNames = data.id_names || {};
+                    renderIdNamesTable();
+                })
+                .catch(function(err) { console.error('Error loading ID names:', err); });
+        }
+
+        function saveIdNames() {
+            fetch('/set_id_names', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id_names: idNames })
+            }).catch(function(err) { console.error('Error saving ID names:', err); });
+        }
+
+        function renderIdNamesTable() {
+            var tbody = document.getElementById('id_names_tbody');
+            tbody.innerHTML = '';
+            var ids = Object.keys(idNames).sort(function(a, b) { return Number(a) - Number(b); });
+            ids.forEach(function(id) {
+                tbody.appendChild(createIdNameRow(id, idNames[id]));
+            });
+        }
+
+        function createIdNameRow(id, name) {
+            var tr = document.createElement('tr');
+            var td1 = document.createElement('td'); td1.textContent = id;
+            tr.appendChild(td1);
+            var parts = nameParts(name);
+            for (var i = 0; i < 3; i++) {
+                (function(idx) {
+                    var td = document.createElement('td');
+                    var input = document.createElement('input');
+                    input.type = 'text';
+                    input.className = 'id-name-input';
+                    input.value = parts[idx];
+                    input.placeholder = '名前' + (idx + 1) + 'を入力...';
+                    input.dataset.id = id;
+                    input.addEventListener('input', function() {
+                        var cur = nameParts(idNames[this.dataset.id]);
+                        cur[idx] = this.value;
+                        idNames[this.dataset.id] = cur;
+                        saveIdNames();
+                    });
+                    td.appendChild(input);
+                    tr.appendChild(td);
+                })(i);
+            }
+            var td3 = document.createElement('td');
+            var delBtn = document.createElement('button');
+            delBtn.textContent = '削除';
+            delBtn.className = 'id-name-del-btn';
+            delBtn.dataset.id = id;
+            delBtn.addEventListener('click', function() {
+                delete idNames[this.dataset.id];
+                saveIdNames();
+                renderIdNamesTable();
+            });
+            td3.appendChild(delBtn);
+            tr.appendChild(td3);
+            return tr;
+        }
+
+        function addIdNameRow() {
+            var idInput = document.getElementById('new_id_input');
+            var id = idInput.value.trim();
+            if (id === '' || isNaN(Number(id))) return;
+            if (idNames[id] === undefined) {
+                idNames[id] = ['', '', ''];
+                saveIdNames();
+                renderIdNamesTable();
+            }
+            idInput.value = '';
+            idInput.focus();
+        }
+
+        function collectIdsFromLogs(entries) {
+            var updated = false;
+            entries.forEach(function(entry) {
+                if (entry.id !== undefined && entry.id !== null) {
+                    var key = String(entry.id);
+                    if (idNames[key] === undefined) {
+                        idNames[key] = ['', '', ''];
+                        updated = true;
+                    }
+                }
+            });
+            if (updated) {
+                saveIdNames();
+                renderIdNamesTable();
+            }
+        }
+
+        // --- 状態コード設定 ---
+        var statusCodePatterns = [];   // [{conditions:{red:'on',...}, code:5}, ...]
+        var statusCodeDefault = 0;
+        var SC_COLORS = [['red', '赤'], ['yellow', '黄'], ['green', '緑'], ['blue', '青'], ['white', '白']];
+        var SC_STATE_OPTS = [['', '指定なし'], ['on', 'ON'], ['blink', 'BLINK'], ['off', 'OFF']];
+
+        function loadStatusCodes() {
+            return fetch('/get_status_codes')
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    statusCodePatterns = data.patterns || [];
+                    statusCodeDefault = (data.default !== undefined) ? data.default : 0;
+                    document.getElementById('sc_default_input').value = statusCodeDefault;
+                    renderStatusCodes();
+                })
+                .catch(function(err) { console.error('Error loading status codes:', err); });
+        }
+
+        function saveStatusCodes() {
+            var def = parseInt(document.getElementById('sc_default_input').value, 10);
+            statusCodeDefault = isNaN(def) ? 0 : def;
+            fetch('/set_status_codes', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ patterns: statusCodePatterns, default: statusCodeDefault })
+            }).catch(function(err) { console.error('Error saving status codes:', err); });
+        }
+
+        function renderStatusCodes() {
+            var tbody = document.getElementById('status_codes_tbody');
+            tbody.innerHTML = '';
+            statusCodePatterns.forEach(function(pat, idx) {
+                tbody.appendChild(createStatusCodeRow(pat, idx));
+            });
+        }
+
+        function createStatusCodeRow(pat, idx) {
+            var tr = document.createElement('tr');
+            var tdNum = document.createElement('td');
+            tdNum.textContent = (idx + 1);
+            tr.appendChild(tdNum);
+            SC_COLORS.forEach(function(c) {
+                var color = c[0];
+                var td = document.createElement('td');
+                var sel = document.createElement('select');
+                sel.className = 'sc-state-select';
+                SC_STATE_OPTS.forEach(function(opt) {
+                    var o = document.createElement('option');
+                    o.value = opt[0];
+                    o.textContent = opt[1];
+                    sel.appendChild(o);
+                });
+                sel.value = (pat.conditions && pat.conditions[color]) || '';
+                sel.addEventListener('change', function() {
+                    if (!pat.conditions) pat.conditions = {};
+                    if (this.value) pat.conditions[color] = this.value;
+                    else delete pat.conditions[color];
+                    saveStatusCodes();
+                });
+                td.appendChild(sel);
+                tr.appendChild(td);
+            });
+            var tdCode = document.createElement('td');
+            var codeInput = document.createElement('input');
+            codeInput.type = 'number';
+            codeInput.className = 'sc-code-input';
+            codeInput.value = (pat.code !== undefined) ? pat.code : 0;
+            codeInput.addEventListener('input', function() {
+                var v = parseInt(this.value, 10);
+                pat.code = isNaN(v) ? 0 : v;
+                saveStatusCodes();
+            });
+            tdCode.appendChild(codeInput);
+            tr.appendChild(tdCode);
+            var tdNote = document.createElement('td');
+            var noteInput = document.createElement('input');
+            noteInput.type = 'text';
+            noteInput.className = 'sc-note-input';
+            noteInput.placeholder = '備考';
+            noteInput.value = (pat.note !== undefined && pat.note !== null) ? pat.note : '';
+            noteInput.addEventListener('input', function() {
+                pat.note = this.value;
+                saveStatusCodes();
+            });
+            tdNote.appendChild(noteInput);
+            tr.appendChild(tdNote);
+            var tdDel = document.createElement('td');
+            var delBtn = document.createElement('button');
+            delBtn.textContent = '削除';
+            delBtn.className = 'id-name-del-btn';
+            delBtn.addEventListener('click', function() {
+                statusCodePatterns.splice(idx, 1);
+                saveStatusCodes();
+                renderStatusCodes();
+            });
+            tdDel.appendChild(delBtn);
+            tr.appendChild(tdDel);
+            return tr;
+        }
+
+        function addStatusCodeRow() {
+            statusCodePatterns.push({ conditions: {}, code: 0, note: '' });
+            saveStatusCodes();
+            renderStatusCodes();
+        }
+
+        // --- 状態変化グラフ ---
+        var _graphEntries = [];
+        var _graphIsObjDet = false;
+
+        var GRAPH_COLOR_MAP = { red: '#f44336', yellow: '#FFD600', green: '#4CAF50', blue: '#2196F3' };
+        var GRAPH_COLOR_LABEL = { red: '赤', yellow: '黄', green: '緑', blue: '青' };
+
+        function graphParseDate(str) {
+            if (!str) return null;
+            var d = new Date(str.replace(' ', 'T'));
+            return isNaN(d.getTime()) ? null : d.getTime();
+        }
+
+        function graphPadZ(n) { return n < 10 ? '0' + n : String(n); }
+
+        function graphCalcTickInterval(range, maxTicks) {
+            if (maxTicks <= 0) maxTicks = 4;
+            var steps = [500, 1000, 2000, 5000, 10000, 15000, 30000, 60000, 120000,
+                         300000, 600000, 900000, 1800000, 3600000, 7200000, 21600000];
+            for (var i = 0; i < steps.length; i++) {
+                if (range / steps[i] <= maxTicks) return steps[i];
+            }
+            return steps[steps.length - 1];
+        }
+
+        function renderChangeLogGraph(entries, isObjectDetection) {
+            _graphEntries = entries;
+            _graphIsObjDet = isObjectDetection;
+
+            var section = document.getElementById('change_log_graph_section');
+            var canvas = document.getElementById('change_log_graph');
+            if (!section || !canvas) return;
+
+            if (isObjectDetection || !entries || entries.length === 0) {
+                section.style.display = 'none';
+                return;
+            }
+            var drawn = _drawSignalTimelineOnCanvas(canvas, entries, idNames);
+            section.style.display = drawn ? '' : 'none';
+        }
+
+        function _drawSignalTimelineOnCanvas(canvas, entries, idNamesMap) {
+            var ctx = canvas.getContext('2d');
+            var keys = {};
+            var allTimes = [];
+
+            entries.forEach(function(entry) {
+                if (entry.id === undefined || entry.id === null) return;
+                var k = String(entry.id) + '___' + (entry.color || '');
+                if (!keys[k]) keys[k] = { id: entry.id, color: entry.color || '', events: [] };
+                var t = graphParseDate(entry.datetime);
+                if (t !== null) {
+                    keys[k].events.push({ time: t, state: entry.new_state || 'off' });
+                    allTimes.push(t);
+                }
+            });
+
+            Object.keys(keys).forEach(function(k) {
+                keys[k].events.sort(function(a, b) { return a.time - b.time; });
+            });
+
+            var keyList = Object.keys(keys).sort(function(a, b) {
+                var da = keys[a], db = keys[b];
+                return da.id !== db.id ? da.id - db.id : da.color.localeCompare(db.color);
+            });
+
+            if (keyList.length === 0 || allTimes.length === 0) return false;
+
+            var minTime = Math.min.apply(null, allTimes);
+            var maxTime = Math.max.apply(null, allTimes);
+            if (minTime === maxTime) maxTime = minTime + 60000;
+            var pad = Math.max((maxTime - minTime) * 0.02, 3000);
+            minTime -= pad;
+            maxTime += pad;
+
+            var LABEL_W = 130;
+            var PAD_R = 12;
+            var ROW_H = 44;
+            var HEADER_H = 8;
+            var AXIS_H = 38;
+            var rowCount = keyList.length;
+            var totalH = HEADER_H + rowCount * ROW_H + AXIS_H;
+
+            var timeRange = maxTime - minTime;
+            var scrollContainer = canvas.parentElement;
+            var containerW = scrollContainer ? (scrollContainer.clientWidth || 600) : 600;
+            var chartW = Math.max(containerW - LABEL_W - PAD_R, 200);
+            canvas.width = LABEL_W + chartW + PAD_R;
+            canvas.height = totalH;
+            canvas.style.height = totalH + 'px';
+            canvas.style.width = (LABEL_W + chartW + PAD_R) + 'px';
+
+            var msPerPx = timeRange / chartW;
+            function toX(t) { return LABEL_W + (t - minTime) / msPerPx; }
+
+            ctx.fillStyle = '#1a1a1a';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            var tickInterval = graphCalcTickInterval(timeRange, Math.floor(chartW / 55));
+            var firstTick = Math.ceil(minTime / tickInterval) * tickInterval;
+            var prevDateStr = '';
+
+            for (var ti = firstTick; ti <= maxTime; ti += tickInterval) {
+                var gx = toX(ti);
+                ctx.strokeStyle = '#2a2a2a';
+                ctx.lineWidth = 1;
+                ctx.setLineDash([]);
+                ctx.beginPath();
+                ctx.moveTo(gx, HEADER_H);
+                ctx.lineTo(gx, HEADER_H + rowCount * ROW_H);
+                ctx.stroke();
+
+                var td = new Date(ti);
+                var timeStr = graphPadZ(td.getHours()) + ':' + graphPadZ(td.getMinutes()) + ':' + graphPadZ(td.getSeconds());
+                var dateStr = (td.getMonth() + 1) + '/' + graphPadZ(td.getDate());
+
+                ctx.fillStyle = '#777';
+                ctx.font = '10px monospace';
+                ctx.textAlign = 'center';
+                ctx.fillText(timeStr, gx, HEADER_H + rowCount * ROW_H + 16);
+
+                if (dateStr !== prevDateStr) {
+                    ctx.fillStyle = '#555';
+                    ctx.font = '10px monospace';
+                    ctx.fillText(dateStr, gx, HEADER_H + rowCount * ROW_H + 30);
+                    prevDateStr = dateStr;
+                }
+            }
+
+            keyList.forEach(function(key, rowIdx) {
+                var item = keys[key];
+                var y = HEADER_H + rowIdx * ROW_H;
+                var baseColor = GRAPH_COLOR_MAP[item.color] || '#888';
+
+                ctx.fillStyle = rowIdx % 2 === 0 ? '#212121' : '#1e1e1e';
+                ctx.fillRect(LABEL_W, y, chartW, ROW_H);
+                ctx.fillStyle = '#1a1a1a';
+                ctx.fillRect(0, y, LABEL_W, ROW_H);
+
+                ctx.fillStyle = baseColor;
+                ctx.beginPath();
+                ctx.arc(12, y + ROW_H / 2, 7, 0, Math.PI * 2);
+                ctx.fill();
+
+                var name = nameLabel(idNamesMap[String(item.id)]);
+                var line1 = name && name !== '' ? 'ID' + item.id + ' ' + name : 'ID ' + item.id;
+                var line2 = GRAPH_COLOR_LABEL[item.color] || item.color;
+
+                ctx.fillStyle = '#ccc';
+                ctx.font = '11px monospace';
+                ctx.textAlign = 'left';
+                ctx.fillText(line1, 26, y + ROW_H / 2 - 5);
+                ctx.fillStyle = baseColor;
+                ctx.font = '10px monospace';
+                ctx.fillText(line2, 26, y + ROW_H / 2 + 9);
+
+                var events = item.events;
+                var curState = 'off';
+                var segStart = minTime;
+
+                function drawSeg(start, end, state) {
+                    if (end <= start) return;
+                    var x1 = toX(start), x2 = toX(end), w = x2 - x1;
+                    if (w < 0.5) return;
+                    if (!state || state === 'off') {
+                        ctx.fillStyle = '#333';
+                        ctx.fillRect(x1, y + ROW_H * 0.45, w, ROW_H * 0.1);
+                    } else if (state === 'blink') {
+                        ctx.fillStyle = baseColor + 'aa';
+                        var by = y + ROW_H * 0.2, bh = ROW_H * 0.6;
+                        ctx.fillRect(x1, by, w, bh);
+                        ctx.save();
+                        ctx.beginPath();
+                        ctx.rect(x1, by, w, bh);
+                        ctx.clip();
+                        ctx.strokeStyle = 'rgba(0,0,0,0.35)';
+                        ctx.lineWidth = 4;
+                        for (var sx = x1 - bh; sx < x2 + bh; sx += 9) {
+                            ctx.beginPath();
+                            ctx.moveTo(sx, by);
+                            ctx.lineTo(sx + bh, by + bh);
+                            ctx.stroke();
+                        }
+                        ctx.restore();
+                    } else {
+                        ctx.fillStyle = baseColor;
+                        ctx.fillRect(x1, y + 5, w, ROW_H - 10);
+                    }
+                }
+
+                events.forEach(function(ev) {
+                    drawSeg(segStart, ev.time, curState);
+                    segStart = ev.time;
+                    curState = ev.state;
+                });
+                drawSeg(segStart, maxTime, curState);
+
+                events.forEach(function(ev) {
+                    var ex = toX(ev.time);
+                    ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+                    ctx.lineWidth = 1;
+                    ctx.setLineDash([3, 3]);
+                    ctx.beginPath();
+                    ctx.moveTo(ex, y + 2);
+                    ctx.lineTo(ex, y + ROW_H - 2);
+                    ctx.stroke();
+                    ctx.setLineDash([]);
+                });
+
+                ctx.strokeStyle = '#2a2a2a';
+                ctx.lineWidth = 0.5;
+                ctx.setLineDash([]);
+                ctx.beginPath();
+                ctx.moveTo(0, y + ROW_H);
+                ctx.lineTo(canvas.width, y + ROW_H);
+                ctx.stroke();
+            });
+
+            ctx.strokeStyle = '#3a3a3a';
+            ctx.lineWidth = 1;
+            ctx.setLineDash([]);
+            ctx.beginPath();
+            ctx.moveTo(LABEL_W, HEADER_H);
+            ctx.lineTo(LABEL_W, HEADER_H + rowCount * ROW_H);
+            ctx.stroke();
+            return true;
+        }
+
+        // 送信用ログの状態コード時系列。名前ごとに1レーンを割り当て、状態コードが
+        // 変化したタイミングでステップ状の帯を描く。帯の色は状態コードごとに割り当て、
+        // 各区間にコード値を表示する。色の対応は凡例（説明欄）に表示する。
+        var SEND_LOG_CODE_COLORS = ['#4FC3F7', '#FFB74D', '#81C784', '#BA68C8', '#F06292', '#FFD54F', '#4DB6AC', '#A1887F', '#7986CB', '#E57373', '#9CCC65', '#FF8A65'];
+
+        // entriesに現れる状態コードを昇順に並べ、コード→色の対応(オブジェクト)を作る
+        function _buildSendLogCodeColorMap(entries) {
+            var codes = [];
+            var seen = {};
+            entries.forEach(function(e) {
+                if (e.code !== undefined && e.code !== null && !seen[e.code]) {
+                    seen[e.code] = true;
+                    codes.push(e.code);
+                }
+            });
+            codes.sort(function(a, b) { return a - b; });
+            var map = {};
+            codes.forEach(function(c, i) { map[c] = SEND_LOG_CODE_COLORS[i % SEND_LOG_CODE_COLORS.length]; });
+            return { codes: codes, color: map };
+        }
+
+        function _drawSendLogTimelineOnCanvas(canvas, entries, codeColor) {
+            var ctx = canvas.getContext('2d');
+            var keys = {};
+            var allTimes = [];
+
+            entries.forEach(function(entry) {
+                var name = (entry.name === undefined || entry.name === null || entry.name === '') ? '(名前なし)' : entry.name;
+                if (!keys[name]) keys[name] = { name: name, events: [] };
+                var t = graphParseDate(entry.datetime);
+                if (t !== null) {
+                    keys[name].events.push({ time: t, code: entry.code });
+                    allTimes.push(t);
+                }
+            });
+
+            Object.keys(keys).forEach(function(k) {
+                keys[k].events.sort(function(a, b) { return a.time - b.time; });
+            });
+
+            var keyList = Object.keys(keys).sort(function(a, b) { return a.localeCompare(b); });
+            if (keyList.length === 0 || allTimes.length === 0) return false;
+
+            var minTime = Math.min.apply(null, allTimes);
+            var maxTime = Math.max.apply(null, allTimes);
+            if (minTime === maxTime) maxTime = minTime + 60000;
+            var pad = Math.max((maxTime - minTime) * 0.02, 3000);
+            minTime -= pad;
+            maxTime += pad;
+
+            var LABEL_W = 150;
+            var PAD_R = 12;
+            var ROW_H = 40;
+            var HEADER_H = 8;
+            var AXIS_H = 38;
+            var rowCount = keyList.length;
+            var totalH = HEADER_H + rowCount * ROW_H + AXIS_H;
+
+            var timeRange = maxTime - minTime;
+            var scrollContainer = canvas.parentElement;
+            var containerW = scrollContainer ? (scrollContainer.clientWidth || 600) : 600;
+            var chartW = Math.max(containerW - LABEL_W - PAD_R, 200);
+            canvas.width = LABEL_W + chartW + PAD_R;
+            canvas.height = totalH;
+            canvas.style.height = totalH + 'px';
+            canvas.style.width = (LABEL_W + chartW + PAD_R) + 'px';
+
+            var msPerPx = timeRange / chartW;
+            function toX(t) { return LABEL_W + (t - minTime) / msPerPx; }
+
+            ctx.fillStyle = '#1a1a1a';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            var tickInterval = graphCalcTickInterval(timeRange, Math.floor(chartW / 55));
+            var firstTick = Math.ceil(minTime / tickInterval) * tickInterval;
+            var prevDateStr = '';
+            for (var ti = firstTick; ti <= maxTime; ti += tickInterval) {
+                var gx = toX(ti);
+                ctx.strokeStyle = '#2a2a2a';
+                ctx.lineWidth = 1;
+                ctx.setLineDash([]);
+                ctx.beginPath();
+                ctx.moveTo(gx, HEADER_H);
+                ctx.lineTo(gx, HEADER_H + rowCount * ROW_H);
+                ctx.stroke();
+
+                var td = new Date(ti);
+                var timeStr = graphPadZ(td.getHours()) + ':' + graphPadZ(td.getMinutes()) + ':' + graphPadZ(td.getSeconds());
+                var dateStr = (td.getMonth() + 1) + '/' + graphPadZ(td.getDate());
+                ctx.fillStyle = '#777';
+                ctx.font = '10px monospace';
+                ctx.textAlign = 'center';
+                ctx.fillText(timeStr, gx, HEADER_H + rowCount * ROW_H + 16);
+                if (dateStr !== prevDateStr) {
+                    ctx.fillStyle = '#555';
+                    ctx.fillText(dateStr, gx, HEADER_H + rowCount * ROW_H + 30);
+                    prevDateStr = dateStr;
+                }
+            }
+
+            keyList.forEach(function(name, rowIdx) {
+                var item = keys[name];
+                var y = HEADER_H + rowIdx * ROW_H;
+
+                ctx.fillStyle = rowIdx % 2 === 0 ? '#212121' : '#1e1e1e';
+                ctx.fillRect(LABEL_W, y, chartW, ROW_H);
+                ctx.fillStyle = '#1a1a1a';
+                ctx.fillRect(0, y, LABEL_W, ROW_H);
+
+                ctx.fillStyle = '#666';
+                ctx.fillRect(4, y + 6, 4, ROW_H - 12);
+                ctx.fillStyle = '#ccc';
+                ctx.font = '11px monospace';
+                ctx.textAlign = 'left';
+                ctx.fillText(_truncText(ctx, item.name, LABEL_W - 18), 14, y + ROW_H / 2 + 4);
+
+                var events = item.events;
+                function drawSeg(start, end, code) {
+                    if (end <= start || code === undefined || code === null) return;
+                    var x1 = toX(start), x2 = toX(end), w = x2 - x1;
+                    if (w < 0.5) return;
+                    var col = (codeColor && codeColor.color[code]) || '#888';
+                    ctx.fillStyle = col;
+                    ctx.fillRect(x1, y + ROW_H * 0.22, w, ROW_H * 0.56);
+                    ctx.strokeStyle = 'rgba(0,0,0,0.4)';
+                    ctx.lineWidth = 1;
+                    ctx.strokeRect(x1 + 0.5, y + ROW_H * 0.22 + 0.5, w - 1, ROW_H * 0.56 - 1);
+                    if (w > 16) {
+                        ctx.fillStyle = '#000';
+                        ctx.font = 'bold 11px monospace';
+                        ctx.textAlign = 'center';
+                        ctx.fillText(String(code), (x1 + x2) / 2, y + ROW_H / 2 + 4);
+                    }
+                }
+
+                for (var i = 0; i < events.length; i++) {
+                    var endT = (i + 1 < events.length) ? events[i + 1].time : maxTime;
+                    drawSeg(events[i].time, endT, events[i].code);
+                }
+
+                events.forEach(function(ev) {
+                    var ex = toX(ev.time);
+                    ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+                    ctx.lineWidth = 1;
+                    ctx.setLineDash([3, 3]);
+                    ctx.beginPath();
+                    ctx.moveTo(ex, y + 2);
+                    ctx.lineTo(ex, y + ROW_H - 2);
+                    ctx.stroke();
+                    ctx.setLineDash([]);
+                });
+
+                ctx.strokeStyle = '#2a2a2a';
+                ctx.lineWidth = 0.5;
+                ctx.beginPath();
+                ctx.moveTo(0, y + ROW_H);
+                ctx.lineTo(canvas.width, y + ROW_H);
+                ctx.stroke();
+            });
+
+            ctx.strokeStyle = '#3a3a3a';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(LABEL_W, HEADER_H);
+            ctx.lineTo(LABEL_W, HEADER_H + rowCount * ROW_H);
+            ctx.stroke();
+            return true;
+        }
+
+        // 指定幅に収まるよう末尾を省略（…）してテキストを返す
+        function _truncText(ctx, text, maxW) {
+            if (ctx.measureText(text).width <= maxW) return text;
+            var t = text;
+            while (t.length > 1 && ctx.measureText(t + '…').width > maxW) {
+                t = t.slice(0, -1);
+            }
+            return t + '…';
+        }
+
+        function _drawObjectTimelineOnCanvas(canvas, entries) {
+            var ctx = canvas.getContext('2d');
+            var keys = {};
+            var allTimes = [];
+            var LABEL_COLORS = ['#66BB6A', '#42A5F5', '#FFA726', '#AB47BC', '#26C6DA', '#EC407A', '#8D6E63', '#78909C'];
+
+            entries.forEach(function(entry) {
+                var label = entry.label || '';
+                if (!keys[label]) keys[label] = { label: label, events: [] };
+                var t = graphParseDate(entry.datetime);
+                if (t !== null) {
+                    keys[label].events.push({ time: t, state: entry.event === 'detected' ? 'on' : 'off' });
+                    allTimes.push(t);
+                }
+            });
+
+            Object.keys(keys).forEach(function(k) {
+                keys[k].events.sort(function(a, b) { return a.time - b.time; });
+            });
+
+            var keyList = Object.keys(keys).sort();
+            if (keyList.length === 0 || allTimes.length === 0) return false;
+
+            var minTime = Math.min.apply(null, allTimes);
+            var maxTime = Math.max.apply(null, allTimes);
+            if (minTime === maxTime) maxTime = minTime + 60000;
+            var pad = Math.max((maxTime - minTime) * 0.02, 3000);
+            minTime -= pad; maxTime += pad;
+
+            var LABEL_W = 150, PAD_R = 12, ROW_H = 36, HEADER_H = 8, AXIS_H = 38;
+            var rowCount = keyList.length;
+            var timeRange = maxTime - minTime;
+            var scrollContainer = canvas.parentElement;
+            var containerW = scrollContainer ? (scrollContainer.clientWidth || 600) : 600;
+            var chartW = Math.max(containerW - LABEL_W - PAD_R, 200);
+            canvas.width = LABEL_W + chartW + PAD_R;
+            canvas.height = HEADER_H + rowCount * ROW_H + AXIS_H;
+            canvas.style.width = canvas.width + 'px';
+            canvas.style.height = canvas.height + 'px';
+
+            var msPerPx = timeRange / chartW;
+            function toX(t) { return LABEL_W + (t - minTime) / msPerPx; }
+
+            ctx.fillStyle = '#1a1a1a';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            var tickInterval = graphCalcTickInterval(timeRange, Math.floor(chartW / 55));
+            var firstTick = Math.ceil(minTime / tickInterval) * tickInterval;
+            var prevDateStr = '';
+            for (var ti = firstTick; ti <= maxTime; ti += tickInterval) {
+                var gx = toX(ti);
+                ctx.strokeStyle = '#2a2a2a'; ctx.lineWidth = 1; ctx.setLineDash([]);
+                ctx.beginPath(); ctx.moveTo(gx, HEADER_H); ctx.lineTo(gx, HEADER_H + rowCount * ROW_H); ctx.stroke();
+                var tdv = new Date(ti);
+                var timeStr = graphPadZ(tdv.getHours()) + ':' + graphPadZ(tdv.getMinutes()) + ':' + graphPadZ(tdv.getSeconds());
+                var dateStr = (tdv.getMonth() + 1) + '/' + graphPadZ(tdv.getDate());
+                ctx.fillStyle = '#777'; ctx.font = '10px monospace'; ctx.textAlign = 'center';
+                ctx.fillText(timeStr, gx, HEADER_H + rowCount * ROW_H + 16);
+                if (dateStr !== prevDateStr) {
+                    ctx.fillStyle = '#555'; ctx.fillText(dateStr, gx, HEADER_H + rowCount * ROW_H + 30);
+                    prevDateStr = dateStr;
+                }
+            }
+
+            keyList.forEach(function(label, rowIdx) {
+                var item = keys[label];
+                var y = HEADER_H + rowIdx * ROW_H;
+                var baseColor = LABEL_COLORS[rowIdx % LABEL_COLORS.length];
+
+                ctx.fillStyle = rowIdx % 2 === 0 ? '#212121' : '#1e1e1e';
+                ctx.fillRect(LABEL_W, y, chartW, ROW_H);
+                ctx.fillStyle = '#1a1a1a';
+                ctx.fillRect(0, y, LABEL_W, ROW_H);
+
+                ctx.fillStyle = baseColor;
+                ctx.beginPath(); ctx.arc(10, y + ROW_H / 2, 6, 0, Math.PI * 2); ctx.fill();
+
+                ctx.fillStyle = '#ccc'; ctx.font = '11px monospace'; ctx.textAlign = 'left';
+                ctx.fillText(label, 22, y + ROW_H / 2 + 4);
+
+                var events = item.events, curState = 'off', segStart = minTime;
+                function drawSeg2(start, end, state) {
+                    if (end <= start) return;
+                    var x1 = toX(start), x2 = toX(end), w = x2 - x1;
+                    if (w < 0.5) return;
+                    if (!state || state === 'off') {
+                        ctx.fillStyle = '#333';
+                        ctx.fillRect(x1, y + ROW_H * 0.45, w, ROW_H * 0.1);
+                    } else {
+                        ctx.fillStyle = baseColor;
+                        ctx.fillRect(x1, y + 5, w, ROW_H - 10);
+                    }
+                }
+                events.forEach(function(ev) { drawSeg2(segStart, ev.time, curState); segStart = ev.time; curState = ev.state; });
+                drawSeg2(segStart, maxTime, curState);
+
+                events.forEach(function(ev) {
+                    var ex = toX(ev.time);
+                    ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = 1; ctx.setLineDash([3, 3]);
+                    ctx.beginPath(); ctx.moveTo(ex, y + 2); ctx.lineTo(ex, y + ROW_H - 2); ctx.stroke();
+                    ctx.setLineDash([]);
+                });
+
+                ctx.strokeStyle = '#2a2a2a'; ctx.lineWidth = 0.5; ctx.setLineDash([]);
+                ctx.beginPath(); ctx.moveTo(0, y + ROW_H); ctx.lineTo(canvas.width, y + ROW_H); ctx.stroke();
+            });
+
+            ctx.strokeStyle = '#3a3a3a'; ctx.lineWidth = 1; ctx.setLineDash([]);
+            ctx.beginPath(); ctx.moveTo(LABEL_W, HEADER_H); ctx.lineTo(LABEL_W, HEADER_H + rowCount * ROW_H); ctx.stroke();
+            return true;
+        }
+
+        function _drawCountChartOnCanvas(canvas, entries) {
+            var ctx = canvas.getContext('2d');
+            if (!entries || entries.length === 0) {
+                canvas.width = 400; canvas.height = 100;
+                ctx.fillStyle = '#1a1a1a'; ctx.fillRect(0, 0, 400, 100);
+                ctx.fillStyle = '#666'; ctx.font = '14px sans-serif'; ctx.textAlign = 'center';
+                ctx.fillText('データなし', 200, 55);
+                return false;
+            }
+
+            var points = [];
+            entries.forEach(function(entry) {
+                var t = graphParseDate(entry.datetime);
+                if (t === null) return;
+                var count = Array.isArray(entry.data) ? entry.data.filter(function(d) { return d && d.trim() !== ''; }).length : 0;
+                points.push({ time: t, count: count });
+            });
+            points.sort(function(a, b) { return a.time - b.time; });
+            if (points.length === 0) return false;
+
+            var minTime = points[0].time, maxTime = points[points.length - 1].time;
+            var range = maxTime - minTime;
+            var bucketMs = range <= 7200000 ? 60000 : range <= 86400000 ? 600000 : 3600000;
+            if (range === 0) bucketMs = 60000;
+
+            var buckets = {}, maxVal = 0;
+            points.forEach(function(p) {
+                var key = Math.floor(p.time / bucketMs) * bucketMs;
+                if (!buckets[key]) buckets[key] = 0;
+                buckets[key] += p.count;
+                if (buckets[key] > maxVal) maxVal = buckets[key];
+            });
+            if (maxVal === 0) {
+                // count entries per bucket even if data is empty
+                points.forEach(function(p) {
+                    var key = Math.floor(p.time / bucketMs) * bucketMs;
+                    buckets[key] = (buckets[key] || 0) + 1;
+                    if (buckets[key] > maxVal) maxVal = buckets[key];
+                });
+            }
+
+            var bucketKeys = Object.keys(buckets).map(Number).sort(function(a, b) { return a - b; });
+            var n = bucketKeys.length;
+            var LABEL_W = 36, PAD_R = 12, PAD_T = 20, PAD_B = 44, chartH = 140;
+            var BAR_SLOT = Math.max(Math.min(Math.floor(560 / n), 40), 4);
+            var chartW = Math.max(n * BAR_SLOT, 200);
+            canvas.width = LABEL_W + chartW + PAD_R;
+            canvas.height = PAD_T + chartH + PAD_B;
+            canvas.style.width = canvas.width + 'px';
+            canvas.style.height = canvas.height + 'px';
+
+            ctx.fillStyle = '#1a1a1a'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            [0, 0.25, 0.5, 0.75, 1.0].forEach(function(frac) {
+                var y = PAD_T + chartH - frac * chartH;
+                ctx.strokeStyle = '#2a2a2a'; ctx.lineWidth = 1;
+                ctx.setLineDash(frac === 0 ? [] : [2, 3]);
+                ctx.beginPath(); ctx.moveTo(LABEL_W, y); ctx.lineTo(LABEL_W + chartW, y); ctx.stroke();
+                if (frac > 0) {
+                    ctx.fillStyle = '#666'; ctx.font = '9px monospace'; ctx.textAlign = 'right';
+                    ctx.fillText(Math.round(frac * maxVal), LABEL_W - 3, y + 3);
+                }
+            });
+            ctx.setLineDash([]);
+
+            var barW = Math.max(BAR_SLOT - 2, 2);
+            bucketKeys.forEach(function(key, i) {
+                var h = (buckets[key] / maxVal) * chartH;
+                ctx.fillStyle = '#4CAF50';
+                ctx.fillRect(LABEL_W + i * BAR_SLOT, PAD_T + chartH - h, barW, h);
+            });
+
+            var timeRange = (bucketKeys[n - 1] - bucketKeys[0]) + bucketMs;
+            var labelInterval = graphCalcTickInterval(timeRange, Math.floor(chartW / 60));
+            var firstLabel = Math.ceil(bucketKeys[0] / labelInterval) * labelInterval;
+            var prevDateStr2 = '';
+            for (var tl = firstLabel; tl <= bucketKeys[n - 1] + bucketMs; tl += labelInterval) {
+                var xL = LABEL_W + ((tl - bucketKeys[0]) / bucketMs) * BAR_SLOT;
+                if (xL < LABEL_W || xL > LABEL_W + chartW) continue;
+                var tdL = new Date(tl);
+                var timeStr2 = graphPadZ(tdL.getHours()) + ':' + graphPadZ(tdL.getMinutes());
+                var dateStr2 = (tdL.getMonth() + 1) + '/' + graphPadZ(tdL.getDate());
+                ctx.fillStyle = '#777'; ctx.font = '10px monospace'; ctx.textAlign = 'center';
+                ctx.fillText(timeStr2, xL, PAD_T + chartH + 14);
+                if (dateStr2 !== prevDateStr2) {
+                    ctx.fillStyle = '#555'; ctx.fillText(dateStr2, xL, PAD_T + chartH + 28);
+                    prevDateStr2 = dateStr2;
+                }
+                ctx.strokeStyle = '#2a2a2a'; ctx.lineWidth = 1; ctx.setLineDash([2, 3]);
+                ctx.beginPath(); ctx.moveTo(xL, PAD_T); ctx.lineTo(xL, PAD_T + chartH); ctx.stroke();
+                ctx.setLineDash([]);
+            }
+
+            ctx.strokeStyle = '#3a3a3a'; ctx.lineWidth = 1;
+            ctx.beginPath(); ctx.moveTo(LABEL_W, PAD_T); ctx.lineTo(LABEL_W, PAD_T + chartH); ctx.stroke();
+            return true;
+        }
+
+        function openLogFileGraph(filename) {
+            _openGraphModalWith(filename, '/log_file_data?file=' + encodeURIComponent(filename));
+        }
+
+        // 送信用ログファイルの状態コード時系列グラフをモーダル表示する
+        function openSendLogGraph(filename) {
+            _openGraphModalWith(filename, '/send_log_data?file=' + encodeURIComponent(filename));
+        }
+
+        function _openGraphModalWith(filename, url) {
+            document.getElementById('log_graph_modal').classList.add('show');
+            document.getElementById('log_graph_modal_title').textContent = filename;
+            var content = document.getElementById('log_graph_modal_content');
+            content.innerHTML = '<div style="color:#888;text-align:center;padding:40px;font-family:monospace">読み込み中...</div>';
+            fetch(url)
+                .then(function(r) { return r.json(); })
+                .then(function(data) { renderLogFileGraph(data); })
+                .catch(function() {
+                    document.getElementById('log_graph_modal_content').innerHTML =
+                        '<div style="color:#f44336;text-align:center;padding:40px;font-family:monospace">読み込みエラー</div>';
+                });
+        }
+
+        function closeLogGraphModal() {
+            document.getElementById('log_graph_modal').classList.remove('show');
+        }
+
+        function renderLogFileGraph(data) {
+            var content = document.getElementById('log_graph_modal_content');
+            content.innerHTML = '';
+            var entries = data.entries || [];
+            if (entries.length === 0) {
+                content.innerHTML = '<p style="color:#666;text-align:center;padding:30px;font-family:monospace">データなし</p>';
+                return;
+            }
+            var scroll = document.createElement('div');
+            scroll.style.overflowX = 'auto';
+            var canvas = document.createElement('canvas');
+            scroll.appendChild(canvas);
+            content.appendChild(scroll);
+            if (data.type === 'signal_changes') {
+                _drawSignalTimelineOnCanvas(canvas, entries, idNames);
+            } else if (data.type === 'object_changes') {
+                _drawObjectTimelineOnCanvas(canvas, entries);
+            } else if (data.type === 'send_log') {
+                var codeColor = _buildSendLogCodeColorMap(entries);
+                _drawSendLogTimelineOnCanvas(canvas, entries, codeColor);
+                _renderSendLogLegend(content, codeColor);
+            } else {
+                _drawCountChartOnCanvas(canvas, entries);
+            }
+        }
+
+        // 状態コードの色・コード値・備考を一覧表示する説明欄（凡例）を描画する。
+        // 備考は状態コード設定（statusCodePatterns）の note を使う。
+        function _renderSendLogLegend(content, codeColor) {
+            var noteByCode = {};
+            (statusCodePatterns || []).forEach(function(p) {
+                if (p.code !== undefined && p.code !== null && noteByCode[p.code] === undefined) {
+                    noteByCode[p.code] = (p.note || '');
+                }
+            });
+            var legend = document.createElement('div');
+            legend.className = 'send-log-legend';
+            var title = document.createElement('div');
+            title.className = 'send-log-legend-title';
+            title.textContent = '状態コードの説明';
+            legend.appendChild(title);
+            codeColor.codes.forEach(function(code) {
+                var row = document.createElement('div');
+                row.className = 'send-log-legend-item';
+                var sw = document.createElement('span');
+                sw.className = 'send-log-legend-swatch';
+                sw.style.background = codeColor.color[code];
+                var codeLabel = document.createElement('span');
+                codeLabel.className = 'send-log-legend-code';
+                codeLabel.textContent = 'コード ' + code;
+                var note = document.createElement('span');
+                note.className = 'send-log-legend-note';
+                note.textContent = noteByCode[code] ? noteByCode[code] : '（備考なし）';
+                row.appendChild(sw);
+                row.appendChild(codeLabel);
+                row.appendChild(note);
+                legend.appendChild(row);
+            });
+            content.appendChild(legend);
+        }
+
+        var currentImageTab = 'result';
+
+        function switchImageTab(type) {
+            currentImageTab = type;
+            document.getElementById('img_tab_result').classList.toggle('active', type === 'result');
+            document.getElementById('img_tab_raw').classList.toggle('active', type === 'raw');
+            loadImageFiles();
+        }
+
+        function loadImageFiles() {
+            fetch('/image_files?type=' + currentImageTab)
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    var tbody = document.getElementById('image_files_tbody');
+                    tbody.innerHTML = '';
+                    var files = data.files || [];
+                    document.getElementById('image_files_count').textContent = files.length + '件';
+                    if (files.length === 0) {
+                        var tr = document.createElement('tr');
+                        var td = document.createElement('td');
+                        td.colSpan = 5;
+                        td.textContent = '画像なし';
+                        td.style.color = '#666';
+                        td.style.textAlign = 'center';
+                        tr.appendChild(td);
+                        tbody.appendChild(tr);
+                        return;
+                    }
+                    files.forEach(function(file, idx) {
+                        var tr = document.createElement('tr');
+
+                        var td0 = document.createElement('td');
+                        td0.textContent = idx + 1;
+
+                        var tdThumb = document.createElement('td');
+                        var img = document.createElement('img');
+                        img.className = 'image-file-thumb';
+                        img.src = '/image_file?type=' + currentImageTab + '&file=' + encodeURIComponent(file.name);
+                        img.loading = 'lazy';
+                        img.addEventListener('click', (function(name, type) {
+                            return function() { openImageLightbox(name, type); };
+                        })(file.name, currentImageTab));
+                        tdThumb.appendChild(img);
+
+                        var td1 = document.createElement('td');
+                        var a = document.createElement('a');
+                        a.className = 'image-file-link';
+                        a.textContent = file.name;
+                        a.href = '/image_file?type=' + currentImageTab + '&file=' + encodeURIComponent(file.name) + '&dl=1';
+                        a.download = file.name;
+                        td1.appendChild(a);
+
+                        var td2 = document.createElement('td');
+                        td2.textContent = file.size;
+                        td2.style.color = '#888';
+
+                        var td3 = document.createElement('td');
+                        td3.textContent = file.modified;
+                        td3.style.color = '#888';
+
+                        tr.appendChild(td0); tr.appendChild(tdThumb); tr.appendChild(td1);
+                        tr.appendChild(td2); tr.appendChild(td3);
+                        tbody.appendChild(tr);
+                    });
+                })
+                .catch(function(err) { console.error('Image files load error:', err); });
+        }
+
+        function openImageLightbox(name, type) {
+            var lb = document.getElementById('image_lightbox');
+            var lbImg = document.getElementById('image_lightbox_img');
+            var lbName = document.getElementById('image_lightbox_name');
+            lbImg.src = '/image_file?type=' + type + '&file=' + encodeURIComponent(name);
+            lbName.textContent = name;
+            lb.classList.add('show');
+        }
+
+        function closeImageLightbox() {
+            var lb = document.getElementById('image_lightbox');
+            lb.classList.remove('show');
+            document.getElementById('image_lightbox_img').src = '';
+        }
+
+        function loadWifiStatus() {
+            fetch('/wifi_status')
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    document.getElementById('wifi_current_ssid').textContent = data.ssid || '未接続';
+                    document.getElementById('wifi_current_ip').textContent = data.ip ? '(' + data.ip + ')' : '';
+                })
+                .catch(function() {});
+        }
+
+        function scanWifi() {
+            var btn = document.getElementById('wifi_scan_btn');
+            btn.disabled = true;
+            btn.textContent = 'スキャン中...';
+            document.getElementById('wifi_scan_results').style.display = 'none';
+            scanWifiAttempt(0, false);
+        }
+
+        // attempt: リトライ回数, isAuto: 背景再スキャン結果を拾う自動再取得か
+        function scanWifiAttempt(attempt, isAuto) {
+            var btn = document.getElementById('wifi_scan_btn');
+            var MAX_RETRY = 2;
+            var ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+            var timer = setTimeout(function() { if (ctrl) ctrl.abort(); }, 15000);
+            fetch('/wifi_scan', ctrl ? { signal: ctrl.signal } : undefined)
+                .then(function(r) {
+                    if (!r.ok) throw new Error('HTTP ' + r.status);
+                    return r.json();
+                })
+                .then(function(data) {
+                    clearTimeout(timer);
+                    btn.disabled = false;
+                    btn.textContent = 'スキャン';
+                    renderWifiScanResults(data.networks || []);
+                    // サーバーは再スキャンを背景実行するため、初回取得後に一度だけ
+                    // 自動で取り直して全APを反映する
+                    if (!isAuto) {
+                        setTimeout(function() { scanWifiAttempt(0, true); }, 4000);
+                    }
+                })
+                .catch(function(err) {
+                    clearTimeout(timer);
+                    if (attempt < MAX_RETRY) {
+                        setTimeout(function() { scanWifiAttempt(attempt + 1, isAuto); }, 1500);
+                        return;
+                    }
+                    btn.disabled = false;
+                    btn.textContent = 'スキャン';
+                    if (isAuto) return;  // 自動再取得の失敗は黙って無視（初回結果は表示済み）
+                    var container = document.getElementById('wifi_scan_results');
+                    container.innerHTML = '';
+                    var msg = document.createElement('div');
+                    msg.style.cssText = 'padding:8px 10px;color:#f44336;font-family:monospace;font-size:12px';
+                    msg.textContent = 'スキャン失敗: ' + (err && err.message ? err.message : err);
+                    container.appendChild(msg);
+                    container.style.display = 'block';
+                });
+        }
+
+        function renderWifiScanResults(networks) {
+            var container = document.getElementById('wifi_scan_results');
+            container.innerHTML = '';
+            if (networks.length === 0) {
+                var msg = document.createElement('div');
+                msg.style.cssText = 'padding:8px 10px;color:#666;font-family:monospace;font-size:12px';
+                msg.textContent = 'ネットワークが見つかりません';
+                container.appendChild(msg);
+                container.style.display = 'block';
+                return;
+            }
+            networks.forEach(function(net) {
+                var item = document.createElement('div');
+                item.className = 'wifi-network-item';
+                var ssidSpan = document.createElement('span');
+                ssidSpan.className = 'wifi-network-ssid';
+                ssidSpan.textContent = net.ssid;
+                var signalSpan = document.createElement('span');
+                signalSpan.className = 'wifi-network-signal';
+                signalSpan.textContent = net.signal ? net.signal + '%' : '';
+                var secSpan = document.createElement('span');
+                secSpan.className = 'wifi-network-security';
+                secSpan.textContent = net.security || '';
+                item.appendChild(ssidSpan);
+                item.appendChild(signalSpan);
+                item.appendChild(secSpan);
+                item.addEventListener('click', (function(ssid) {
+                    return function() {
+                        document.getElementById('wifi_ssid_input').value = ssid;
+                        container.style.display = 'none';
+                        document.getElementById('wifi_password_input').focus();
+                    };
+                })(net.ssid));
+                container.appendChild(item);
+            });
+            container.style.display = 'block';
+        }
+
+        function toggleWifiPassword() {
+            var input = document.getElementById('wifi_password_input');
+            var btn = document.getElementById('wifi_pw_toggle');
+            if (input.type === 'password') {
+                input.type = 'text';
+                btn.textContent = '隠す';
+            } else {
+                input.type = 'password';
+                btn.textContent = '表示';
+            }
+        }
+
+        function connectWifi() {
+            var ssid = document.getElementById('wifi_ssid_input').value.trim();
+            var password = document.getElementById('wifi_password_input').value;
+            var result = document.getElementById('wifi_result');
+
+            if (!ssid) {
+                result.className = 'wifi-result err';
+                result.textContent = 'SSIDを入力してください';
+                return;
+            }
+
+            var msg = 'ネットワーク「' + ssid + '」に接続しますか？\n接続後、ブラウザの表示が切れる場合があります。';
+            showSwitchConfirm(msg, function() {
+                var btn = document.getElementById('wifi_connect_btn');
+                btn.disabled = true;
+                result.className = 'wifi-result info';
+                result.textContent = '接続中... 接続先が変わった場合は新しいIPアドレスでアクセスしてください。';
+
+                fetch('/wifi_connect', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ssid: ssid, password: password })
+                })
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    btn.disabled = false;
+                    if (data.success) {
+                        result.className = 'wifi-result info';
+                        result.textContent = '接続を開始しました。数秒後に新しいIPアドレスでページを開き直してください。';
+                        setTimeout(loadWifiStatus, 5000);
+                    } else {
+                        result.className = 'wifi-result err';
+                        result.textContent = 'エラー: ' + (data.error || '接続に失敗しました');
+                    }
+                })
+                .catch(function() {
+                    btn.disabled = false;
+                    result.className = 'wifi-result info';
+                    result.textContent = '接続を開始しました。新しいIPアドレスでページを開き直してください。';
+                });
+            });
+        }
+
+        function updateIpFieldState() {
+            var isStatic = document.getElementById('ip_mode_select').value === 'static';
+            ['ip_addr_input', 'ip_prefix_input', 'ip_gateway_input', 'ip_dns_input'].forEach(function(id) {
+                document.getElementById(id).disabled = !isStatic;
+            });
+        }
+
+        function confirmIpConfig() {
+            // このページに到達できた＝新IPで接続できた合図。固定IPの自動DHCP復帰を取り消す。
+            fetch('/confirm_ip_config').catch(function() {});
+        }
+
+        function loadIpConfig() {
+            fetch('/ip_config')
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    document.getElementById('ip_current_method').textContent =
+                        (data.method === 'manual') ? '固定IP' : '自動 (DHCP)';
+                    document.getElementById('ip_current_addr').textContent =
+                        data.ip ? '(' + data.ip + '/' + data.prefix + ')' : '';
+                    document.getElementById('ip_mode_select').value =
+                        (data.method === 'manual') ? 'static' : 'dhcp';
+                    document.getElementById('ip_addr_input').value = data.ip || '';
+                    document.getElementById('ip_prefix_input').value = data.prefix || 24;
+                    document.getElementById('ip_gateway_input').value = data.gateway || '';
+                    document.getElementById('ip_dns_input').value = data.dns || '';
+                    updateIpFieldState();
+                })
+                .catch(function() {});
+        }
+
+        function applyIpConfig() {
+            var mode = document.getElementById('ip_mode_select').value;
+            var result = document.getElementById('ip_result');
+            var payload = { mode: mode };
+            var confirmMsg;
+            if (mode === 'static') {
+                var ip = document.getElementById('ip_addr_input').value.trim();
+                if (!ip) {
+                    result.className = 'wifi-result err';
+                    result.textContent = 'IPアドレスを入力してください';
+                    return;
+                }
+                payload.ip = ip;
+                payload.prefix = parseInt(document.getElementById('ip_prefix_input').value, 10) || 24;
+                payload.gateway = document.getElementById('ip_gateway_input').value.trim();
+                payload.dns = document.getElementById('ip_dns_input').value.trim();
+                confirmMsg = '固定IP「' + ip + '/' + payload.prefix + '」に変更しますか？\n変更後はブラウザの接続が切れ、新しいIPで開き直す必要があります。\n※新IPに60秒以内に接続できない場合、自動でDHCPに戻ります。';
+            } else {
+                confirmMsg = '自動 (DHCP) に変更しますか？\n変更後はブラウザの接続が切れる場合があります。';
+            }
+            showSwitchConfirm(confirmMsg, function() {
+                var btn = document.getElementById('ip_apply_btn');
+                btn.disabled = true;
+                result.className = 'wifi-result info';
+                result.textContent = '適用中... 変更後は新しいIPアドレスでページを開き直してください。';
+                fetch('/set_ip_config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                })
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    btn.disabled = false;
+                    if (data.success) {
+                        result.className = 'wifi-result info';
+                        result.textContent = (mode === 'static')
+                            ? '適用を開始しました。60秒以内に http://' + payload.ip + ':8080 を開いてください（開けない場合は自動でDHCPに戻ります）。'
+                            : '適用を開始しました。数秒後に新しいIPアドレスで開き直してください。';
+                    } else {
+                        result.className = 'wifi-result err';
+                        result.textContent = 'エラー: ' + (data.error || '適用に失敗しました');
+                    }
+                })
+                .catch(function() {
+                    btn.disabled = false;
+                    result.className = 'wifi-result info';
+                    result.textContent = '適用を開始しました。新しいIPアドレスでページを開き直してください。';
+                });
+            });
+        }
+
+        function loadLogFiles() {
+            fetch('/log_files')
+                .then(function(response) { return response.json(); })
+                .then(function(data) {
+                    var tbody = document.getElementById('log_files_tbody');
+                    tbody.innerHTML = '';
+                    var files = data.files || [];
+                    document.getElementById('log_files_count').textContent = files.length + '件';
+                    if (files.length === 0) {
+                        var tr = document.createElement('tr');
+                        var td = document.createElement('td');
+                        td.colSpan = 3;
+                        td.textContent = 'ファイルなし';
+                        td.style.color = '#666';
+                        td.style.textAlign = 'center';
+                        tr.appendChild(td);
+                        tbody.appendChild(tr);
+                        return;
+                    }
+                    files.forEach(function(file, idx) {
+                        var tr = document.createElement('tr');
+                        var td0 = document.createElement('td');
+                        var numBtn = document.createElement('button');
+                        numBtn.className = 'log-num-btn';
+                        numBtn.textContent = idx + 1;
+                        (function(name) {
+                            numBtn.addEventListener('click', function() { openLogFileGraph(name); });
+                        })(file.name);
+                        td0.appendChild(numBtn);
+                        var td1 = document.createElement('td');
+                        var a = document.createElement('a');
+                        a.className = 'log-file-link';
+                        a.textContent = file.name;
+                        a.href = '/download_log?file=' + encodeURIComponent(file.name);
+                        a.download = file.name;
+                        td1.appendChild(a);
+                        var td2 = document.createElement('td');
+                        td2.textContent = file.size || '';
+                        td2.style.color = '#888';
+                        var td3 = document.createElement('td');
+                        td3.textContent = file.modified || '';
+                        td3.style.color = '#888';
+                        tr.appendChild(td0); tr.appendChild(td1); tr.appendChild(td2); tr.appendChild(td3);
+                        tbody.appendChild(tr);
+                    });
+                })
+                .catch(function(err) { console.error('Log files load error:', err); });
+        }
+
+        function loadSendLogFiles() {
+            fetch('/send_log_files')
+                .then(function(response) { return response.json(); })
+                .then(function(data) {
+                    var tbody = document.getElementById('send_log_files_tbody');
+                    tbody.innerHTML = '';
+                    var files = data.files || [];
+                    document.getElementById('send_log_files_count').textContent = files.length + '件';
+                    if (files.length === 0) {
+                        var tr = document.createElement('tr');
+                        var td = document.createElement('td');
+                        td.colSpan = 4;
+                        td.textContent = 'ファイルなし';
+                        td.style.color = '#666';
+                        td.style.textAlign = 'center';
+                        tr.appendChild(td);
+                        tbody.appendChild(tr);
+                        return;
+                    }
+                    files.forEach(function(file, idx) {
+                        var tr = document.createElement('tr');
+                        var td0 = document.createElement('td');
+                        var numLink = document.createElement('a');
+                        numLink.textContent = idx + 1;
+                        numLink.className = 'send-log-graph-link';
+                        numLink.href = 'javascript:void(0)';
+                        numLink.title = 'クリックで状態コードのグラフを表示';
+                        numLink.addEventListener('click', function() { openSendLogGraph(file.name); });
+                        td0.appendChild(numLink);
+                        var td1 = document.createElement('td');
+                        var a = document.createElement('a');
+                        a.className = 'log-file-link';
+                        a.textContent = file.name;
+                        a.href = '/download_send_log?file=' + encodeURIComponent(file.name);
+                        a.download = file.name;
+                        td1.appendChild(a);
+                        var td2 = document.createElement('td');
+                        td2.textContent = file.size || '';
+                        td2.style.color = '#888';
+                        var td3 = document.createElement('td');
+                        td3.textContent = file.modified || '';
+                        td3.style.color = '#888';
+                        tr.appendChild(td0); tr.appendChild(td1); tr.appendChild(td2); tr.appendChild(td3);
+                        tbody.appendChild(tr);
+                    });
+                })
+                .catch(function(err) { console.error('Send log files load error:', err); });
+        }
+
+        function loadSendTargetConfig() {
+            fetch('/send_target_config')
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    document.getElementById('send_enabled_input').checked = !!data.enabled;
+                    document.getElementById('send_host_input').value = data.host || '';
+                    document.getElementById('send_user_input').value = data.username || '';
+                    document.getElementById('send_topic_input').value = data.topic || 'signal_tower/log';
+                    document.getElementById('send_port_input').value = data.port || 1883;
+                    document.getElementById('send_interval_input').value = data.interval || 600;
+                    document.getElementById('time_sync_enabled_input').checked = !!data.time_sync_enabled;
+                    document.getElementById('time_sync_interval_input').value = data.time_sync_interval || 3600;
+                    var passInput = document.getElementById('send_pass_input');
+                    passInput.value = '';
+                    passInput.placeholder = data.has_password ? '（設定済み・変更する場合のみ入力）' : '（変更する場合のみ入力）';
+                })
+                .catch(function() {});
+            loadSendTargetStatus();
+            loadTimeSyncStatus();
+        }
+
+        function loadTimeSyncStatus() {
+            fetch('/time_sync_status')
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    var last = document.getElementById('time_sync_last');
+                    last.textContent = data.last_time ? ('(' + data.last_time + ' ' + (data.last_result || '') + ')') : '未実施';
+                })
+                .catch(function() {});
+        }
+
+        function syncTimeNow() {
+            var result = document.getElementById('send_target_result');
+            var btn = document.getElementById('time_sync_now_btn');
+            btn.disabled = true;
+            result.className = 'wifi-result info';
+            result.textContent = '時刻同期中...';
+            fetch('/time_sync_now', { method: 'POST' })
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    btn.disabled = false;
+                    if (data.success) {
+                        result.className = 'wifi-result info';
+                        result.textContent = (data.message || '時刻を同期しました') + (data.server_time ? '（送信先: ' + data.server_time + '）' : '');
+                    } else {
+                        result.className = 'wifi-result err';
+                        result.textContent = 'エラー: ' + (data.error || '時刻同期に失敗しました');
+                    }
+                    loadTimeSyncStatus();
+                })
+                .catch(function() {
+                    btn.disabled = false;
+                    result.className = 'wifi-result err';
+                    result.textContent = '時刻同期に失敗しました';
+                });
+        }
+
+        function loadSendTargetStatus() {
+            fetch('/send_target_status')
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    document.getElementById('send_target_pending').textContent = '未送信 ' + (data.pending || 0) + '行';
+                    var last = document.getElementById('send_target_last');
+                    if (data.last_time) {
+                        last.textContent = '(' + data.last_time + ' ' + (data.last_result || '') + ')';
+                    } else {
+                        last.textContent = '';
+                    }
+                })
+                .catch(function() {});
+        }
+
+        function saveSendTargetConfig() {
+            var result = document.getElementById('send_target_result');
+            var payload = {
+                enabled: document.getElementById('send_enabled_input').checked,
+                host: document.getElementById('send_host_input').value.trim(),
+                username: document.getElementById('send_user_input').value.trim(),
+                topic: document.getElementById('send_topic_input').value.trim(),
+                port: parseInt(document.getElementById('send_port_input').value, 10) || 1883,
+                interval: parseInt(document.getElementById('send_interval_input').value, 10) || 600,
+                time_sync_enabled: document.getElementById('time_sync_enabled_input').checked,
+                time_sync_interval: parseInt(document.getElementById('time_sync_interval_input').value, 10) || 3600
+            };
+            var pass = document.getElementById('send_pass_input').value;
+            if (pass) { payload.password = pass; }
+            var btn = document.getElementById('send_save_btn');
+            btn.disabled = true;
+            fetch('/set_send_target_config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                btn.disabled = false;
+                if (data.success) {
+                    result.className = 'wifi-result info';
+                    result.textContent = '設定を保存しました';
+                    loadSendTargetConfig();
+                } else {
+                    result.className = 'wifi-result err';
+                    result.textContent = 'エラー: ' + (data.error || '保存に失敗しました');
+                }
+            })
+            .catch(function() {
+                btn.disabled = false;
+                result.className = 'wifi-result err';
+                result.textContent = '保存に失敗しました';
+            });
+        }
+
+        function sendLogsNow() {
+            var result = document.getElementById('send_target_result');
+            var btn = document.getElementById('send_now_btn');
+            btn.disabled = true;
+            result.className = 'wifi-result info';
+            result.textContent = '送信中...';
+            fetch('/send_logs_now', { method: 'POST' })
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    btn.disabled = false;
+                    if (data.success) {
+                        result.className = 'wifi-result info';
+                        result.textContent = data.message || (data.sent + '件送信しました');
+                    } else {
+                        result.className = 'wifi-result err';
+                        result.textContent = 'エラー: ' + (data.error || '送信に失敗しました');
+                    }
+                    loadSendTargetStatus();
+                    loadSendLogFiles();
+                })
+                .catch(function() {
+                    btn.disabled = false;
+                    result.className = 'wifi-result err';
+                    result.textContent = '送信に失敗しました';
+                });
+        }
+
+        // ページ読み込み時に起動中表示＋設定取得
+        window.onload = function() {
+            loadIdNames();
+            loadStatusCodes();
+            showLoadingText('接続中...');
+            showLoading(true);
+            disableButtons(true);
+
+            fetch('/current_model')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.model_type) {
+                        currentModel = data.model_type;
+                        updateButtonState(data.model_type);
+                    }
+                })
+                .catch(error => console.error('Error loading current model:', error));
+
+            loadSaveSettings();
+            loadThreshold();
+            loadWifiStatus();
+            loadIpConfig();
+            confirmIpConfig();
+            loadLogFiles();
+            loadSendLogFiles();
+            loadSendTargetConfig();
+            loadImageFiles();
+            loadCameraResolution().then(function() { loadRecognitionSettings(); loadLogs(); loadChangeLogs(); });
+
+            // 映像更新・ログセクション表示監視を開始（DOM構築後に実行する必要がある）
+            startMonitor();
+            setupLogVisibility();
+
+            // 起動完了を待機
+            startStatusCheck(null);
+
+            window.addEventListener('resize', function() {
+                renderChangeLogGraph(_graphEntries, _graphIsObjDet);
+            });
+        };
+    </script>
+</head>
+<body>
+    <div id="shutdown_confirm" class="confirm-overlay">
+        <div class="confirm-box">
+            <p>Raspberry Pi をシャットダウンしますか？</p>
+            <button class="btn-yes" onclick="executeShutdown()">シャットダウン</button>
+            <button class="btn-no" onclick="hideShutdownConfirm()">キャンセル</button>
+        </div>
+    </div>
+    <div id="switch_confirm" class="confirm-overlay">
+        <div class="confirm-box">
+            <p id="switch_confirm_msg"></p>
+            <button class="btn-proceed" onclick="executeSwitchConfirm()">実行</button>
+            <button class="btn-no" onclick="hideSwitchConfirm()">キャンセル</button>
+        </div>
+    </div>
+    <div id="loading_overlay" class="overlay show">
+        <div class="loading-box">
+            <h2 id="loading_text">接続中...</h2>
+            <div class="spinner"></div>
+        </div>
+    </div>
+    <div id="blackout" class="blackout"></div>
+    <div id="img_container" class="img-container fit">
+        <img id="result_img" src="result.jpg" alt="">
+    </div>
+    <div class="controls-row">
+        <div class="recognition-control" id="crop_pct_control">
+            <label>クロップ</label>
+            <div>
+                <button class="pm-btn" onclick="changeResolutionStep(-1)">−</button>
+                <span class="resolution-label" id="resolution_value">全画角</span>
+                <button class="pm-btn" onclick="changeResolutionStep(1)">+</button>
+            </div>
+        </div>
+        <div class="recognition-control" id="crop_size_control" style="display:none">
+            <label>クロップ</label>
+            <div>
+                <button id="btn_crop_640" class="crop-size-btn" onclick="setCropSize('640')">640</button>
+                <button id="btn_crop_1280" class="crop-size-btn" onclick="setCropSize('1280')">1280</button>
+                <button id="btn_crop_1920" class="crop-size-btn" onclick="setCropSize('1920')">1920</button>
+                <button id="btn_crop_2560" class="crop-size-btn" onclick="setCropSize('2560')">2560</button>
+                <button id="btn_crop_full" class="crop-size-btn active" onclick="setCropSize('full')">全画角</button>
+            </div>
+        </div>
+        <button id="btn_set_signal_ids" class="model-btn" onclick="setSignalIds()" style="display:none">ID設定</button>
+        <button id="btn_reset_signal_ids" class="model-btn" onclick="resetSignalIds()" style="display:none">IDリセット</button>
+        <div class="save-control">
+            <label>結果保存</label>
+            <button id="btn_save_result" class="toggle-btn on" onclick="toggleSave('result')">ON</button>
+        </div>
+        <div class="save-control">
+            <label>生画像保存</label>
+            <button id="btn_save_raw" class="toggle-btn on" onclick="toggleSave('raw')">ON</button>
+        </div>
+        <div class="threshold-control">
+            <label>しきい値</label>
+            <div>
+                <button class="pm-btn" onclick="changeThreshold(-0.05)">−</button>
+                <span class="value-display" id="threshold_value">0.25</span>
+                <button class="pm-btn" onclick="changeThreshold(0.05)">+</button>
+            </div>
+        </div>
+        <button id="btn_object" class="model-btn active" onclick="switchModel('object_detection')">物体認識</button>
+        <button id="btn_signal" class="model-btn" onclick="switchModel('signal_tower')">シグナルタワー</button>
+        <button id="btn_cam_fhd" class="model-btn active" onclick="setCameraResolution('1920x1080')">FHD</button>
+        <button id="btn_cam_640" class="model-btn" onclick="setCameraResolution('640x640')">640×640</button>
+        <div class="save-control">
+            <button class="shutdown-btn" onclick="showShutdownConfirm()">シャットダウン</button>
+        </div>
+    </div>
+    <div class="change-log-section">
+        <div class="log-section-header">
+            <h3>変化ログ</h3>
+            <span class="log-count" id="change_log_count">-</span>
+        </div>
+        <div class="log-scroll">
+            <table class="log-table">
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>日時</th>
+                        <th>ID</th>
+                        <th>色</th>
+                        <th>状態変化</th>
+                    </tr>
+                </thead>
+                <tbody id="change_log_tbody"></tbody>
+            </table>
+        </div>
+    </div>
+    <div class="log-section">
+        <div class="log-section-header">
+            <h3>最新ログ</h3>
+            <span class="log-count" id="log_count">-</span>
+        </div>
+        <div class="log-scroll">
+            <table class="log-table">
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>日時</th>
+                        <th>種類</th>
+                        <th>データ</th>
+                    </tr>
+                </thead>
+                <tbody id="log_tbody"></tbody>
+            </table>
+        </div>
+    </div>
+    <div class="graph-section" id="change_log_graph_section" style="display:none">
+        <div class="log-section-header">
+            <h3>状態変化グラフ</h3>
+        </div>
+        <div class="graph-canvas-scroll">
+            <canvas id="change_log_graph"></canvas>
+        </div>
+        <div class="graph-legend">
+            <span class="graph-legend-item">
+                <span class="legend-bar" style="background:#4CAF50"></span>ON
+            </span>
+            <span class="graph-legend-item">
+                <span class="legend-bar" style="background:rgba(76,175,80,0.65);background:repeating-linear-gradient(45deg,rgba(76,175,80,0.7) 0,rgba(76,175,80,0.7) 4px,transparent 4px,transparent 8px)"></span>BLINK
+            </span>
+            <span class="graph-legend-item">
+                <span class="legend-bar" style="background:#333;height:5px;align-self:center"></span>OFF
+            </span>
+            <span class="graph-legend-item" style="color:#555;margin-left:8px">｜ 変化点</span>
+        </div>
+    </div>
+    <div class="id-names-section">
+        <div class="log-section-header">
+            <h3>ID 名前一覧</h3>
+        </div>
+        <div class="log-scroll">
+            <table class="log-table">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>名前1</th>
+                        <th>名前2</th>
+                        <th>名前3</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody id="id_names_tbody"></tbody>
+            </table>
+        </div>
+        <div class="id-name-add-row">
+            <input type="number" id="new_id_input" class="id-name-add-input" placeholder="ID番号" min="0"
+                onkeydown="if(event.key==='Enter') addIdNameRow()">
+            <button class="id-name-add-btn" onclick="addIdNameRow()">＋ 追加</button>
+        </div>
+    </div>
+    <div class="status-code-section">
+        <div class="log-section-header">
+            <h3>状態コード設定</h3>
+        </div>
+        <p class="status-code-desc">
+            シグナルタワーの点灯/点滅の組み合わせから送信用ログの状態コードを決めます。
+            各パターンは上から順に評価され、条件（各色の状態）をすべて満たす最初のパターンのコードが採用されます。
+            「指定なし」の色は判定に使いません。どのパターンにも一致しない場合はデフォルトコードになります。
+        </p>
+        <div class="log-scroll">
+            <table class="log-table">
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>赤</th>
+                        <th>黄</th>
+                        <th>緑</th>
+                        <th>青</th>
+                        <th>白</th>
+                        <th>コード</th>
+                        <th>備考</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody id="status_codes_tbody"></tbody>
+            </table>
+        </div>
+        <button class="sc-add-btn" onclick="addStatusCodeRow()">＋ パターン追加</button>
+        <div class="sc-default-row">
+            <span>デフォルトコード（一致なし）:</span>
+            <input type="number" id="sc_default_input" class="sc-code-input" value="0" onchange="saveStatusCodes()">
+        </div>
+    </div>
+    <div id="log_graph_modal" class="log-graph-modal" onclick="closeLogGraphModal()">
+        <div class="log-graph-modal-box" onclick="event.stopPropagation()">
+            <div class="log-graph-modal-header">
+                <span class="log-graph-modal-title" id="log_graph_modal_title"></span>
+                <button class="log-graph-modal-close" onclick="closeLogGraphModal()">&#x2715;</button>
+            </div>
+            <div class="log-graph-modal-content" id="log_graph_modal_content"></div>
+        </div>
+    </div>
+    <div id="image_lightbox" class="image-lightbox" onclick="closeImageLightbox()">
+        <button class="image-lightbox-close" onclick="closeImageLightbox()">&#x2715;</button>
+        <img id="image_lightbox_img" src="" alt="" onclick="event.stopPropagation()">
+        <div class="image-lightbox-name" id="image_lightbox_name"></div>
+    </div>
+    <div class="image-files-section">
+        <div class="log-section-header">
+            <h3>保存画像一覧</h3>
+            <span class="log-count" id="image_files_count">-</span>
+            <button class="log-files-refresh-btn" onclick="loadImageFiles()">更新</button>
+        </div>
+        <div class="image-tab-bar">
+            <button id="img_tab_result" class="image-tab-btn active" onclick="switchImageTab('result')">結果画像</button>
+            <button id="img_tab_raw" class="image-tab-btn" onclick="switchImageTab('raw')">生画像</button>
+        </div>
+        <div class="image-file-list">
+            <table class="image-file-table">
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>プレビュー</th>
+                        <th>ファイル名</th>
+                        <th>サイズ</th>
+                        <th>更新日時</th>
+                    </tr>
+                </thead>
+                <tbody id="image_files_tbody"></tbody>
+            </table>
+        </div>
+    </div>
+    <div class="wifi-section">
+        <div class="log-section-header">
+            <h3>WiFi設定</h3>
+            <button class="log-files-refresh-btn" onclick="loadWifiStatus()">更新</button>
+        </div>
+        <div class="wifi-status-row">
+            <span class="wifi-status-label">現在の接続:</span>
+            <span class="wifi-ssid" id="wifi_current_ssid">-</span>
+            <span class="wifi-ip" id="wifi_current_ip"></span>
+        </div>
+        <div class="wifi-form">
+            <div class="wifi-form-row">
+                <span class="wifi-form-label">SSID</span>
+                <input type="text" id="wifi_ssid_input" class="wifi-input" placeholder="ネットワーク名">
+                <button id="wifi_scan_btn" class="wifi-sub-btn" onclick="scanWifi()">スキャン</button>
+            </div>
+            <div id="wifi_scan_results" class="wifi-scan-results"></div>
+            <div class="wifi-form-row">
+                <span class="wifi-form-label">パスワード</span>
+                <input type="password" id="wifi_password_input" class="wifi-input" placeholder="パスワード">
+                <button id="wifi_pw_toggle" class="wifi-sub-btn" onclick="toggleWifiPassword()">表示</button>
+            </div>
+            <div class="wifi-warning">⚠ 接続先を変更するとブラウザの接続が切れる場合があります</div>
+            <button id="wifi_connect_btn" class="wifi-connect-btn" onclick="connectWifi()">接続</button>
+            <div id="wifi_result" class="wifi-result"></div>
+        </div>
+    </div>
+    <div class="wifi-section">
+        <div class="log-section-header">
+            <h3>IPアドレス設定</h3>
+            <button class="log-files-refresh-btn" onclick="loadIpConfig()">更新</button>
+        </div>
+        <div class="wifi-status-row">
+            <span class="wifi-status-label">現在:</span>
+            <span class="wifi-ssid" id="ip_current_method">-</span>
+            <span class="wifi-ip" id="ip_current_addr"></span>
+        </div>
+        <div class="wifi-form">
+            <div class="wifi-form-row">
+                <span class="wifi-form-label">取得方式</span>
+                <select id="ip_mode_select" class="wifi-input" onchange="updateIpFieldState()">
+                    <option value="dhcp">自動 (DHCP)</option>
+                    <option value="static">固定IP</option>
+                </select>
+            </div>
+            <div class="wifi-form-row">
+                <span class="wifi-form-label">IPアドレス</span>
+                <input type="text" id="ip_addr_input" class="wifi-input" placeholder="例: 192.168.1.50">
+            </div>
+            <div class="wifi-form-row">
+                <span class="wifi-form-label">プレフィックス</span>
+                <input type="number" id="ip_prefix_input" class="wifi-input" placeholder="24" min="1" max="32" value="24">
+            </div>
+            <div class="wifi-form-row">
+                <span class="wifi-form-label">ゲートウェイ</span>
+                <input type="text" id="ip_gateway_input" class="wifi-input" placeholder="例: 192.168.1.1">
+            </div>
+            <div class="wifi-form-row">
+                <span class="wifi-form-label">DNS</span>
+                <input type="text" id="ip_dns_input" class="wifi-input" placeholder="例: 192.168.1.1 8.8.8.8">
+            </div>
+            <div class="wifi-warning">⚠ IPアドレスを変更するとブラウザの接続が切れます。変更後は新しいIPで開き直してください</div>
+            <button id="ip_apply_btn" class="wifi-connect-btn" onclick="applyIpConfig()">適用</button>
+            <div id="ip_result" class="wifi-result"></div>
+        </div>
+    </div>
+    <div class="log-files-section">
+        <div class="log-section-header">
+            <h3>ログファイル一覧</h3>
+            <span class="log-count" id="log_files_count">-</span>
+            <button class="log-files-refresh-btn" onclick="loadLogFiles()">更新</button>
+        </div>
+        <div class="log-file-list">
+            <table class="log-file-table">
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>ファイル名</th>
+                        <th>サイズ</th>
+                        <th>更新日時</th>
+                    </tr>
+                </thead>
+                <tbody id="log_files_tbody"></tbody>
+            </table>
+        </div>
+    </div>
+    <div class="wifi-section">
+        <div class="log-section-header">
+            <h3>送信用ログのMQTT送信設定</h3>
+            <button class="log-files-refresh-btn" onclick="loadSendTargetConfig()">更新</button>
+        </div>
+        <div class="wifi-status-row">
+            <span class="wifi-status-label">状態:</span>
+            <span class="wifi-ssid" id="send_target_pending">未送信 -行</span>
+            <span class="wifi-ip" id="send_target_last"></span>
+        </div>
+        <div class="wifi-form">
+            <div class="wifi-form-row">
+                <span class="wifi-form-label">自動送信</span>
+                <label class="send-target-toggle">
+                    <input type="checkbox" id="send_enabled_input"> 有効にする
+                </label>
+            </div>
+            <div class="wifi-form-row">
+                <span class="wifi-form-label">ブローカーIP</span>
+                <input type="text" id="send_host_input" class="wifi-input" placeholder="例: 192.168.1.20">
+            </div>
+            <div class="wifi-form-row">
+                <span class="wifi-form-label">ポート</span>
+                <input type="number" id="send_port_input" class="wifi-input" placeholder="1883" min="1" max="65535" value="1883">
+            </div>
+            <div class="wifi-form-row">
+                <span class="wifi-form-label">トピック</span>
+                <input type="text" id="send_topic_input" class="wifi-input" placeholder="signal_tower/log">
+            </div>
+            <div class="wifi-form-row">
+                <span class="wifi-form-label">ユーザー名</span>
+                <input type="text" id="send_user_input" class="wifi-input" placeholder="（任意）">
+            </div>
+            <div class="wifi-form-row">
+                <span class="wifi-form-label">パスワード</span>
+                <input type="password" id="send_pass_input" class="wifi-input" placeholder="（変更する場合のみ入力）">
+            </div>
+            <div class="wifi-form-row">
+                <span class="wifi-form-label">自動送信間隔(秒)</span>
+                <input type="number" id="send_interval_input" class="wifi-input" placeholder="600" min="60" value="600">
+            </div>
+            <div class="wifi-warning">※ ファイル内のデータを1行ずつMQTT送信します。書き込み途中の不完全な行は確定するまで送信されません。送信済みの行は再送されません。</div>
+            <div class="wifi-form-row">
+                <span class="wifi-form-label">時刻同期</span>
+                <label class="send-target-toggle">
+                    <input type="checkbox" id="time_sync_enabled_input"> 送信先ホストの時刻にPiを同期（起動時＋定期）
+                </label>
+            </div>
+            <div class="wifi-form-row">
+                <span class="wifi-form-label">時刻同期間隔(秒)</span>
+                <input type="number" id="time_sync_interval_input" class="wifi-input" placeholder="3600" min="60" value="3600">
+            </div>
+            <div class="wifi-status-row">
+                <span class="wifi-status-label">同期:</span>
+                <span class="wifi-ip" id="time_sync_last"></span>
+            </div>
+            <div class="wifi-warning">※ 送信先（ブローカーIP）のホストへSNTP（NTP）で時刻を問い合わせ、Piのシステム時計を合わせます。送信先PCでNTPサーバが有効になっている必要があります。時計変更にはroot権限を使用します。</div>
+            <button id="send_save_btn" class="wifi-connect-btn" onclick="saveSendTargetConfig()">設定を保存</button>
+            <button id="send_now_btn" class="wifi-connect-btn" onclick="sendLogsNow()">今すぐ送信</button>
+            <button id="time_sync_now_btn" class="wifi-connect-btn" onclick="syncTimeNow()">今すぐ時刻同期</button>
+            <div id="send_target_result" class="wifi-result"></div>
+        </div>
+    </div>
+    <div class="log-files-section">
+        <div class="log-section-header">
+            <h3>送信用ログファイル一覧</h3>
+            <span class="log-count" id="send_log_files_count">-</span>
+            <button class="log-files-refresh-btn" onclick="loadSendLogFiles()">更新</button>
+        </div>
+        <p class="status-code-desc">番号（#）をクリックすると、そのファイルの状態コードの時系列グラフを表示します。</p>
+        <div class="log-file-list">
+            <table class="log-file-table">
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>ファイル名</th>
+                        <th>サイズ</th>
+                        <th>更新日時</th>
+                    </tr>
+                </thead>
+                <tbody id="send_log_files_tbody"></tbody>
+            </table>
+        </div>
+    </div>
+</body>
+</html>

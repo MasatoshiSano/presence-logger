@@ -26,3 +26,10 @@ def test_row_not_in_mqtt_buffer():
     # arrived before the monitor started subscribing -> mqtt_seen False, still valid
     linked = annotate_stages([_row("e3", "sent")], set())
     assert linked[0].mqtt_seen is False
+
+
+def test_failed_row_shows_giveup_not_pending():
+    linked = annotate_stages([_row("e4", "failed")], {"e4"})
+    assert "諦め" in linked[0].stage
+    assert "✓" not in linked[0].stage
+    assert "滞留" not in linked[0].stage  # 滞留(まだ狙える)とは区別する
