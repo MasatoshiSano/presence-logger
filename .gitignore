@@ -52,3 +52,6 @@ scripts/_diag_frame.jpg
 models/**/*.rpk
 models/**/*.zip
 models/**/packerOut.zip
+
+# --- fleet-ui: TOFUで学習したMACは親ホスト固有のruntime状態。gitに載せない ---
+fleet/known_macs.json

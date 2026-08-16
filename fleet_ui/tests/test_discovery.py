@@ -3,7 +3,14 @@
 個体の主キーは MAC。IPは親APのDHCPで変わり、ホスト名はSDカードのコピーで衝突する
 (実際に2台目投入時、両機とも pizero2w になり MQTT の client_id が衝突した)。
 """
-from fleet_ui.discovery import classify, parse_neigh, resolve_inventory_ips
+from fleet_ui.discovery import (
+    classify,
+    learned_macs,
+    load_known_macs,
+    parse_neigh,
+    resolve_inventory_ips,
+    save_known_macs,
+)
 
 SAMPLE = """10.42.0.52 lladdr 2c:cf:67:c1:1d:7b STALE
 10.42.0.194 lladdr 88:a2:9e:30:5e:46 REACHABLE
@@ -122,3 +129,100 @@ def test_resolve_uses_getent_then_ssh_config():
 def test_resolve_returns_none_when_unresolvable():
     got = resolve_inventory_ips(["nowhere"], runner=lambda cmd: "")
     assert got == {"nowhere": None}
+
+
+# --- TOFU(Trust On First Use)によるMAC照合 -----------------------------------
+# IPのみでの突き合わせは、正規のIPを別デバイスが奪った場合(Variant A)や
+# 2エントリが同じIPを指す設定ミス(Variant B)で、稼働中の子を new(登録候補)に
+# 落としてしまう(最終レビューで指摘・再現済み)。known_macs は entry->mac の
+# 過去の確認結果で、SSHのknown_hostsと同じ信頼モデル(初回は信頼し、以後は照合)。
+
+def test_first_contact_trusts_and_can_be_learned():
+    """known_macs が空のとき(初回)は従来どおりIPで信頼し、学習対象として返す。"""
+    rows = classify(parse_neigh(SAMPLE), {"zero2": "10.42.0.52"}, known_macs={})
+    known = [r for r in rows if r.kind == "known"]
+    assert [(r.entry, r.mac) for r in known] == [("zero2", "2c:cf:67:c1:1d:7b")]
+    assert learned_macs(rows, {}) == {"zero2": "2c:cf:67:c1:1d:7b"}
+
+
+def test_already_trusted_mac_is_not_relearned():
+    known_macs = {"zero2": "2c:cf:67:c1:1d:7b"}
+    rows = classify(parse_neigh(SAMPLE), {"zero2": "10.42.0.52"}, known_macs=known_macs)
+    assert learned_macs(rows, known_macs) == {}
+
+
+def test_ip_stolen_by_another_device_does_not_expose_the_real_child_as_new():
+    """Variant A: 正規のIPを別デバイスが占有し、本物は別IPに居る。
+
+    最終レビューで実際に再現された形。稼働中の子(本物のMAC)は known のまま保たれ、
+    IPを奪った側は正体不明の new として正直に表示される(=誤って安全と偽らない)。
+    """
+    arp = parse_neigh(
+        "10.42.0.52 lladdr aa:aa:aa:aa:aa:aa REACHABLE\n"
+        "10.42.0.194 lladdr b8:27:eb:11:11:11 REACHABLE\n"
+    )
+    known_macs = {"zero2": "b8:27:eb:11:11:11"}   # 過去に確認済みの本物のMAC
+    rows = classify(arp, {"zero2": "10.42.0.52"}, known_macs=known_macs)
+    known = {(r.entry, r.mac, r.ip) for r in rows if r.kind == "known"}
+    assert known == {("zero2", "b8:27:eb:11:11:11", "10.42.0.194")}
+    # IPを奪った側は new として出る(zero2 として誤登録されることはない)。
+    new_macs = {r.mac for r in rows if r.kind == "new"}
+    assert new_macs == {"aa:aa:aa:aa:aa:aa"}
+    assert "b8:27:eb:11:11:11" not in new_macs
+
+
+def test_swapped_leases_between_two_known_children_resolve_correctly():
+    """Variant B: 2子のインベントリが同じIPを指す(DHCPリース入れ替わり等)。
+
+    IPだけでは区別できないが、記録済みMACで両方とも正しい個体へ解決できる。
+    """
+    arp = parse_neigh(
+        "10.42.0.52 lladdr bbbbbbbbbbbb REACHABLE\n"
+        "10.42.0.194 lladdr aaaaaaaaaaaa REACHABLE\n".replace("bbbbbbbbbbbb", "b8:27:eb:22:22:22")
+        .replace("aaaaaaaaaaaa", "b8:27:eb:11:11:11")
+    )
+    known_macs = {"zero2": "b8:27:eb:11:11:11", "pizero2w-2.local": "b8:27:eb:22:22:22"}
+    rows = classify(
+        arp, {"zero2": "10.42.0.52", "pizero2w-2.local": "10.42.0.52"}, known_macs=known_macs
+    )
+    known = {(r.entry, r.ip) for r in rows if r.kind == "known"}
+    assert known == {("zero2", "10.42.0.194"), ("pizero2w-2.local", "10.42.0.52")}
+    assert not [r for r in rows if r.kind in ("new", "unverified")]
+
+
+def test_moved_child_is_not_flagged_unresolved():
+    """記録済みMACの子がIPを変えても(ドリフト)、到達不能扱いにしない。"""
+    arp = parse_neigh("10.42.0.77 lladdr 2c:cf:67:c1:1d:7b REACHABLE\n")
+    known_macs = {"zero2": "2c:cf:67:c1:1d:7b"}
+    rows = classify(arp, {"zero2": "10.42.0.52"}, known_macs=known_macs)
+    assert [(r.kind, r.ip) for r in rows] == [("known", "10.42.0.77")]
+
+
+def test_missing_known_child_with_no_replacement_is_unresolved():
+    """記録済みの子がARPのどこにも見当たらなければ、従来どおり unresolved。"""
+    known_macs = {"kodomo3": "aa:bb:cc:dd:ee:ff"}
+    rows = classify(parse_neigh(SAMPLE), {"kodomo3": None}, known_macs=known_macs)
+    assert [r.kind for r in rows if r.entry == "kodomo3"] == ["unresolved"]
+
+
+def test_classify_without_known_macs_keeps_prior_behaviour():
+    """known_macs 省略時は従来どおり(後方互換)。"""
+    rows_a = classify(parse_neigh(SAMPLE), {"zero2": "10.42.0.52"})
+    rows_b = classify(parse_neigh(SAMPLE), {"zero2": "10.42.0.52"}, known_macs=None)
+    assert rows_a == rows_b
+
+
+def test_save_and_load_known_macs_round_trip(tmp_path):
+    p = tmp_path / "known_macs.json"
+    save_known_macs({"zero2": "2c:cf:67:c1:1d:7b"}, path=p)
+    assert load_known_macs(path=p) == {"zero2": "2c:cf:67:c1:1d:7b"}
+
+
+def test_load_known_macs_missing_file_is_empty(tmp_path):
+    assert load_known_macs(path=tmp_path / "nope.json") == {}
+
+
+def test_load_known_macs_ignores_corrupt_file(tmp_path):
+    p = tmp_path / "known_macs.json"
+    p.write_text("not json", encoding="utf-8")
+    assert load_known_macs(path=p) == {}

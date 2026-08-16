@@ -18,7 +18,7 @@ from pathlib import Path
 from fleet_ui.discovery import parse_neigh, run_cmd
 
 # ホスト名として安全な形。sed/printf へ素で埋め込むため、ここを緩めてはいけない。
-_SAFE_HOSTNAME_RE = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
+_SAFE_HOSTNAME_RE = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?\Z")
 
 INVENTORY = Path("fleet/children.conf")
 

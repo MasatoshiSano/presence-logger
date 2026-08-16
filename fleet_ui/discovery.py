@@ -7,10 +7,17 @@ MACだけが個体に固定され、クローンでも複製されない。
 """
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
+
+# entry(インベントリの行) -> 過去に確認済みの正しいMAC(TOFU)を記録するファイル。
+# fleet/children.conf(shellスクリプト群が共有する形式)は変更せず、fleet_ui 専用の
+# runtime 状態として別に持つ。send_target_state.json と同種の「配布対象外」の扱い。
+KNOWN_MACS_PATH = Path(__file__).resolve().parents[1] / "fleet" / "known_macs.json"
 
 # ip neigh の状態。FAILED / INCOMPLETE は「そこに居ない」とみなして除外する。
 # 出しておくと、存在しない端末を登録候補として操作しかける。
@@ -111,38 +118,97 @@ def resolve_inventory_ips(
 
 
 def classify(
-    neighbors: list[Neighbor], inventory_ips: dict[str, str | None]
+    neighbors: list[Neighbor],
+    inventory_ips: dict[str, str | None],
+    known_macs: dict[str, str] | None = None,
 ) -> list[FleetRow]:
     """ARPの観測結果とインベントリを突き合わせて分類する。
 
-    突き合わせはIPで行うが、IPはDHCPでドリフトする。ssh_config が
-    `HostName 10.42.0.52` のようにIPをハードコードしている場合、実IPが変わると
-    その項目は unresolved になる一方、同じ個体のARP行は誰にも claim されない。
-    素直に new とすると **稼働中の子が登録候補として画面に出る**。そのまま登録を
-    実行すれば、本番機の送信停止・STA_NO消去・改名・再起動が走ってしまう。
+    IPだけでの突き合わせには2つの穴がある(最終レビューで実際に再現された):
+      - Variant A: 正規のIPを別デバイスが奪い、本物は別IPに移る。IP側は
+        「解決できている」ため、unresolved の判定をすり抜けて本物が new に落ちる。
+      - Variant B: 2つのインベントリ項目が同じIPを指す(設定ミス・DHCPのリース
+        入れ替わり)。IPだけでは2つの個体を区別できない。
 
-    そこで unresolved が1つでもある間は、残りの端末を new にせず unverified とする。
-    この危険が成立するには unresolved の存在が必要で、逆に全項目が解決してARPと
-    一致していれば既知の子はすべて claim 済みなので、残りは本当に未知の端末である。
-    「絵が不完全な間は登録候補を出さない」で穴は塞がる。
+    そこで known_macs(entry -> 過去に確認済みの正しいMAC)を使う。SSHの
+    known_hosts と同じ信頼モデル: 初回(記録が無い)はIPでの一致を信頼し、
+    以後はMACが一致するかで真贋を判定する。記録済みのMACがIPの一致する相手と
+    違えば、そのIPは信用せず、ARP全体から記録済みMACを探し直す(子が別IPへ
+    移動していても・IPを別デバイスに奪われていても、これで正しい個体を追える)。
+
+    known_macs を渡さない場合は登録直後の初回同様、IPのみでの突き合わせになる
+    (既存呼び出しとの後方互換)。
     """
+    known_macs = known_macs or {}
     by_ip = {n.ip: n for n in neighbors}
+    by_mac = {n.mac: n for n in neighbors}
     rows: list[FleetRow] = []
     claimed: set[str] = set()
     has_unresolved = False
 
     for entry, ip in inventory_ips.items():
-        n = by_ip.get(ip) if ip else None
-        if n is None:
-            has_unresolved = True
-            rows.append(FleetRow(mac=None, ip=ip, entry=entry, kind="unresolved"))
-            continue
-        claimed.add(n.ip)
-        rows.append(FleetRow(mac=n.mac, ip=n.ip, entry=entry, kind="known"))
+        trusted_mac = known_macs.get(entry)
+        candidate = by_ip.get(ip) if ip else None
 
+        if candidate is not None and (trusted_mac is None or candidate.mac == trusted_mac):
+            # IPが解決でき、かつ(未学習で信頼するか、記録済みMACと一致)。
+            claimed.add(candidate.ip)
+            rows.append(FleetRow(mac=candidate.mac, ip=candidate.ip, entry=entry, kind="known"))
+            continue
+
+        if trusted_mac is not None:
+            moved = by_mac.get(trusted_mac)
+            if moved is not None:
+                # candidate があってもMACが不一致(IPを奪われている)か、
+                # candidate 自体が無い(ドリフト)。記録済みの本物をARP全体から発見。
+                claimed.add(moved.ip)
+                rows.append(FleetRow(mac=moved.mac, ip=moved.ip, entry=entry, kind="known"))
+                continue
+
+        # 解決できない: IPに何も居ない、かつ記録済みMACもARPのどこにも無い。
+        has_unresolved = True
+        rows.append(FleetRow(mac=None, ip=ip, entry=entry, kind="unresolved"))
+
+    # unresolved が1つでもある間は、残りの端末を new にせず unverified とする。
+    # この危険が成立するには unresolved の存在が必要で、逆に全項目が解決していれば
+    # 既知の子はすべて claim 済みなので、残りは本当に未知の端末である。
     leftover = "unverified" if has_unresolved else "new"
     for n in neighbors:
         if n.ip not in claimed:
             rows.append(FleetRow(mac=n.mac, ip=n.ip, entry=None, kind=leftover))
 
     return rows
+
+
+def learned_macs(rows: list[FleetRow], known_macs: dict[str, str]) -> dict[str, str]:
+    """classify() の結果から、新たに信頼すべき (entry, mac) を返す。
+
+    呼び出し側がこれを既存の known_macs へマージして永続化する。classify() 自体は
+    副作用を持たない純関数のまま保つため、学習の確定(ファイル書き込み)は
+    呼び出し側(server.py)の責務にする。
+    """
+    return {
+        r.entry: r.mac
+        for r in rows
+        if r.kind == "known" and r.entry is not None and r.mac is not None
+        and r.entry not in known_macs
+    }
+
+
+def load_known_macs(*, path: Path = KNOWN_MACS_PATH) -> dict[str, str]:
+    """記録済みの entry -> mac (TOFU) を読む。無い/壊れていれば空。"""
+    if not path.exists():
+        return {}
+    try:
+        d = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(d, dict):
+        return {}
+    return {k: v for k, v in d.items() if isinstance(k, str) and isinstance(v, str)}
+
+
+def save_known_macs(macs: dict[str, str], *, path: Path = KNOWN_MACS_PATH) -> None:
+    """entry -> mac (TOFU) を保存する。"""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(macs, ensure_ascii=False, indent=2), encoding="utf-8")

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 
-_VALID_RE = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
+_VALID_RE = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?\Z")
 _SEQ_RE = re.compile(r"^(?P<base>.+?)-(?P<n>\d+)$")
 _FALLBACK = "pizero2w-2"
 

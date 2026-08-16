@@ -16,7 +16,14 @@ from pathlib import Path
 
 from fleet_ui import provision
 from fleet_ui.collect import ChildStatus, collect_status
-from fleet_ui.discovery import classify, read_neighbors, resolve_inventory_ips
+from fleet_ui.discovery import (
+    classify,
+    learned_macs,
+    load_known_macs,
+    read_neighbors,
+    resolve_inventory_ips,
+    save_known_macs,
+)
 from fleet_ui.hostname import suggest_hostname, validate_hostname
 
 
@@ -58,9 +65,17 @@ def build_fleet_view(
     neighbors: list,
     inventory_ips: dict[str, str | None],
     statuses: dict[str, ChildStatus],
+    known_macs: dict[str, str] | None = None,
 ) -> dict:
-    """画面へ渡すJSONを組み立てる純関数。"""
-    rows = classify(neighbors, inventory_ips)
+    """画面へ渡すJSONを組み立てる純関数。
+
+    known_macs: 過去に確認済みの entry->mac(TOFU)。省略時はIPのみでの
+    突き合わせ(後方互換)。新たに信頼すべき組は戻り値の "_newly_trusted_macs"
+    に入れる。ファイルへの永続化はこの関数の責務ではなく、_gather() が行う
+    (この関数を副作用フリーな純関数のまま保つため)。
+    """
+    known_macs = known_macs or {}
+    rows = classify(neighbors, inventory_ips, known_macs)
     children = []
     per_host: dict[str, dict] = {}
     for r in rows:
@@ -102,6 +117,7 @@ def build_fleet_view(
         ],
         "suggested_hostname": suggest_hostname([n for n in known_names if n]),
         "steps": [{"id": i, "label": lbl} for i, lbl in provision.STEPS],
+        "_newly_trusted_macs": learned_macs(rows, known_macs),
     }
 
 
@@ -110,7 +126,16 @@ def _gather() -> dict:
     inv = resolve_inventory_ips(entries)
     neighbors = read_neighbors()
     statuses = {ip: collect_status(ip) for ip in inv.values() if ip}
-    return build_fleet_view(neighbors=neighbors, inventory_ips=inv, statuses=statuses)
+    known = load_known_macs()
+    view = build_fleet_view(
+        neighbors=neighbors, inventory_ips=inv, statuses=statuses, known_macs=known
+    )
+    # TOFU: 今回新たに信頼した組があれば永続化する。フロントには内部実装の
+    # 詳細を渡さないため、送信前に取り除く。
+    newly = view.pop("_newly_trusted_macs", {})
+    if newly:
+        save_known_macs({**known, **newly})
+    return view
 
 
 # ブラウザからの CSRF を防ぐための独自ヘッダ。単純リクエストでは付けられず、
@@ -118,6 +143,12 @@ def _gather() -> dict:
 # 失敗する。localhost に bind していても、操作者が開いた別サイトから
 # /api/step を叩かれる経路は塞いでおく。
 CSRF_HEADER = "X-Fleet-UI"
+
+# DNS rebinding 対策。127.0.0.1 に bind していても、攻撃者のドメインを後から
+# 127.0.0.1 へ解決させれば、ブラウザはそれを同一オリジンとみなし CSRF ヘッダを
+# 自由に付けられてしまう。Host ヘッダが想定どおりかを別途確認する。
+# ポートは self.server(実際に bind したサーバ)から取る。BIND_PORT を固定で
+# 埋め込むと、テストが衝突を避けて別ポートで起動したときに常に弾かれてしまう。
 
 
 def run_step(req: dict) -> dict:
@@ -175,7 +206,15 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _host_allowed(self) -> bool:
+        port = self.server.server_address[1]
+        allowed = {f"127.0.0.1:{port}", f"localhost:{port}", "127.0.0.1", "localhost"}
+        return (self.headers.get("Host") or "").strip() in allowed
+
     def do_GET(self):  # noqa: N802
+        if not self._host_allowed():
+            self._json({"error": "許可されていないHostヘッダです"}, 403)
+            return
         if self.path in ("/", "/index.html"):
             body = (STATIC / "index.html").read_bytes()
             self.send_response(200)
@@ -190,6 +229,9 @@ class Handler(BaseHTTPRequestHandler):
         self._json({"error": "not found"}, 404)
 
     def do_POST(self):  # noqa: N802
+        if not self._host_allowed():
+            self._json({"ok": False, "message": "許可されていないHostヘッダです"}, 403)
+            return
         # 独自ヘッダが無い POST は受け付けない(CSRF対策)。
         if self.headers.get(CSRF_HEADER) != "1":
             self._json({"ok": False, "message": f"{CSRF_HEADER} ヘッダが必要です"}, 403)

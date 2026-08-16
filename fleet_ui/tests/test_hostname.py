@@ -56,3 +56,9 @@ def test_suggest_from_single_child():
 
 def test_suggest_with_no_children():
     assert suggest_hostname([]) == "pizero2w-2"
+
+
+def test_rejects_trailing_newline():
+    """`$` は末尾改行の直前でもマッチするため、'abc\\n' を通してしまっていた。
+    provision.py の sed/printf へ渡ると2行を書き込む形になる。"""
+    assert validate_hostname("pizero2w-3\n", []) is not None
