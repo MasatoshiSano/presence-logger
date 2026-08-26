@@ -13,7 +13,8 @@ if ! command -v mosquitto_sub >/dev/null 2>&1; then
     exit 1
 fi
 
-SSID="$(nmcli -t -f ACTIVE,SSID dev wifi 2>/dev/null | awk -F: '$1=="yes"{print $2; exit}')"
+# wlan0 固定で見る（wlan1 は常時 presence-hub AP なので nmcli の先頭yes行は誤検出）。
+SSID="$(iwgetid -r "${WAN_IFACE:-wlan0}" 2>/dev/null)"
 echo "===================================================================="
 echo " presence パイプライン監視（子Pi→MQTT→Oracle）"
 echo "   現在のSSID : ${SSID:-(不明)}"

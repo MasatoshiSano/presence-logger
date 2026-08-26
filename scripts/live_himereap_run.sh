@@ -159,7 +159,10 @@ nmcli connection add type wifi con-name "$TMP_PROFILE" ifname wlan0 \
 log "step 2: nmcli connection up $TMP_PROFILE"
 nmcli connection up "$TMP_PROFILE" >>"$LOG" 2>&1 || { log "FAIL: bring up $TMP_PROFILE"; exit 2; }
 sleep 4
-ACTUAL_SSID="$(nmcli -t -f ACTIVE,SSID dev wifi | awk -F: '$1=="yes"{print $2; exit}')"
+# dual-WiFi構成ではwlan1が常時presence-hub APとして「active」に見えるため、
+# `nmcli dev wifi`の先頭yes行を拾うと誤検出する。工場網はwlan0固定なので
+# iwgetidでwlan0のESSIDだけを見る。
+ACTUAL_SSID="$(iwgetid -r wlan0)"
 log "active SSID after switch: $ACTUAL_SSID"
 [[ "$ACTUAL_SSID" == "$HIME_SSID" ]] || { log "FAIL: SSID mismatch"; exit 2; }
 

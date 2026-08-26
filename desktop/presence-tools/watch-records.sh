@@ -10,7 +10,8 @@ set -uo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export SINCE="${1:-30s}"   # 最初に何分/秒前から表示するか（その後はリアルタイム追従）
 
-SSID="$(nmcli -t -f ACTIVE,SSID dev wifi 2>/dev/null | awk -F: '$1=="yes"{print $2; exit}')"
+# wlan0 固定で見る（wlan1 は常時 presence-hub AP なので nmcli の先頭yes行は誤検出）。
+SSID="$(iwgetid -r "${WAN_IFACE:-wlan0}" 2>/dev/null)"
 echo "===================================================================="
 echo " presence-logger 記録モニタ（リアルタイム）"
 echo "   現在のSSID : ${SSID:-(不明)}"
