@@ -1,3 +1,4 @@
+import logging
 import os
 import re
 from pathlib import Path
@@ -5,8 +6,11 @@ from typing import Any
 
 import yaml
 
+_log = logging.getLogger("bridge.config")
+
 _ENV_RE = re.compile(r"\$\{([^}]+)\}")
 HOSTNAME_FILE = "/etc/host_hostname"
+UPCMPFLG_OVERRIDE_FILE = "/etc/presence-logger/upcmpflg.override"
 
 ALLOWED_CLIENT_MODES = {"thin", "thick", "jdbc"}
 ALLOWED_AUTH_MODES = {"basic", "wallet"}
@@ -96,6 +100,36 @@ def load_device_config(path: Path) -> dict[str, Any]:
     if data.get("device_id") is None:
         data["device_id"] = _read_hostname_file()
     return data
+
+
+def read_upcmpflg_override(path: Path | None = None) -> int | None:
+    """Read an optional, live UPCMPFLG override.
+
+    profiles.yaml is root-owned and only read once at bridge startup, so
+    flipping oracle.upcmpflg there needs a container rebuild + restart. This
+    file is pi-writable (no sudo) and re-read on every MERGE, so an operator
+    can toggle UPCMPFLG immediately without touching profiles.yaml.
+
+    Missing file, empty content, or a non-integer line all mean "no
+    override -- use the profile's static oracle.upcmpflg". Never raises: a
+    bad manual edit falls back to the profile default instead of taking down
+    the sender loop.
+    """
+    p = path or Path(UPCMPFLG_OVERRIDE_FILE)
+    try:
+        text = p.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    if not text:
+        return None
+    try:
+        return int(text)
+    except ValueError:
+        _log.warning(
+            "upcmpflg_override_invalid",
+            extra={"event": "upcmpflg_override_invalid", "path": str(p), "value": text},
+        )
+        return None
 
 
 def _validate_oracle_section(name: str, oracle: dict[str, Any]) -> None:

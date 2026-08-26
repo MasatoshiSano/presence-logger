@@ -135,6 +135,54 @@ def test_adapter_omits_upcmpflg_when_profile_does_not_set_it():
     assert via_jdbc.call_args.kwargs["upcmpflg"] is None
 
 
+def test_adapter_without_override_path_never_touches_filesystem():
+    """Default construction (no upcmpflg_override_path) must behave exactly
+    as before this feature existed -- no file read at all."""
+    adapter = _OracleAdapter(jdbc_cfg=_JDBC_CFG)
+    profile = _profile("jdbc")
+    profile["oracle"]["upcmpflg"] = 1
+    with patch("services.bridge.src.config.read_upcmpflg_override") as read_override, \
+         patch("services.bridge.src.main.execute_merge_via_jdbc",
+               return_value=MergeResult(rows_affected=1, ora_code=None, error_message="")):
+        adapter.execute_merge_for_profile(
+            profile=profile,
+            mk_date="m", sta_no1="1", sta_no2="2", sta_no3="3", t1_status=1,
+        )
+    read_override.assert_not_called()
+
+
+def test_adapter_override_file_takes_precedence_over_profile(tmp_path):
+    override = tmp_path / "upcmpflg.override"
+    override.write_text("0")
+    adapter = _OracleAdapter(jdbc_cfg=_JDBC_CFG, upcmpflg_override_path=override)
+    profile = _profile("jdbc")
+    profile["oracle"]["upcmpflg"] = 1  # profile says 1, override file says 0
+    with patch("services.bridge.src.main.execute_merge_via_jdbc",
+               return_value=MergeResult(rows_affected=1, ora_code=None, error_message="")) \
+         as via_jdbc:
+        adapter.execute_merge_for_profile(
+            profile=profile,
+            mk_date="m", sta_no1="1", sta_no2="2", sta_no3="3", t1_status=1,
+        )
+    assert via_jdbc.call_args.kwargs["upcmpflg"] == 0
+
+
+def test_adapter_falls_back_to_profile_when_override_file_empty(tmp_path):
+    override = tmp_path / "upcmpflg.override"
+    override.write_text("")
+    adapter = _OracleAdapter(jdbc_cfg=_JDBC_CFG, upcmpflg_override_path=override)
+    profile = _profile("jdbc")
+    profile["oracle"]["upcmpflg"] = 1
+    with patch("services.bridge.src.main.execute_merge_via_jdbc",
+               return_value=MergeResult(rows_affected=1, ora_code=None, error_message="")) \
+         as via_jdbc:
+        adapter.execute_merge_for_profile(
+            profile=profile,
+            mk_date="m", sta_no1="1", sta_no2="2", sta_no3="3", t1_status=1,
+        )
+    assert via_jdbc.call_args.kwargs["upcmpflg"] == 1
+
+
 def test_adapter_propagates_ora_code_from_sidecar_for_breaker():
     """The circuit breaker's permanent_ora_codes list must trip on JDBC failures
     the same way it trips on python-oracledb failures, so the adapter must
