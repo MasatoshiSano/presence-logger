@@ -51,6 +51,7 @@ main() {
     home="$(getent passwd "$user" | cut -d: -f6)"
 
     echo "==> パッケージを導入"
+    apt-get update
     # shellcheck disable=SC2046
     apt-get install -y $(ime_packages | tr '\n' ' ') || return 1
 

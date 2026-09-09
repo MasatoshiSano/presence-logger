@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=ハブ初期設定
+Name[ja]=ハブ初期設定
+Comment=ホスト名・AP名・Oracleパスワードを会話形式で設定する
+Exec=lxterminal -t "ハブ初期設定" -e bash __REPO_DIR__/scripts/setup-hub-wizard.sh
+Icon=preferences-system
+Terminal=false
+Categories=Settings;

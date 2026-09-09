@@ -59,3 +59,6 @@ fleet/known_macs.json
 # --- 機体固有値: 新しいハブごとに手で書く。Git には載せない ---
 site.env
 wifi-switch.conf
+
+# USB キットの展開先（親からコピーしたイメージ・origin）
+.kit/
