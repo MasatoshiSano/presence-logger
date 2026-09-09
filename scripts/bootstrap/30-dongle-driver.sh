@@ -36,6 +36,18 @@ dongle_verify() {
     return "$ok"
 }
 
+dongle_ensure_source() {
+    if [ ! -d "$SRC_DIR" ]; then
+        echo "==> ドライバソースを取得"
+        git clone --depth=1 "$DRIVER_REPO" "$SRC_DIR" || return 1
+    fi
+    if grep -q '0x056E, 0x4010' "$SRC_DIR/os_dep/linux/usb_intf.c" 2>/dev/null; then
+        return 0
+    fi
+    echo "==> ELECOM の USB ID を追加"
+    git -C "$SRC_DIR" apply "$PATCH" || patch -p1 -d "$SRC_DIR" < "$PATCH" || return 1
+}
+
 main() {
     site_env_require
     local ifname="${AP_IF:-wlan1}"
@@ -46,12 +58,7 @@ main() {
 
     echo "==> 検出されている USB デバイス"; lsusb | grep -i "056e:4010" || true
 
-    if [ ! -d "$SRC_DIR" ]; then
-        echo "==> ドライバソースを取得"
-        git clone --depth=1 "$DRIVER_REPO" "$SRC_DIR" || return 1
-        echo "==> ELECOM の USB ID を追加"
-        git -C "$SRC_DIR" apply "$PATCH" || patch -p1 -d "$SRC_DIR" < "$PATCH" || return 1
-    fi
+    dongle_ensure_source || return 1
 
     echo "==> DKMS でビルド・導入"
     ( cd "$SRC_DIR" && ./install-driver.sh NoPrompt ) || return 1

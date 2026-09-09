@@ -44,3 +44,26 @@ def test_patch_file_adds_the_elecom_usb_id():
                 encoding="utf-8").read()
     assert "0x056E, 0x4010" in body
     assert "RTL8821" in body
+
+
+def test_existing_src_dir_without_usb_id_still_gets_patched(tmp_path):
+    # ディレクトリがあるだけでは適用済みではない。失敗後の残骸でも USB ID を足す。
+    src = tmp_path / "8821au"
+    usb = src / "os_dep" / "linux" / "usb_intf.c"
+    usb.parent.mkdir(parents=True)
+    context = [
+        "\t{USB_DEVICE(0x056E, 0x4007), .driver_info = RTL8821}, /* ELECOM */",
+        "\t{USB_DEVICE(0x056E, 0x400E), .driver_info = RTL8821}, /* ELECOM */",
+        "\t{USB_DEVICE(0x056E, 0x400F), .driver_info = RTL8821}, /* ELECOM */",
+        "\t{USB_DEVICE(0x0846, 0x9052), .driver_info = RTL8821}, /* Netgear */",
+        "\t{USB_DEVICE(0x0E66, 0x0023), .driver_info = RTL8821}, /* HAWKING */",
+        "\t{USB_DEVICE(0x2001, 0x3314), .driver_info = RTL8821}, /* D-Link */",
+    ]
+    # パッチ hunk は 205 行目から。git apply がオフセット拒否しないよう揃える。
+    body = "\n".join([f"/* {i} */" for i in range(1, 205)] + context) + "\n"
+    usb.write_text(body, encoding="utf-8")
+    assert "0x4010" not in body
+    env = dict(os.environ)
+    env["DONGLE_SRC_DIR"] = str(src)
+    run_bash(f"{SOURCE}; dongle_ensure_source", env=env)
+    assert "0x056E, 0x4010" in usb.read_text(encoding="utf-8")
