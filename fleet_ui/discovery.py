@@ -8,6 +8,7 @@ MACだけが個体に固定され、クローンでも複製されない。
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 from collections.abc import Callable
@@ -29,7 +30,9 @@ _NEIGH_RE = re.compile(
     r"^(?P<ip>\d{1,3}(?:\.\d{1,3}){3})\s+lladdr\s+(?P<mac>[0-9a-fA-F:]{17})\s+(?P<state>\S+)"
 )
 
-AP_DEV = "wlan1"
+# 子APのインターフェース名。機体によってドングルが wlan0 として現れることが
+# あるため環境変数で差し替えられる(site.env の AP_IF を渡す)。
+AP_DEV = os.environ.get("AP_DEV", "wlan1")
 
 
 @dataclass(frozen=True)

@@ -15,6 +15,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from fleet_ui import discovery
 from fleet_ui.discovery import parse_neigh, run_cmd
 
 # ホスト名として安全な形。sed/printf へ素で埋め込むため、ここを緩めてはいけない。
@@ -131,7 +132,7 @@ def wait_for_return(
     mac = mac.lower()
     waited = 0
     while waited < timeout_s:
-        for n in parse_neigh(runner(["ip", "-4", "neigh", "show", "dev", "wlan1"])):
+        for n in parse_neigh(runner(["ip", "-4", "neigh", "show", "dev", discovery.AP_DEV])):
             if n.mac == mac:
                 return StepResult(ok=True, message=f"復帰を確認しました ({n.ip})", output=n.ip)
         sleeper(5)

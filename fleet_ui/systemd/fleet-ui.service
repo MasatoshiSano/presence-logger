@@ -5,6 +5,8 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=/home/pi/projects/presence-logger
+# site.env の AP_IF と一致させること
+Environment=AP_DEV=wlan1
 ExecStart=/home/pi/projects/presence-logger/.venv/bin/python -m fleet_ui.server
 Restart=on-failure
 User=pi
