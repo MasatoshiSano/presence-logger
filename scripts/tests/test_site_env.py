@@ -105,6 +105,46 @@ def test_ap_gateway_inside_the_factory_subnet_is_rejected(tmp_path):
     assert "AP_GW_IP" in proc.stderr
 
 
+def test_ap_gateway_inside_a_wider_factory_prefix_is_rejected(tmp_path):
+    # FACTORY_IP が /16 のとき、先頭3オクテット比較では素通りしてしまう組が実在する
+    # (172.22.5.x は 172.22.0.0/16 の内側だが 172.22.0 と 172.22.5 は文字列として不一致)
+    body = VALID.replace("FACTORY_IP=172.22.13.18/24", "FACTORY_IP=172.22.0.5/16")
+    body = body.replace("AP_GW_IP=10.42.0.1", "AP_GW_IP=172.22.5.1")
+    env_file, inv = _write(tmp_path, body=body)
+    proc = _run(env_file, inv)
+    assert proc.returncode != 0
+    assert "AP_GW_IP" in proc.stderr
+
+
+def test_ap_gateway_outside_a_wide_factory_prefix_still_passes(tmp_path):
+    # /16 でも本当にサブネット外なら誤検出せずに通す
+    body = VALID.replace("FACTORY_IP=172.22.13.18/24", "FACTORY_IP=172.22.0.5/16")
+    env_file, inv = _write(tmp_path, body=body)
+    assert _run(env_file, inv).returncode == 0
+
+
+def test_ap_gateway_in_the_other_half_of_a_narrower_prefix_passes(tmp_path):
+    # /25 のとき、同じ /24 でももう半分 (172.22.13.128-255) は別サブネットなので通す
+    body = VALID.replace("FACTORY_IP=172.22.13.18/24", "FACTORY_IP=172.22.13.18/25")
+    body = body.replace("AP_GW_IP=10.42.0.1", "AP_GW_IP=172.22.13.200")
+    env_file, inv = _write(tmp_path, body=body)
+    assert _run(env_file, inv).returncode == 0
+
+
+def test_malformed_factory_ip_does_not_crash_the_subnet_check(tmp_path):
+    # プレフィックス無しは CIDR エラーで弾かれるべきだが、後続のサブネット判定に
+    # そのまま "${FACTORY_IP#*/}" (=IP全体) を渡すと bash の算術構文エラーが
+    # 生の内部エラーとして stderr に漏れる。CIDR エラーだけが出て、bash の
+    # 内部エラーは出ないことを確認する。
+    body = VALID.replace("FACTORY_IP=172.22.13.18/24", "FACTORY_IP=172.22.13.18")
+    env_file, inv = _write(tmp_path, body=body)
+    proc = _run(env_file, inv)
+    assert proc.returncode != 0
+    assert "FACTORY_IP" in proc.stderr
+    assert "syntax error" not in proc.stderr
+    assert "arithmetic" not in proc.stderr
+
+
 def test_example_file_is_itself_valid(tmp_path):
     # ひな型が検証を通らないと、利用者は最初の一歩で詰まる
     inv = tmp_path / "children.conf"

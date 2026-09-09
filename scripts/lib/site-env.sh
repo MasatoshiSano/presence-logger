@@ -30,10 +30,24 @@ site_env_load() {
     SITE_ENV_PATH="$path"
 }
 
-# 先頭3オクテットが一致するかで簡易に同一サブネット判定する。
-# /24 以外の設計は現状存在しないため、これで十分かつ誤検出しない。
-_site_env_same_24() {
-    [ "${1%.*}" = "${2%.*}" ]
+# IPv4アドレス(ドット区切り4オクテット)を32bit整数に変換する。
+_site_env_ip_to_int() {
+    local IFS=.
+    local -a o=($1)
+    echo $(( (o[0] << 24) + (o[1] << 16) + (o[2] << 8) + o[3] ))
+}
+
+# 2つのIPアドレスが、指定プレフィックス長で同一サブネットかを判定する。
+# 先頭3オクテット比較(/24決め打ち)では /16 などより広いネットワークで
+# 見逃しが起こる(172.22.5.1 は 172.22.0.0/16 の内側だが先頭3オクテットは
+# 不一致になる)ため、プレフィックス長からマスクを作って比較する。
+_site_env_same_subnet() {
+    local ip1="$1" ip2="$2" prefix="$3"
+    local mask=$(( prefix == 0 ? 0 : (0xFFFFFFFF << (32 - prefix)) & 0xFFFFFFFF ))
+    local i1 i2
+    i1=$(_site_env_ip_to_int "$ip1")
+    i2=$(_site_env_ip_to_int "$ip2")
+    [ $(( i1 & mask )) -eq $(( i2 & mask )) ]
 }
 
 site_env_validate() {
@@ -46,7 +60,10 @@ site_env_validate() {
     done
     [ "$errors" -gt 0 ] && return 1
 
-    if ! [[ "$FACTORY_IP" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]{1,2}$ ]]; then
+    local factory_ip_valid=1
+    if [[ "$FACTORY_IP" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]{1,2}$ ]]; then
+        factory_ip_valid=0
+    else
         echo "FACTORY_IP は CIDR 形式で指定してください (例 172.22.13.18/24): $FACTORY_IP" >&2
         errors=$((errors + 1))
     fi
@@ -58,7 +75,11 @@ site_env_validate() {
         errors=$((errors + 1))
     fi
 
-    if _site_env_same_24 "$AP_GW_IP" "${FACTORY_IP%/*}"; then
+    # FACTORY_IP がCIDR形式で通っていない場合、プレフィックス部分に
+    # IPアドレス全体が渡ってしまい bash の算術構文エラーになる。
+    # CIDRエラーは既に報告済みなので、ここでは黙って後続チェックを飛ばす。
+    if [ "$factory_ip_valid" -eq 0 ] && \
+        _site_env_same_subnet "$AP_GW_IP" "${FACTORY_IP%/*}" "${FACTORY_IP#*/}"; then
         echo "AP_GW_IP が工場網と同一サブネットです: $AP_GW_IP / $FACTORY_IP" >&2
         errors=$((errors + 1))
     fi
