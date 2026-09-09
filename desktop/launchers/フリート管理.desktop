@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=フリート管理
+Name[ja]=フリート管理
+Comment=子Pi の一覧・登録
+Exec=chromium --app=http://localhost:8090
+Icon=network-workgroup
+Terminal=false
+Categories=Network;
