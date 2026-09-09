@@ -275,6 +275,8 @@ sudo bash scripts/bootstrap-hub.sh --list   # フェーズ一覧
 - `python3 -m venv .venv` + 依存導入（`fleet-ui.service` が `.venv/bin/python` を
   絶対パスで叩くため必須。既存 venv は Git 管理外）
 - `hostnamectl set-hostname $HUB_HOSTNAME` + `/etc/hosts` の更新
+- SSH 鍵を新規生成し、**公開鍵を表示して「旧親がまだ子に到達できるうちに各子へ入れる」よう
+  促す**（配布そのものは旧親側の操作なので自動化しない）
 
 ### フェーズ 30（ドングルドライバ）
 
@@ -373,6 +375,7 @@ AP プロファイルに `ipv4.addresses <AP_GW_IP>/24` を明示指定する必
 | `show-recent-records.sh` | 絞り込み既定値の出所を変更。`HUB_MODE=1` では親の station ではなく **`*`（すべて）を既定**にする | `:63-65` が親の `device.yaml` station を既定にするため、ハブでは placeholder で絞られ**常に 0 件**になる |
 | `scripts/install.sh` | フェーズ 40 から呼ばれる形に整理（重複を作らない） | 既存資産を捨てない |
 | `.gitignore` | `site.env` と `wifi-switch.conf` を追加 | 機体固有値を Git に載せない |
+| `fleet_ui/discovery.py` / `fleet_ui/provision.py` | AP インターフェース名を環境変数（`AP_DEV`、既定 `wlan1`）から取得する。`provision.py:134` の `"wlan1"` べた書きを `AP_DEV` 参照へ是正 | 現状 `discovery.py:32` の `AP_DEV` と `provision.py:134` の文字列が二重管理。新機でドングルが `wlan0` として現れると**子が1台も表示されず**、`wait_for_return` も永久に成功しない |
 | `~/Desktop/WiFi切替/switch-wifi.sh` | `desktop/wifi-switch/switch-wifi.sh` として**新規に Git 管理**。`--away-from-f66` → `--warn-disconnect <SSID>` へ一般化 | 現行機の SD カードにしか存在せず、現行機固有の前提が名前に埋まっている（4.4 節） |
 | `~/Desktop/WiFi切替/*.desktop` | テンプレート + `wifi-switch.conf` から生成する形で Git 管理 | 同上。SSID とインターフェース割当が機体固有 |
 | `~/Desktop/フリート管理.desktop` | `desktop/launchers/` へ取り込む | 同上（Git 未追跡） |
@@ -454,6 +457,8 @@ Oracle の MERGE キーは `MK_DATE + STA_NO1-3 + T1_STATUS` のみで `device_i
 | 後からカメラを付けて detector が動く | placeholder の STA_NO が本番テーブルへ書かれる | `PARENT_STA_NO*` を最初から重複しない実値で採番。compose の `profiles:` で明示有効化を要求 |
 | DKMS ビルドがカーネル更新で失敗 | `wlan1` が消え AP が落ちる | DKMS は自動再ビルドされる。失敗時は `install-driver.sh NoPrompt` の再実行手順を `NEW-HUB-SETUP.md` に記載 |
 | WiFi 切替で保守用ネットワークから離れ、遠隔操作できなくなる | 現地に行くまで復旧できない | `warn` 行に `y/N` 確認を必須化。警告文に `ADMIN_SSID` を明示。`presence-hub` 復旧ランチャーを必ず同梱する |
+| 既存の子が新ハブの SSH 公開鍵を知らない | `fleet-status.sh` / `deploy-child.sh` / フリート管理の全工程が失敗する（`provision.py:44` が `BatchMode=yes` でパスワードを聞かない） | **旧親がまだ子に到達できるうちに**新ハブの公開鍵を各子の `authorized_keys` へ入れる。子が新APへ移った後では入れられない |
+| `children.conf` 更新で作業ツリーが汚れる | `deploy-parent.sh` が未コミット変更を理由に実行を拒否する | 子の登録後は `fleet/children.conf` を commit してから親を更新する運用を手順書に明記 |
 | `secrets.env` の受け渡しで秘密が漏れる | 認証情報の露出 | Git・コミットメッセージ・ログに出さない。フェーズ 40 は雛形生成と必要キーの提示までに留め、値は人が投入する |
 | 旧機のバッファを引き継いで二重送信 | Oracle への重複書込 | `/var/lib/presence-logger/` はコピーしない。旧機で送り切ってから移行する |
 
