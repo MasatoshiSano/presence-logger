@@ -145,6 +145,72 @@ def test_malformed_factory_ip_does_not_crash_the_subnet_check(tmp_path):
     assert "arithmetic" not in proc.stderr
 
 
+def test_zero_padded_octet_does_not_fail_open(tmp_path):
+    # "008" は bash の算術展開では不正な8進数リテラルとしてエラーになり、
+    # command substitution 経由だと変数が空のまま後続の比較が素通りしてしまう
+    # (172.8.13.99 は本来 172.8.13.0/24 と衝突するのに、検証を通っていた)。
+    body = VALID.replace("FACTORY_IP=172.22.13.18/24", "FACTORY_IP=172.008.13.18/24")
+    body = body.replace("AP_GW_IP=10.42.0.1", "AP_GW_IP=172.8.13.99")
+    env_file, inv = _write(tmp_path, body=body)
+    proc = _run(env_file, inv)
+    assert proc.returncode != 0
+    assert "FACTORY_IP" in proc.stderr
+    assert "syntax error" not in proc.stderr
+    assert "value too great" not in proc.stderr
+    assert "arithmetic" not in proc.stderr
+
+
+def test_octal_miscompare_octet_is_rejected(tmp_path):
+    # "022" は8進数として読まれると18になり、別のオクテットと静かに一致してしまう
+    # (エラーにすら出ない、最も気づきにくい壊れ方)。
+    body = VALID.replace("FACTORY_IP=172.22.13.18/24", "FACTORY_IP=172.022.0.1/24")
+    env_file, inv = _write(tmp_path, body=body)
+    proc = _run(env_file, inv)
+    assert proc.returncode != 0
+    assert "FACTORY_IP" in proc.stderr
+
+
+def test_out_of_range_prefix_names_the_prefix_not_a_subnet_collision(tmp_path):
+    # /99 はプレフィックスが壊れているだけで、AP_GW_IP とは無関係。
+    # マスク計算が壊れて偶然衝突判定になり、無関係な AP_GW_IP を疑わせては
+    # いけない(オペレーターが見当違いの箇所を探す原因になる)。
+    body = VALID.replace("FACTORY_IP=172.22.13.18/24", "FACTORY_IP=172.22.13.18/99")
+    env_file, inv = _write(tmp_path, body=body)
+    proc = _run(env_file, inv)
+    assert proc.returncode != 0
+    assert "プレフィックス" in proc.stderr
+    assert "同一サブネット" not in proc.stderr
+
+
+def test_out_of_range_octet_in_factory_ip_is_rejected(tmp_path):
+    body = VALID.replace("FACTORY_IP=172.22.13.18/24", "FACTORY_IP=999.1.1.1/24")
+    env_file, inv = _write(tmp_path, body=body)
+    proc = _run(env_file, inv)
+    assert proc.returncode != 0
+    assert "FACTORY_IP" in proc.stderr
+
+
+def test_malformed_ap_gw_ip_is_rejected(tmp_path):
+    # AP_GW_IP はこれまで一度も検証されておらず、不正な値がそのまま
+    # 同一サブネット判定の算術に渡っていた。
+    body = VALID.replace("AP_GW_IP=10.42.0.1", "AP_GW_IP=10.042.0.1")
+    env_file, inv = _write(tmp_path, body=body)
+    proc = _run(env_file, inv)
+    assert proc.returncode != 0
+    assert "AP_GW_IP" in proc.stderr
+    assert "syntax error" not in proc.stderr
+    assert "value too great" not in proc.stderr
+    assert "arithmetic" not in proc.stderr
+
+
+def test_single_zero_octet_is_not_rejected_as_leading_zero(tmp_path):
+    # 先頭ゼロ禁止のルールが、正当な単一の "0" オクテットまで巻き込んでは
+    # いけない(工場網の第4オクテットが .0 になる構成は普通にある)。
+    body = VALID.replace("FACTORY_IP=172.22.13.18/24", "FACTORY_IP=10.0.0.5/24")
+    env_file, inv = _write(tmp_path, body=body)
+    assert _run(env_file, inv).returncode == 0
+
+
 def test_example_file_is_itself_valid(tmp_path):
     # ひな型が検証を通らないと、利用者は最初の一歩で詰まる
     inv = tmp_path / "children.conf"
