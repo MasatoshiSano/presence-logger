@@ -21,9 +21,11 @@ EOF
 }
 
 ime_set_keyboard_layout() {
+    # XKBLAYOUT行を"jp"に置換、行がなければ追加する
     local file="${1:-/etc/default/keyboard}"
     grep -q '^XKBLAYOUT="jp"' "$file" && return 0
     sed -i 's/^XKBLAYOUT=.*/XKBLAYOUT="jp"/' "$file"
+    grep -q '^XKBLAYOUT="jp"' "$file" || echo 'XKBLAYOUT="jp"' >> "$file"
 }
 
 ime_render_fcitx5_profile() {

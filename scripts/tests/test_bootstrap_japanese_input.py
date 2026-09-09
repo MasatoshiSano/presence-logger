@@ -47,3 +47,26 @@ def test_profile_does_not_reference_fcitx4():
     # 現行機の ~/.xinputrc(run_im fcitx)を写さないこと
     out = run_bash(f'{SOURCE}; ime_render_fcitx5_profile', env=dict(os.environ)).stdout
     assert "run_im" not in out
+
+
+def test_keyboard_layout_appends_when_line_absent(tmp_path):
+    """XKBLAYOUT行がない場合、追加される"""
+    kb = tmp_path / "keyboard"
+    kb.write_text('XKBMODEL="pc105"\nBACKSPACE="guess"\n', encoding="utf-8")
+    run_bash(f'{SOURCE}; ime_set_keyboard_layout "{kb}"', env=dict(os.environ))
+    content = kb.read_text(encoding="utf-8")
+    assert 'XKBLAYOUT="jp"' in content
+    assert content.count("XKBLAYOUT") == 1
+    assert 'XKBMODEL="pc105"' in content
+    assert 'BACKSPACE="guess"' in content
+
+
+def test_append_is_idempotent(tmp_path):
+    """XKBLAYOUT行がない状態で2回実行しても、1行だけ存在する"""
+    kb = tmp_path / "keyboard"
+    kb.write_text('XKBMODEL="pc105"\nBACKSPACE="guess"\n', encoding="utf-8")
+    run_bash(f'{SOURCE}; ime_set_keyboard_layout "{kb}"', env=dict(os.environ))
+    run_bash(f'{SOURCE}; ime_set_keyboard_layout "{kb}"', env=dict(os.environ))
+    content = kb.read_text(encoding="utf-8")
+    assert content.count("XKBLAYOUT") == 1
+    assert content.count('XKBLAYOUT="jp"') == 1
