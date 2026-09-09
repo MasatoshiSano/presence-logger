@@ -222,3 +222,79 @@ def test_example_file_is_itself_valid(tmp_path):
         env=env, check=False,
     )
     assert proc.returncode == 0, proc.stderr
+
+
+def test_hostname_with_hyphen_is_valid():
+    proc = run_bash(
+        f'{SOURCE}; site_env_valid_hostname presence-hub-2',
+        env=dict(os.environ), check=False,
+    )
+    assert proc.returncode == 0
+
+
+def test_hostname_with_leading_hyphen_is_rejected():
+    proc = run_bash(
+        f'{SOURCE}; site_env_valid_hostname -hub',
+        env=dict(os.environ), check=False,
+    )
+    assert proc.returncode != 0
+
+
+def test_origin_collision_on_hostname_is_rejected(tmp_path):
+    origin = tmp_path / "origin.env"
+    origin.write_text(
+        "ORIGIN_HOSTNAME=raspberrypi5\n"
+        "ORIGIN_FACTORY_IP=172.22.13.17/24\n"
+        "ORIGIN_AP_SSID=presence-hub\n",
+        encoding="utf-8",
+    )
+    env_file, inv = _write(tmp_path, body=VALID.replace(
+        "HUB_HOSTNAME=presence-hub-2", "HUB_HOSTNAME=raspberrypi5"))
+    env = dict(os.environ)
+    env["CHILDREN_CONF"] = str(inv)
+    env["ORIGIN_ENV_PATH"] = str(origin)
+    proc = run_bash(
+        f'{SOURCE}; site_env_load "{env_file}" && site_env_validate',
+        env=env, check=False,
+    )
+    assert proc.returncode != 0
+    assert "raspberrypi5" in proc.stderr
+
+
+def test_origin_collision_on_factory_ip_is_rejected(tmp_path):
+    origin = tmp_path / "origin.env"
+    origin.write_text(
+        "ORIGIN_HOSTNAME=raspberrypi5\n"
+        "ORIGIN_FACTORY_IP=172.22.13.18/24\n"
+        "ORIGIN_AP_SSID=presence-hub\n",
+        encoding="utf-8",
+    )
+    env_file, inv = _write(tmp_path)
+    env = dict(os.environ)
+    env["CHILDREN_CONF"] = str(inv)
+    env["ORIGIN_ENV_PATH"] = str(origin)
+    proc = run_bash(
+        f'{SOURCE}; site_env_load "{env_file}" && site_env_validate',
+        env=env, check=False,
+    )
+    assert proc.returncode != 0
+    assert "172.22.13.18" in proc.stderr
+
+
+def test_unique_identity_against_origin_passes(tmp_path):
+    origin = tmp_path / "origin.env"
+    origin.write_text(
+        "ORIGIN_HOSTNAME=raspberrypi5\n"
+        "ORIGIN_FACTORY_IP=172.22.13.17/24\n"
+        "ORIGIN_AP_SSID=parent-hub\n",
+        encoding="utf-8",
+    )
+    env_file, inv = _write(tmp_path)
+    env = dict(os.environ)
+    env["CHILDREN_CONF"] = str(inv)
+    env["ORIGIN_ENV_PATH"] = str(origin)
+    proc = run_bash(
+        f'{SOURCE}; site_env_load "{env_file}" && site_env_validate',
+        env=env, check=False,
+    )
+    assert proc.returncode == 0, proc.stderr

@@ -15,9 +15,12 @@ GUIランチャーとスクリプト一式。Raspberry Pi のデスクトップ�
 | ファイル | 役割 | sudo |
 |---|---|---|
 | `launchers/HIME-H-REAP-接続.desktop` | 工場WiFiに接続 → NTP同期 → 検知開始（繋ぎっぱなし） | 要 |
-| `launchers/HIME-H-REAP-切断.desktop` | 検知停止 → 元のWiFi(UFI_103134)へ戻す | 要 |
+| `launchers/HIME-H-REAP-切断.desktop` | 検知停止 → 元のWiFi(`HOME_SSID`)へ戻す | 要 |
 | `launchers/記録モニタ.desktop` | HHC001 への書込をリアルタイム表示 | 不要 |
 | `launchers/直近30件.desktop` | DBを直接SELECTし直近30件を最新順表示 | 不要 |
+| `launchers/パイプライン監視.desktop` | 子Pi→MQTT→Oracle の流れを1画面で追う | 不要 |
+| `launchers/フリート管理.desktop` | 子Pi の一覧・登録（localhost:8090） | 不要 |
+| `launchers/ハブ初期設定.desktop` | USB 展開後の会話形式セットアップ | 要（中で sudo） |
 | `presence-tools/connect-hime-h-reap.sh` | 接続＋時刻同期＋detector起動の実体 | 要 |
 | `presence-tools/disconnect-hime-h-reap.sh` | detector停止＋切断の実体 | 要 |
 | `presence-tools/watch-records.sh` + `_render.py` | モニタの実体（detector/bridgeログを整形） | 不要 |
@@ -27,20 +30,22 @@ GUIランチャーとスクリプト一式。Raspberry Pi のデスクトップ�
 
 ## インストール（新しい Pi へ展開する場合）
 
-`.desktop` ランチャーは `/home/pi/Desktop/presence-tools/` の絶対パスを前提にしている。
-リポジトリからは次のように配置する:
+2台目のハブは USB キットが正本。親で `bash scripts/pack-hub-usb.sh <USB>` し、
+新機で「このUSBからコピー」→「ハブ初期設定」の順。フェーズ70 がランチャーの
+`__TOOLS_DIR__` を実パスに置換してデスクトップへ置く。
+
+手で置く場合:
 
 ```bash
 # 1. スクリプト本体をデスクトップへ
 cp -r desktop/presence-tools ~/Desktop/presence-tools
 chmod +x ~/Desktop/presence-tools/*.sh ~/Desktop/presence-tools/*.py
 
-# 2. ランチャーをデスクトップへ
-cp desktop/launchers/*.desktop ~/Desktop/
-chmod +x ~/Desktop/*.desktop          # 「信頼して実行」を求められたら許可
-
-# 3. （任意・1回だけ）再起動で自動復帰＋起動時は検知OFF
-sudo bash ~/Desktop/presence-tools/setup-autostart.sh
+# 2. ランチャーをデスクトップへ（__TOOLS_DIR__ を実パスに置換）
+for f in desktop/launchers/*.desktop; do
+  sed "s|__TOOLS_DIR__|$HOME/Desktop/presence-tools|g" "$f" > "$HOME/Desktop/$(basename "$f")"
+done
+chmod +x ~/Desktop/*.desktop
 ```
 
 前提:

@@ -143,10 +143,60 @@ site_env_validate() {
         errors=$((errors + 1))
     fi
 
+    if ! site_env_reject_origin; then
+        errors=$((errors + 1))
+    fi
+
+    [ "$errors" -eq 0 ]
+}
+
+site_env_valid_hostname() {
+    local n="${1:-}"
+    [ -n "$n" ] || return 1
+    [ "${#n}" -le 63 ] || return 1
+    [[ "$n" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]]
+}
+
+site_env_origin_path() {
+    printf '%s\n' "${ORIGIN_ENV_PATH:-$SITE_ENV_REPO_DIR/.kit/origin.env}"
+}
+
+site_env_load_origin() {
+    local path="${1:-$(site_env_origin_path)}"
+    if [ ! -f "$path" ]; then
+        echo "origin.env が見つかりません: $path" >&2
+        return 1
+    fi
+    # shellcheck disable=SC1090
+    set -a; source "$path"; set +a
+}
+
+site_env_reject_origin() {
+    local origin="${1:-$(site_env_origin_path)}"
+    [ -f "$origin" ] || return 0
+    site_env_load_origin "$origin" || return 1
+    local errors=0
+    if [ -n "${ORIGIN_HOSTNAME:-}" ] && [ "${HUB_HOSTNAME:-}" = "$ORIGIN_HOSTNAME" ]; then
+        echo "HUB_HOSTNAME が親機と同じです: $HUB_HOSTNAME" >&2
+        echo "  親機と共存するには別のホスト名にしてください" >&2
+        errors=$((errors + 1))
+    fi
+    local new_ip="${FACTORY_IP%/*}" old_ip="${ORIGIN_FACTORY_IP%/*}"
+    if [ -n "${ORIGIN_FACTORY_IP:-}" ] && [ -n "$new_ip" ] && [ "$new_ip" = "$old_ip" ]; then
+        echo "FACTORY_IP が親機と同じです: $new_ip" >&2
+        echo "  工場網で衝突します。情シスへ申請した別の固定IPを入れてください" >&2
+        errors=$((errors + 1))
+    fi
+    if [ -n "${ORIGIN_AP_SSID:-}" ] && [ "${AP_SSID:-}" = "$ORIGIN_AP_SSID" ]; then
+        echo "AP_SSID が親機と同じです: $AP_SSID" >&2
+        echo "  子Pi がどちらのハブに付くか不定になります。別の AP 名にしてください" >&2
+        errors=$((errors + 1))
+    fi
     [ "$errors" -eq 0 ]
 }
 
 site_env_require() {
     site_env_load "${1:-}" || exit 1
     site_env_validate || exit 1
+    site_env_reject_origin || exit 1
 }

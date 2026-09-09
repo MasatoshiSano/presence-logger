@@ -1,0 +1,4 @@
+--- /dev/null
++++ b/os_dep/linux/usb_intf.c
+@@
++{USB_DEVICE(0x056E, 0x4010), .driver_info = RTL8821}, /* ELECOM WDC-433DU2H2-B */

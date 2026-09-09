@@ -5,15 +5,44 @@
 [`superpowers/specs/2026-09-09-new-hub-bootstrap-design.md`](superpowers/specs/2026-09-09-new-hub-bootstrap-design.md)
 を参照。
 
-> **このドキュメントの状態**: ブートストラップスクリプト（`scripts/bootstrap-hub.sh`）は
-> **未実装**（設計確定済み・実装待ち）。そのため各項目に**手動での再現手順を併記**して
-> あり、スクリプトが揃う前でもこの文書だけで新機を立ち上げられる。スクリプト実装後は
-> 「自動」のコマンド 1 本で置き換わる。
+> **推奨**: 親機で USB キットを作り、新機ではデスクトップのアイコンから会話形式で
+> 設定する（下記「USB 対話セットアップ」）。`site.env` を手で書く必要はない。
 >
-> **実装前の制約**: `connect-hime-h-reap.sh` / `disconnect-hime-h-reap.sh` /
-> `setup-dongle-ap.sh` は既定値として**現行機の値**（`UFI_103134`・`presence-hub`・
-> この拠点の `FACTORY_SUBNETS`）を持つ。新機で値が違う場合は環境変数で上書きして
-> 実行するか、スクリプトを直接編集する。`site.env` 駆動になるのは実装後である。
+> ブートストラップ本体は `scripts/bootstrap-hub.sh`。ウィザードがその入力を作ってから
+> 全フェーズを回す。各節の「手動」はフェーズが失敗したときの拠り所。
+
+---
+
+## USB 対話セットアップ（親と共存する 2 台目）
+
+親機はそのまま運転したまま、別のホスト名・固定IP・AP名を持つ兄弟ハブを作る。
+
+### 親機で USB を書く
+
+```bash
+bash scripts/pack-hub-usb.sh /media/pi/USBのマウント先
+```
+
+キット `presence-hub-kit/` にはリポジトリ、ドングルドライバのソース、
+`mosquitto` / `oracle-jdbc` / `bridge` のイメージが入る。
+**載せないもの**: 親の `fleet/children.conf`、Oracle パスワード、AP パスワード、
+detector イメージ、SQLite バッファ。工場WiFi の PSK は載るので、USB は鍵と同じ扱い。
+
+### 新機（素の Pi OS Desktop）で
+
+1. USB を挿し、`このUSBからコピー` をダブルクリックする
+   （開かないときは `bash /media/*/presence-hub-kit/copy-to-this-pi.sh`）
+2. デスクトップの **ハブ初期設定** をクリックする
+3. 順に答える: ホスト名 / 工場の固定IP / ドングルAP名 / APパスワード / Oracleパスワード
+4. 終わったら再起動し、子Pi を新しい AP に繋いでから **フリート管理** で追加する
+
+コピーした直後は AP もコンテナも起動しない（親と衝突しない）。
+ウィザードが `site.env` と secrets を書いてから `bootstrap-hub.sh` を回す。
+
+docker 本体と compose プラグインはフェーズ20 が入れる。docker グループへの追加も
+そこで行う。残りのフェーズは root で docker を話すので、**再ログインを待たずに**
+コンテナまで上がる。実行ビットはコピー時に立て直す（FAT の USB でも
+`bash copy-to-this-pi.sh` で動く）。
 
 ---
 
