@@ -76,3 +76,36 @@ def test_env_args_forward_site_values(tmp_path):
     assert "UFI_CONN=UFI_103134" in out
     assert "AP_CONN=presence-hub-ap" in out
     assert "AP_BAND=bg" in out
+
+
+def test_own_active_connection_is_not_treated_as_foreign_duplicate(tmp_path, fake_bin):
+    # 自APが既に上がっていると wifi list にも同じ SSID が載る。それは他ハブではない。
+    fake_bin(
+        "nmcli",
+        'if [[ " $* " == *" --active "* ]]; then echo "presence-hub-ap"; '
+        'else echo "presence-hub:70:WPA2"; fi',
+    )
+    f = _site(tmp_path)
+    own = run_bash(
+        f'{SOURCE}; site_env_load "{f}"; ap_own_connection_active',
+        env=dict(os.environ),
+        check=False,
+    )
+    assert own.returncode == 0
+    dup = run_bash(
+        f'{SOURCE}; site_env_load "{f}"; ap_duplicate_ssid_present presence-hub',
+        env=dict(os.environ),
+        check=False,
+    )
+    assert dup.returncode == 0
+
+
+def test_apply_explicit_address_fails_when_nmcli_fails(tmp_path, fake_bin):
+    fake_bin("nmcli", "exit 1")
+    f = _site(tmp_path)
+    proc = run_bash(
+        f'{SOURCE}; site_env_load "{f}"; ap_apply_explicit_address',
+        env=dict(os.environ),
+        check=False,
+    )
+    assert proc.returncode == 1

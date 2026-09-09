@@ -7,10 +7,21 @@ REPO_DIR="$(cd "$HERE/../.." && pwd)"
 # shellcheck source=scripts/lib/site-env.sh
 source "$REPO_DIR/scripts/lib/site-env.sh"
 
+ap_own_connection_active() {
+    nmcli -t -f NAME connection show --active 2>/dev/null \
+        | grep -qFx "${AP_SSID}-ap"
+}
+
 ap_duplicate_ssid_present() {
     local ssid="${1:-$AP_SSID}"
     nmcli -t -f SSID,SIGNAL,SECURITY dev wifi list 2>/dev/null \
         | cut -d: -f1 | grep -qFx "$ssid"
+}
+
+ap_apply_explicit_address() {
+    nmcli connection modify "${AP_SSID}-ap" ipv4.addresses "${AP_GW_IP}/24" || return 1
+    nmcli connection up "${AP_SSID}-ap" || return 1
+    return 0
 }
 
 # setup-dongle-ap.sh は ipv4.method shared を使うため、GW IP は NetworkManager が
@@ -31,6 +42,10 @@ ap_env_args() {
 
 main() {
     site_env_require
+    if ap_own_connection_active; then
+        echo "${AP_SSID}-ap は既に起動しています。スキップします"
+        return 0
+    fi
     if [ "${1:-}" != "--force" ] && ap_duplicate_ssid_present "$AP_SSID"; then
         cat >&2 <<EOF
 ⚠ 同じ SSID の AP が既に見えています: $AP_SSID
@@ -55,8 +70,7 @@ EOF
 
     if ap_needs_explicit_address; then
         echo "==> AP のゲートウェイIPを $AP_GW_IP に固定"
-        nmcli connection modify "${AP_SSID}-ap" ipv4.addresses "${AP_GW_IP}/24"
-        nmcli connection up "${AP_SSID}-ap"
+        ap_apply_explicit_address || return 1
         cat <<EOF
 
 ⚠ AP のIPが既定(10.42.0.1)ではありません。各子Pi の
