@@ -24,6 +24,7 @@
 3. ネットワーク設定（工場網 = 内蔵 wlan0、子AP = ドングル wlan1）
 4. HIME-H-REAP への接続 / 切断（デスクトップのアイコン）
 5. パイプライン監視 / フリート監視 / 記録モニタ
+6. 保守用 WiFi の切替（デスクトップの `WiFi切替` 相当）
 
 ### 非ゴール（YAGNI）
 
@@ -43,6 +44,7 @@
 | 5 | リポジトリ | GitHub プライベート。`config/site/` を含め現状のまま push してよい | ユーザー確定 |
 | 6 | ドングル | **現行と同型 ELECOM WDC-433DU2H2-B**（RTL8811AU / `056e:4010`） | ユーザー確定。AP モード動作の実績を優先し、未検証チップのリスクを取らない |
 | 7 | 親の STA_NO | ハブでは Oracle に書かれない。ただし必須キーなので値は要る（`PARENT_STA_NO*`） | 4.3 節に根拠 |
+| 8 | WiFi 切替の接続情報 | `secrets.env` の `WIFI_PSK_*` から **nmcli プロファイルを非対話で自動作成** | ユーザー確定。`connect-hime-h-reap.sh` が既にとっている方式と同じで、秘密を 1 ファイルに集約できる |
 
 ## 4. 現行機の実測値（再現の元データ）
 
@@ -109,6 +111,38 @@ MAC である。加えて内蔵 1 枚で AP とクライアントを同時に張
 初めて衝突する（しかも `docs/DEPLOY.md` の言う「無警告で欠落」する側の事故）。
 したがって `PARENT_STA_NO*` は **今のうちに他機・全子Piと重複しない値を採番する**。
 
+### 4.4 デスクトップ資産の実体と Git との乖離
+
+現行機のデスクトップには次があるが、**リポジトリに入っているのは 5 個のランチャーだけ**である。
+`WiFi切替/` と `フリート管理.desktop` は**この SD カードの中にしか存在しない**。新機で再現
+できないだけでなく、現行機が故障すれば失われる。本設計でリポジトリへ取り込む。
+
+| 実体 | Git 追跡 | 備考 |
+|---|---|---|
+| `~/Desktop/HIME-H-REAP-{接続,切断}.desktop` | あり | `desktop/launchers/` |
+| `~/Desktop/{記録モニタ,直近30件,パイプライン監視}.desktop` | あり | 同上 |
+| `~/Desktop/フリート管理.desktop` | **なし** | `chromium --app=http://localhost:8090` |
+| `~/Desktop/WiFi切替/switch-wifi.sh` | **なし** | 機体非依存。nmcli の薄いラッパ |
+| `~/Desktop/WiFi切替/{F66,GallaxyS23FE,UFI_103134,presence-hub}.desktop` | **なし** | 機体固有（SSID とインターフェース割当） |
+
+`switch-wifi.sh` の性質:
+
+- `nmcli --wait 20 connection up "$CONN" ifname "$IFNAME"` を叩くだけ。**パスワードを持たない**
+- 第3引数 `--away-from-f66` のときだけ「Claude Code への接続が切れる」警告と `y/N` 確認を出す
+- **NetworkManager に保存済みの接続しか切り替えられない**。したがって空のラズパイにこの
+  フォルダを置いても何も起きない（`connection up` が失敗する）
+
+`--away-from-f66` は「F66 経由でしか Claude/Anthropic に到達できない」という**現行機固有の
+前提**を名前に埋め込んでいる。新機では保守用の SSID が別名になり得るため、`--warn-disconnect`
+へ一般化し、警告文中の SSID 名は `site.env` の `ADMIN_SSID` から生成する。
+
+| ランチャー | 接続名 | IF | 警告 | 役割 |
+|---|---|---|---|---|
+| F66 | `F660P-sDcS-A` | wlan0 | なし | 保守用。通常状態への復帰 |
+| GallaxyS23FE | `GallaxyS23FE` | wlan0 | あり | スマホテザリング |
+| UFI_103134 | `UFI_103134` | wlan0 | あり | モバイルルータ |
+| presence-hub | `presence-hub-ap` | wlan1 | なし | **子AP を他のWiFiに奪われたときの復旧用** |
+
 ## 5. `site.env` — 機体固有値
 
 リポジトリ直下に置く。`.gitignore` に追加し、Git には載せない。
@@ -162,6 +196,11 @@ AP_CHANNEL=6
 
 # --- 平時のインターネット接続（戻り先）---
 HOME_SSID=UFI_103134             # 切断時に戻す先。スクリプトのハードコードを廃してここへ
+
+# --- 保守用ネットワーク ---
+# ここから離れると遠隔操作できなくなる接続。WiFi切替ランチャーの警告文に使う。
+# 現行機では F66（この SSID 経由でしか Claude/Anthropic に到達できない）。
+ADMIN_SSID=F660P-sDcS-A
 ```
 
 ### 検証（`scripts/lib/site-env.sh`）
@@ -173,6 +212,24 @@ HOME_SSID=UFI_103134             # 切断時に戻す先。スクリプトのハ
 - `PARENT_STA_NO*` が空でないこと
 - `HUB_HOSTNAME` が既存の子（`fleet/children.conf`）と重複しないこと
 - `AP_GW_IP` が `FACTORY_IP` と同一サブネットでないこと
+
+### `wifi-switch.conf` — WiFi 切替ランチャーの定義
+
+`site.env` と同じく機体固有・Git 管理外。ひな型 `wifi-switch.conf.example` を Git 管理する。
+1 行 1 ランチャー、`#` 以降はコメント。
+
+```
+# <NM接続名>       <ifname>  <表示名>       <警告>  <PSKキー名(secrets.env)>
+F660P-sDcS-A       wlan0     F66            -       WIFI_PSK_F66
+GallaxyS23FE       wlan0     GallaxyS23FE   warn    WIFI_PSK_GALAXY
+UFI_103134         wlan0     UFI_103134     warn    WIFI_PSK_UFI
+presence-hub-ap    wlan1     presence-hub   -       -
+```
+
+- `<警告>` が `warn` の行は、切替前に「`ADMIN_SSID` から離れるため遠隔操作できなくなる」旨を
+  表示し `y/N` を取る
+- `<PSKキー名>` が `-` の行は **nmcli プロファイルを作らない**。`presence-hub-ap` は
+  フェーズ 50 が `setup-dongle-ap.sh` 経由で作るため、ここで二重に作ってはならない
 
 ## 6. `scripts/bootstrap-hub.sh` — フェーズ設計
 
@@ -286,6 +343,22 @@ AP プロファイルに `ipv4.addresses <AP_GW_IP>/24` を明示指定する必
 - `.desktop` ランチャーを**テンプレートから生成**（現状の `/home/pi/` 直書きを廃し、
   実ユーザーの `$HOME` を埋める）
 - `HIME-H-REAP-切断.desktop` の Comment に埋まっている `UFI_103134` も `HOME_SSID` から生成
+- `フリート管理.desktop` を配置（`chromium --app=http://localhost:8090`）
+- **WiFi 切替**（4.4 節）:
+  1. `desktop/wifi-switch/switch-wifi.sh` を `$HOME/Desktop/WiFi切替/` へ配置
+  2. `wifi-switch.conf` の各行から `.desktop` を生成。`warn` 行には
+     `--warn-disconnect "$ADMIN_SSID"` を渡す
+  3. **nmcli プロファイルの播種**: `<PSKキー名>` が `-` でない行について、その接続が未保存で
+     あれば `secrets.env` の対応キーを root で読み、`nmcli connection add type wifi` で作成する。
+     キーが `secrets.env` に無ければ**作成せず、不足しているキー名を一覧表示する**
+     （黙って失敗させない）
+  4. 検証: 各行の接続が `nmcli -t -f NAME connection show` に現れること
+
+**PSK の扱いに関する注記**: 手順 3 は PSK を `nmcli` のコマンドライン引数として渡すため、
+ごく短時間 `ps` に露出する。これは既存の `connect-hime-h-reap.sh` と同じ方式であり、
+単一ユーザーの機体では許容する。露出も避けたい場合は
+`/etc/NetworkManager/system-connections/<名前>.nmconnection` を `600 root:root` で直接
+書き出す方式に差し替えられる（本設計では採らない）。
 
 ## 7. 既存資産の改修
 
@@ -299,7 +372,10 @@ AP プロファイルに `ipv4.addresses <AP_GW_IP>/24` を明示指定する必
 | `watch-records.sh` | `HUB_MODE=1` では `presence-detector` のログを購読せず bridge のみにする | `:35-38` が無条件に `docker logs presence-detector` を叩き、ハブではエラーになる |
 | `show-recent-records.sh` | 絞り込み既定値の出所を変更。`HUB_MODE=1` では親の station ではなく **`*`（すべて）を既定**にする | `:63-65` が親の `device.yaml` station を既定にするため、ハブでは placeholder で絞られ**常に 0 件**になる |
 | `scripts/install.sh` | フェーズ 40 から呼ばれる形に整理（重複を作らない） | 既存資産を捨てない |
-| `.gitignore` | `site.env` を追加 | 機体固有値を Git に載せない |
+| `.gitignore` | `site.env` と `wifi-switch.conf` を追加 | 機体固有値を Git に載せない |
+| `~/Desktop/WiFi切替/switch-wifi.sh` | `desktop/wifi-switch/switch-wifi.sh` として**新規に Git 管理**。`--away-from-f66` → `--warn-disconnect <SSID>` へ一般化 | 現行機の SD カードにしか存在せず、現行機固有の前提が名前に埋まっている（4.4 節） |
+| `~/Desktop/WiFi切替/*.desktop` | テンプレート + `wifi-switch.conf` から生成する形で Git 管理 | 同上。SSID とインターフェース割当が機体固有 |
+| `~/Desktop/フリート管理.desktop` | `desktop/launchers/` へ取り込む | 同上（Git 未追跡） |
 
 ## 8. Git に載せられないもの — どこに何を置くか
 
@@ -309,7 +385,8 @@ AP プロファイルに `ipv4.addresses <AP_GW_IP>/24` を明示指定する必
 | 絶対パス | 何を書くか | 権限 / 所有 | 入手元 |
 |---|---|---|---|
 | `/home/pi/projects/presence-logger/site.env` | 5 節の機体固有値 | `600 pi:pi` | **手入力**（`site.env.example` をコピー） |
-| `/etc/presence-logger/secrets.env` | `ORACLE_PASSWORD_HHC=` / `WIFI_PSK_HIMEREAP=` / `WIFI_AP_PSK=`（必要に応じて `ORACLE_PASSWORD_A,B,D`・`WALLET_PASSWORD_B`） | `600 root:docker` | 現行機の同ファイル、または情シス。**Git にもコミットログにも残さない** |
+| `/home/pi/projects/presence-logger/wifi-switch.conf` | WiFi 切替ランチャーの定義（5 節） | `600 pi:pi` | **手入力**（`wifi-switch.conf.example` をコピー） |
+| `/etc/presence-logger/secrets.env` | `ORACLE_PASSWORD_HHC=` / `WIFI_PSK_HIMEREAP=` / `WIFI_AP_PSK=` / WiFi 切替用の `WIFI_PSK_*`（`wifi-switch.conf` で参照するキー名）（必要に応じて `ORACLE_PASSWORD_A,B,D`・`WALLET_PASSWORD_B`） | `600 root:docker` | 現行機の同ファイル、または情シス。**Git にもコミットログにも残さない** |
 | `/etc/presence-logger/profiles.yaml` | 工場プロファイル | `640 root:root` | **フェーズ 40 が `site.env` から生成** |
 | `/etc/presence-logger/device.yaml` | `device_id: null` + `PARENT_STA_NO*` | `644 root:root` | フェーズ 40 が生成 |
 | `/etc/presence-logger/bridge.yaml` | bridge 動作パラメータ | `644 root:root` | `config/site/bridge.yaml` から複製（Git にある） |
@@ -323,6 +400,7 @@ AP プロファイルに `ipv4.addresses <AP_GW_IP>/24` を明示指定する必
 | `/home/pi/.ssh/known_hosts` | 子の host key | `600` | `ssh-keyscan` で各子を登録 |
 | `/home/pi/projects/presence-logger/fleet/known_macs.json` | TOFU 学習済み MAC | `644 pi:pi` | 空でよい。運用で自動生成 |
 | `/var/lib/presence-logger/` | bridge の SQLite バッファ | `755 root` | **コピーしない**。旧機で送り切ってから引っ越す（二重送信を避ける） |
+| `/etc/NetworkManager/system-connections/*.nmconnection` | 保守用WiFi の接続定義（PSK を含む） | `600 root:root` | **フェーズ 70 が `secrets.env` から生成**。現行機からのコピーはしない |
 | `/etc/modprobe.d/8821au.conf` | `options 8821au rtw_led_ctrl=1 rtw_country_code=JP rtw_power_mgnt=0` | `644 root:root` | フェーズ 30 が配置 |
 | `~/.config/fcitx5/profile` | `Default Layout=jp` / `DefaultIM=mozc` | `600 pi:pi` | フェーズ 10 が配置 |
 
@@ -354,8 +432,8 @@ Oracle の MERGE キーは `MK_DATE + STA_NO1-3 + T1_STATUS` のみで `device_i
 |---|---|---|
 | 1 | 日本語入力 | 再ログイン後、テキストエディタで「ひらがな」を変換入力できる |
 | 2 | ドングル | `wlan1` が存在し `iw phy` に `* AP` がある。`rtw_country_code=JP` |
-| 3 | 子AP | `nmcli` で `presence-hub-ap` が active、`10.42.0.1` が付き dnsmasq が動いている |
-| 4 | 子Pi 接続 | 全子が `10.42.0.x` を取得し、`scripts/fleet-status.sh` が **exit 0** |
+| 3 | 子AP | `nmcli` で `$AP_SSID` の AP プロファイルが active、`$AP_GW_IP` が付き dnsmasq が動いている |
+| 4 | 子Pi 接続 | 全子が `$AP_GW_IP` のサブネットで IP を取得し、`scripts/fleet-status.sh` が **exit 0** |
 | 5 | コンテナ | mosquitto / bridge / oracle-jdbc が running。**detector は存在しない** |
 | 6 | 工場網接続 | 「HIME-H-REAP に接続」で接続でき、`ip route get <ORACLE_HOST>` が `dev wlan0` |
 | 7 | デフォルト経路 | 工場接続中もデフォルト経路が奪われない（`never-default`） |
@@ -363,8 +441,9 @@ Oracle の MERGE キーは `MK_DATE + STA_NO1-3 + T1_STATUS` のみで `device_i
 | 9 | パイプライン監視 | ①〜④が表示され、同一 event_id を ②→③→④ で追える |
 | 10 | 直近30件 | 既定の絞り込みで **0 件にならない**（子の実レコードが見える） |
 | 11 | フリート監視 | `http://localhost:8090` が開き、`ss -ltn` で `127.0.0.1:8090` のみ |
-| 12 | 再起動耐性 | `reboot` 後、AP とコンテナが自動復帰する |
-| 13 | 切断 | 「HIME-H-REAP を切断」で `HOME_SSID` に戻る |
+| 12 | WiFi 切替 | `WiFi切替` の各アイコンで切替でき、`warn` 付きは確認プロンプトが出る。`presence-hub` で子AP を復旧できる |
+| 13 | 再起動耐性 | `reboot` 後、AP とコンテナが自動復帰する |
+| 14 | 切断 | 「HIME-H-REAP を切断」で `HOME_SSID` に戻る |
 
 ## 11. リスクと対策
 
@@ -374,6 +453,7 @@ Oracle の MERGE キーは `MK_DATE + STA_NO1-3 + T1_STATUS` のみで `device_i
 | 新機の固定IPが現行機と重複 | 工場網で IP 衝突 | `site.env` 検証で必須化。情シス申請値であることを `NEW-HUB-SETUP.md` に明記 |
 | 後からカメラを付けて detector が動く | placeholder の STA_NO が本番テーブルへ書かれる | `PARENT_STA_NO*` を最初から重複しない実値で採番。compose の `profiles:` で明示有効化を要求 |
 | DKMS ビルドがカーネル更新で失敗 | `wlan1` が消え AP が落ちる | DKMS は自動再ビルドされる。失敗時は `install-driver.sh NoPrompt` の再実行手順を `NEW-HUB-SETUP.md` に記載 |
+| WiFi 切替で保守用ネットワークから離れ、遠隔操作できなくなる | 現地に行くまで復旧できない | `warn` 行に `y/N` 確認を必須化。警告文に `ADMIN_SSID` を明示。`presence-hub` 復旧ランチャーを必ず同梱する |
 | `secrets.env` の受け渡しで秘密が漏れる | 認証情報の露出 | Git・コミットメッセージ・ログに出さない。フェーズ 40 は雛形生成と必要キーの提示までに留め、値は人が投入する |
 | 旧機のバッファを引き継いで二重送信 | Oracle への重複書込 | `/var/lib/presence-logger/` はコピーしない。旧機で送り切ってから移行する |
 
@@ -383,5 +463,7 @@ Oracle の MERGE キーは `MK_DATE + STA_NO1-3 + T1_STATUS` のみで `device_i
 2. フェーズ 10（日本語入力）— **最優先。単体で価値があり、単体で検証できる**
 3. フェーズ 20 → 30 → 40 → 50 → 60 → 70
 4. 既存資産の改修（7 節）— ハブモード分岐を含む
-5. `docs/NEW-HUB-SETUP.md` / `docs/child-migration.md`
-6. テスト（`scripts/tests/` に site-env 検証と生成ロジックのユニットテストを追加）
+5. `desktop/wifi-switch/` の Git 取り込みと一般化（4.4 節）
+6. `docs/NEW-HUB-SETUP.md` / `docs/child-migration.md`
+7. テスト（`scripts/tests/` に site-env / wifi-switch.conf の検証と、生成ロジックの
+   ユニットテストを追加。切替スクリプトは `nmcli` をモックして検証する）
