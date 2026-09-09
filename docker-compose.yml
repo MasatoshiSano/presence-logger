@@ -16,6 +16,10 @@ services:
   detector:
     build: ./services/detector
     container_name: presence-detector
+    # カメラ無しのハブでは起動しない。`docker compose --profile camera up -d`
+    # と明示したときだけ対象になる。clone 直後に `up -d --build` が
+    # gitignore された .tflite の COPY で失敗するのも、これで防げる。
+    profiles: ["camera"]
     restart: unless-stopped
     depends_on: [mosquitto]
     networks: [presence-net]

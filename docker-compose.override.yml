@@ -15,7 +15,8 @@
 # yet at boot, the bind fails fast and `restart: unless-stopped` retries until the
 # AP interface appears. Explicit test/tooling flows (`-f docker-compose.dev.yml`,
 # connect-hime-h-reap.sh) pass their own -f and are unaffected by this file.
+# AP_GW_IP は scripts/bootstrap/60-stack.sh が .env に書き出す。
 services:
   mosquitto:
     ports:
-      - "10.42.0.1:1883:1883"
+      - "${AP_GW_IP:-10.42.0.1}:1883:1883"
