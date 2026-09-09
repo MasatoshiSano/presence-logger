@@ -55,3 +55,7 @@ models/**/packerOut.zip
 
 # --- fleet-ui: TOFUで学習したMACは親ホスト固有のruntime状態。gitに載せない ---
 fleet/known_macs.json
+
+# --- 機体固有値: 新しいハブごとに手で書く。Git には載せない ---
+site.env
+wifi-switch.conf
