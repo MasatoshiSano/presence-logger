@@ -90,6 +90,32 @@ docker compose up -d --build mosquitto oracle-jdbc bridge
 detector 自体が不要なので、サービスを明示して除外する
 （設計書 §6 フェーズ60 の実装後は compose の `profiles:` で自動的に外れる）。
 
+### スクリプトのフェーズと、この文書の節の対応
+
+`scripts/bootstrap-hub.sh` は番号付きのフェーズを順に実行する。各フェーズは、この文書の
+どの節を自動化したものかが決まっている。**手動で進める場合は、この順序どおりに節をたどれば
+同じ結果になる。**
+
+| フェーズ | 内容 | 対応する節 | 完了後に人がすること |
+|---|---|---|---|
+| 10 | 日本語入力 | §3.10 | **ログアウト → 再ログイン** |
+| 20 | 基盤パッケージ・ホスト名・venv・SSH鍵 | §0.5, §3.5, §3.7 | 再ログイン(docker グループ反映) |
+| 30 | ドングルドライバ | §3.9 | `wlan1` の出現確認 |
+| 40 | `/etc/presence-logger/` 生成 | §3.3, §3.4 | `secrets.env` に値を入れる |
+| 50 | 子AP 構築 | （§3.12 の前提） | 子が IP を取れる確認 |
+| 60 | コンテナ起動・常駐化 | §3.12 | — |
+| 70 | デスクトップ配置・WiFi切替 | §3.11 | アイコンの「信頼して実行」 |
+
+```bash
+sudo bash scripts/bootstrap-hub.sh            # 全フェーズ
+sudo bash scripts/bootstrap-hub.sh 10         # フェーズ10 だけ
+sudo bash scripts/bootstrap-hub.sh 30 60      # 30〜60（両端を含む）
+bash scripts/bootstrap-hub.sh --list          # 一覧
+```
+
+**途中で失敗しても、そのフェーズから再開できる。** 全フェーズは冪等なので、範囲を指定して
+流し直しても壊れない。
+
 ---
 
 ## 1. 事前に現行機で採取するもの
@@ -170,6 +196,31 @@ nano site.env
 | `PARENT_STA_NO1-3` | ハブでは Oracle に書かれないが**必須項目**。将来カメラを付けたときに備え、**他機・全子Piと重複しない値**を採番する。現行機と同じ値を入れてはならない |
 | `AP_SSID` / `AP_GW_IP` | **引っ越し**なら現行機と同じ値（子は無変更で繋ぎ替わる）。**増設**なら別の値（子側の変更が要る） |
 | `ADMIN_SSID` | ここから離れると遠隔操作できなくなる接続。現行機では `F660P-sDcS-A` |
+
+**IPアドレスの書式（`FACTORY_IP` / `FACTORY_GW` / `AP_GW_IP`）**
+
+| 項目 | 決まり | 弾かれる例 |
+|---|---|---|
+| 各オクテット | 0〜255。**先頭ゼロは不可** | `172.008.13.18`（`008` は不可）/ `999.1.1.1` |
+| プレフィックス長 | 0〜32。先頭ゼロ不可 | `/99` / `/024` |
+| 単独の `0` | 可（`10.0.0.5/24` は正しい） | — |
+
+**先頭ゼロを禁止しているのは実害があるからである。** `172.008.13.18` のように桁を揃えて
+書くと、シェルはこれを8進数として解釈しようとして失敗する。以前はその失敗が握り潰され、
+**子APが工場網と衝突していても検証が通ってしまう**状態だった（`172.022.0.1` に至っては
+エラーすら出ず `172.18.0.1` と同じ値に化けていた）。現在は書式の時点で弾き、どの項目の
+どこが悪いかを名指しする。
+
+**書いたら、その場で検証する（インストールを始める前に）**
+
+```bash
+cd ~/projects/presence-logger
+bash -c 'source scripts/lib/site-env.sh; site_env_require && echo "✅ site.env は妥当です"'
+```
+
+固定IPの衝突・ホスト名の重複・子APと工場網のサブネット重複は、**動かなくなる**のではなく
+**無警告でレコードが欠落する**形で現れる。ここで弾くのが唯一の防波堤なので、必ず通してから
+次へ進むこと。エラーは1行1件で、問題のある項目名がそのまま出る。
 
 内蔵 WiFi の MAC は次で確認する（申請に使う）:
 
@@ -498,7 +549,65 @@ sudo systemctl daemon-reload && sudo systemctl enable --now fleet-ui.service
 ss -ltn | grep 8090                                # 127.0.0.1:8090 のみ
 ```
 
-### 3.13 運用上の注意（新機で最初に踏みやすい罠）
+### 3.13 デスクトップのアイコンを置く（現地オペレーターの入り口）
+
+**この工程を飛ばすと、コンテナが動いていても現地で誰も操作できない。** §4 の完了確認は
+これらのアイコンが動くことを前提にしている。
+
+**自動（実装後）**: `sudo bash scripts/bootstrap-hub.sh 70`
+
+**手動（現在）**:
+
+```bash
+cd ~/projects/presence-logger
+DESK="$HOME/Desktop"
+mkdir -p "$DESK/presence-tools" "$DESK/WiFi切替"
+
+# 1. ツール本体
+cp -r desktop/presence-tools/. "$DESK/presence-tools/"
+chmod +x "$DESK/presence-tools"/*.sh "$DESK/presence-tools"/*.py
+
+# 2. ランチャー（パスを自分の $HOME に置き換える）
+for f in desktop/launchers/*.desktop; do
+    sed "s|/home/pi/Desktop|$DESK|g" "$f" > "$DESK/$(basename "$f")"
+done
+chmod +x "$DESK"/*.desktop
+```
+
+初回はアイコンを右クリックして「**信頼して実行**」を選ぶ（Raspberry Pi OS の既定動作）。
+
+**置かれるもの**
+
+| アイコン | 実体 | sudo | ハブでの動作 |
+|---|---|---|---|
+| HIME-H-REAP に接続 | `connect-hime-h-reap.sh` | 要 | 工場網へ接続。**カメラ無しなので検知は始まらない** |
+| HIME-H-REAP を切断 | `disconnect-hime-h-reap.sh` | 要 | `HOME_SSID` へ戻す |
+| 記録モニタ | `watch-records.sh` | 不要 | bridge の書込ログを流す |
+| 直近30件の記録 | `show-recent-records.sh` | 不要 | JDBCサイドカー経由で Oracle を SELECT |
+| パイプライン監視 | `pipeline-monitor.sh` | 不要 | 子Pi→MQTT→inbox→Oracle を1画面で追う |
+| フリート管理 | `chromium --app=http://localhost:8090` | 不要 | 子Pi の一覧・登録（§3.12 で `fleet-ui.service` を常駐化済みであること） |
+| WiFi切替（`WiFi切替/` 内） | `switch-wifi.sh` | 要 | §3.11 で nmcli プロファイルを作った接続だけ |
+
+**ハブ構成（カメラ無し）での注意 3 点**
+
+1. **「接続」を押しても検知は始まらない。** 元々は接続と同時に detector コンテナを起動する
+   設計だが、ハブには detector が無い。記録は子Pi から届く。
+2. **「記録モニタ」は bridge のログだけを表示する。** detector のログは存在しない。
+3. **「直近30件」の絞り込み既定値は「すべて」にする。** 既定では親自身の局番で絞るが、ハブの
+   局番は placeholder なので、そのまま Enter を押すと**常に0件**になる。プロンプトで `*` を
+   入力するか、`site.env` に `HUB_MODE=1` を設定しておく。
+
+> **`HUB_MODE=1` を `site.env` に入れておくこと。** 上記 1〜3 はこの値で自動的に切り替わる。
+> 入れ忘れると、存在しない detector を掴もうとしてエラーになる。
+
+**確認**
+
+```bash
+ls ~/Desktop/*.desktop ~/Desktop/WiFi切替/*.desktop
+ss -ltn | grep 8090        # フリート管理が 127.0.0.1:8090 で待ち受けていること
+```
+
+### 3.14 運用上の注意（新機で最初に踏みやすい罠）
 
 - **`children.conf` は Git 追跡ファイル。** フリート管理で子を登録すると作業ツリーが汚れ、
   `scripts/deploy-parent.sh` が「作業ツリーに未コミット変更があります」で**実行を拒否する**。
