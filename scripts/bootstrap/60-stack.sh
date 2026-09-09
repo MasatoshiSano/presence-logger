@@ -19,6 +19,13 @@ stack_write_env() {
     printf '# 自動生成: scripts/bootstrap/60-stack.sh\nAP_GW_IP=%s\n' "$AP_GW_IP" > "$dst"
 }
 
+stack_enable_fleet_ui() {
+    install -m 644 "$REPO_DIR/fleet_ui/systemd/fleet-ui.service" /etc/systemd/system/ || return 1
+    systemctl daemon-reload || return 1
+    systemctl enable --now fleet-ui.service || return 1
+    return 0
+}
+
 main() {
     site_env_require
     stack_write_env "$REPO_DIR/.env"
@@ -38,9 +45,7 @@ main() {
         bash "$REPO_DIR/desktop/presence-tools/setup-autostart.sh" || return 1
 
     echo "==> フリート監視を常駐化"
-    install -m 644 "$REPO_DIR/fleet_ui/systemd/fleet-ui.service" /etc/systemd/system/
-    systemctl daemon-reload
-    systemctl enable --now fleet-ui.service
+    stack_enable_fleet_ui || return 1
 
     docker ps --format '    {{.Names}}  {{.Status}}'
     ss -ltn | grep 8090 || true

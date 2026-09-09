@@ -83,3 +83,21 @@ def test_autostart_dropin_stops_detector_when_camera_present():
         env=dict(os.environ),
     ).stdout
     assert "ExecStartPost=-/usr/bin/docker stop presence-detector" in out
+
+
+def test_enable_fleet_ui_fails_when_systemctl_fails(tmp_path, fake_bin):
+    # daemon-reload は成功させ、enable --now だけ失敗させる。全部 exit 1 だと
+    # daemon-reload の || return 1 だけで緑になり、enable 側の欠落を見逃す。
+    fake_bin("install", "exit 0")
+    fake_bin(
+        "systemctl",
+        'if [[ " $* " == *" daemon-reload "* ]]; then exit 0; fi; exit 1',
+    )
+    f = tmp_path / "site.env"
+    f.write_text(SITE, encoding="utf-8")
+    proc = run_bash(
+        f'{SOURCE}; site_env_load "{f}"; stack_enable_fleet_ui',
+        env=dict(os.environ),
+        check=False,
+    )
+    assert proc.returncode == 1
