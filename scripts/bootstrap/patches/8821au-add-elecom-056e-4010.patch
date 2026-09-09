@@ -1,0 +1,10 @@
+--- a/os_dep/linux/usb_intf.c
++++ b/os_dep/linux/usb_intf.c
+@@ -205,6 +205,7 @@
+ 	{USB_DEVICE(0x056E, 0x4007), .driver_info = RTL8821}, /* ELECOM */
+ 	{USB_DEVICE(0x056E, 0x400E), .driver_info = RTL8821}, /* ELECOM */
+ 	{USB_DEVICE(0x056E, 0x400F), .driver_info = RTL8821}, /* ELECOM */
++	{USB_DEVICE(0x056E, 0x4010), .driver_info = RTL8821}, /* ELECOM WDC-433DU2H2-B */
+ 	{USB_DEVICE(0x0846, 0x9052), .driver_info = RTL8821}, /* Netgear */
+ 	{USB_DEVICE(0x0E66, 0x0023), .driver_info = RTL8821}, /* HAWKING */
+ 	{USB_DEVICE(0x2001, 0x3314), .driver_info = RTL8821}, /* D-Link */
