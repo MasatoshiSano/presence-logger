@@ -9,6 +9,7 @@ from services.bridge.src.config import (
     load_profiles_config,
     load_yaml,
     needs_thick_mode,
+    read_upcmpflg_override,
     station_for_profile,
 )
 
@@ -396,3 +397,28 @@ def test_list_all_sntp_servers_dedups_and_orders():
     assert "ntp.shared" in out
     # No duplicates
     assert len(out) == len(set(out))
+
+
+def test_read_upcmpflg_override_missing_file_returns_none(tmp_path: Path):
+    assert read_upcmpflg_override(tmp_path / "does-not-exist") is None
+
+
+def test_read_upcmpflg_override_empty_file_returns_none(tmp_path: Path):
+    p = tmp_path / "upcmpflg.override"
+    p.write_text("")
+    assert read_upcmpflg_override(p) is None
+
+
+def test_read_upcmpflg_override_reads_integer(tmp_path: Path):
+    p = tmp_path / "upcmpflg.override"
+    p.write_text("0\n")
+    assert read_upcmpflg_override(p) == 0
+    p.write_text("1")
+    assert read_upcmpflg_override(p) == 1
+
+
+def test_read_upcmpflg_override_invalid_value_returns_none(tmp_path: Path):
+    """A manual-edit typo must not crash the sender loop -- fall back silently."""
+    p = tmp_path / "upcmpflg.override"
+    p.write_text("yes")
+    assert read_upcmpflg_override(p) is None

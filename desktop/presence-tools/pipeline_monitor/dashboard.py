@@ -28,6 +28,7 @@ from pipeline_monitor.rollup import merged_children
 
 HEARTBEAT_TIMEOUT_S = 60.0
 VERIFY_BATCH = 1   # 1ループtickあたりに検証を試みる未検証行の数(ブロック時間を短く保つ)
+INBOX_LIMIT = 100  # ③④が見る直近アクティビティの件数(受信順)
 
 
 @dataclass
@@ -206,7 +207,7 @@ def run(stdscr, deps: Deps) -> None:
 
     def worker():
         while not stop_event.is_set():
-            inbox_view, inbox_err = _safe(deps.inbox.read, None)
+            inbox_view, inbox_err = _safe(lambda: deps.inbox.read(limit=INBOX_LIMIT), None)
             ssid, _ = _safe(deps.ssid_getter, "(不明)")
             with lock:
                 state["inbox_view"], state["inbox_err"] = inbox_view, inbox_err

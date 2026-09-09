@@ -34,16 +34,18 @@ HEALTH_FILE = "/tmp/bridge.healthy"        # noqa: S108
 DEFAULT_BRIDGE_YAML = "/etc/presence-logger/bridge.yaml"
 DEFAULT_DEVICE_YAML = "/etc/presence-logger/device.yaml"
 DEFAULT_PROFILES_YAML = "/etc/presence-logger/profiles.yaml"
+DEFAULT_UPCMPFLG_OVERRIDE = cfg_mod.UPCMPFLG_OVERRIDE_FILE
 
 
 class _OracleAdapter:
     """Dispatches each MERGE to either python-oracledb (thin/thick) or the
     oracle-jdbc sidecar, based on the profile's client_mode."""
 
-    def __init__(self, *, jdbc_cfg: dict):
+    def __init__(self, *, jdbc_cfg: dict, upcmpflg_override_path: Path | None = None):
         self._jdbc_proxy_url = jdbc_cfg["url"]
         self._jdbc_connect_timeout_ms = int(jdbc_cfg["connect_timeout_ms"])
         self._jdbc_read_timeout_ms = int(jdbc_cfg["read_timeout_ms"])
+        self._upcmpflg_override_path = upcmpflg_override_path
 
     def execute_merge_for_profile(
         self,
@@ -56,7 +58,15 @@ class _OracleAdapter:
         t1_status: int,
     ) -> MergeResult:
         oracle_cfg = profile["oracle"]
-        upcmpflg = oracle_cfg.get("upcmpflg")
+        # Live override wins over profiles.yaml's static value so an operator
+        # can flip UPCMPFLG without a bridge restart (see read_upcmpflg_override).
+        # No override path configured -> never touch the filesystem, same as
+        # before this feature existed.
+        upcmpflg = None
+        if self._upcmpflg_override_path is not None:
+            upcmpflg = cfg_mod.read_upcmpflg_override(self._upcmpflg_override_path)
+        if upcmpflg is None:
+            upcmpflg = oracle_cfg.get("upcmpflg")
         if upcmpflg is not None:
             upcmpflg = int(upcmpflg)
         if oracle_cfg.get("client_mode") == "jdbc":
@@ -131,7 +141,12 @@ def main() -> int:    # pragma: no cover
         preferred_ssids=set(profiles_cfg["profiles"]),
     )
     time_watcher = TimeWatcher(command=bridge_cfg["time_watcher"]["sync_command"])
-    oracle_adapter = _OracleAdapter(jdbc_cfg=bridge_cfg["oracle_jdbc"])
+    oracle_adapter = _OracleAdapter(
+        jdbc_cfg=bridge_cfg["oracle_jdbc"],
+        upcmpflg_override_path=Path(
+            os.environ.get("UPCMPFLG_OVERRIDE", DEFAULT_UPCMPFLG_OVERRIDE)
+        ),
+    )
 
     mqtt = BridgeMqttClient(client_id=bridge_cfg["mqtt"]["client_id"])
     mqtt.connect_and_loop(

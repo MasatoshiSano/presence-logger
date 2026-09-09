@@ -11,7 +11,9 @@ import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.Executors;
@@ -349,15 +351,17 @@ public class Main {
     }
 
     /**
-     * Latest-N rows for a station triple, newest first. Unlike /select_range
-     * this needs no time window: it answers "what are the most recent records
-     * that actually landed in Oracle?" -- the question the Desktop "直近N件"
-     * tool asks to prove writes are real.
+     * Latest-N rows, newest first. Unlike /select_range this needs no time
+     * window: it answers "what are the most recent records that actually
+     * landed in Oracle?" -- the question the Desktop "直近N件" tool asks to
+     * prove writes are real.
      *
-     * POST fields: url, user, password, table_name, sta_no1, sta_no2, sta_no3
-     *   optional: limit (default 30, capped at 200),
-     *             connect_timeout_ms, read_timeout_ms
-     * 2099% sentinel rows (verify_himereap_oracle smoke MERGEs) are excluded.
+     * POST fields: url, user, password, table_name (required)
+     *   optional filters (each ANDed when non-empty): sta_no1, sta_no2, sta_no3,
+     *     t1_status, mk_date_from (MK_DATE&gt;=), mk_date_to (MK_DATE&lt;=)
+     *   optional: limit (default 30, capped 200), connect_timeout_ms, read_timeout_ms,
+     *     include_sentinel (=1 to also return 2099% verify-smoke rows; default excludes)
+     * No filter =&gt; latest N across the table.
      */
     private static void selectRecent(HttpExchange ex) throws IOException {
         if (!"POST".equalsIgnoreCase(ex.getRequestMethod())) {
@@ -368,10 +372,7 @@ public class Main {
         try (InputStream is = ex.getRequestBody()) {
             form = parseForm(new String(is.readAllBytes(), StandardCharsets.UTF_8));
         }
-        for (String required : new String[]{
-            "url", "user", "password", "table_name",
-            "sta_no1", "sta_no2", "sta_no3"
-        }) {
+        for (String required : new String[]{"url", "user", "password", "table_name"}) {
             if (!form.containsKey(required)) {
                 sendPlain(ex, 400, "error_message=missing field: " + required + "\n");
                 return;
@@ -396,6 +397,40 @@ public class Main {
         if (limit < 1) limit = 1;
         if (limit > 200) limit = 200;
 
+        // 2099% rows are verify-smoke sentinels. They are excluded by default so
+        // they never contaminate a real report, but include_sentinel=1 makes them
+        // visible -- otherwise a smoke MERGE can be written and never read back.
+        // NOTE: the 2099 guard in /cleanup_range is a *never-delete* safety valve,
+        // a different concern entirely; it is deliberately left unconditional.
+        boolean includeSentinel = "1".equals(form.get("include_sentinel"));
+        // Optional filters are ANDed into the WHERE clause. Column names are
+        // fixed literals here and every value goes through a bind variable, so
+        // an operator-supplied station or status can never become SQL.
+        StringBuilder where = new StringBuilder(
+            includeSentinel ? " WHERE 1=1" : " WHERE MK_DATE NOT LIKE '2099%'");
+        List<String> binds = new ArrayList<>();
+        String[][] eqCols = {
+            {"sta_no1", "STA_NO1"}, {"sta_no2", "STA_NO2"}, {"sta_no3", "STA_NO3"},
+            {"t1_status", "T1_STATUS"},
+        };
+        for (String[] c : eqCols) {
+            String v = form.get(c[0]);
+            if (v != null && !v.isEmpty()) {
+                where.append(" AND ").append(c[1]).append(" = ?");
+                binds.add(v);
+            }
+        }
+        String from = form.get("mk_date_from");
+        if (from != null && !from.isEmpty()) {
+            where.append(" AND MK_DATE >= ?");
+            binds.add(from);
+        }
+        String to = form.get("mk_date_to");
+        if (to != null && !to.isEmpty()) {
+            where.append(" AND MK_DATE <= ?");
+            binds.add(to);
+        }
+
         Properties props = new Properties();
         props.setProperty("user", form.get("user"));
         props.setProperty("password", form.get("password"));
@@ -405,10 +440,9 @@ public class Main {
             form.getOrDefault("read_timeout_ms", "30000"));
 
         String sql =
-            "SELECT MK_DATE, STA_NO1, STA_NO2, STA_NO3, T1_STATUS, UPCMPFLG FROM " + tableName +
-            " WHERE STA_NO1 = ? AND STA_NO2 = ? AND STA_NO3 = ?" +
-            " AND MK_DATE NOT LIKE '2099%'" +
-            " ORDER BY MK_DATE DESC FETCH FIRST " + limit + " ROWS ONLY";
+            "SELECT MK_DATE, STA_NO1, STA_NO2, STA_NO3, T1_STATUS, UPCMPFLG FROM " + tableName
+            + where
+            + " ORDER BY MK_DATE DESC FETCH FIRST " + limit + " ROWS ONLY";
 
         int count = 0;
         Integer oraCode = null;
@@ -417,9 +451,9 @@ public class Main {
 
         try (Connection conn = DriverManager.getConnection(form.get("url"), props);
              PreparedStatement stmt = conn.prepareStatement(sql)) {
-            stmt.setString(1, form.get("sta_no1"));
-            stmt.setString(2, form.get("sta_no2"));
-            stmt.setString(3, form.get("sta_no3"));
+            for (int i = 0; i < binds.size(); i++) {
+                stmt.setString(i + 1, binds.get(i));
+            }
             try (ResultSet rs = stmt.executeQuery()) {
                 while (rs.next()) {
                     rows.append("row=")

@@ -32,15 +32,19 @@ def _get_password() -> str:
     return out.stdout.strip()
 
 
+WAN_IFACE = os.environ.get("WAN_IFACE", "wlan0")
+
+
 def _get_ssid() -> str:
+    # dual-WiFi構成ではwlan1が常時presence-hub AP(子Pi向け)として「active」に
+    # 見えるため、`nmcli dev wifi`の先頭yes行を拾うと誤検出する。工場網/自宅網は
+    # wlan0固定なので iwgetid でwlan0のESSIDだけを見る。
     out = subprocess.run(  # noqa: S603
-        ["nmcli", "-t", "-f", "ACTIVE,SSID", "dev", "wifi"],  # noqa: S607
+        ["iwgetid", "-r", WAN_IFACE],  # noqa: S607
         capture_output=True, text=True, check=False,
     )
-    for line in out.stdout.splitlines():
-        if line.startswith("yes:"):
-            return line.split(":", 1)[1]
-    return "(不明)"
+    ssid = out.stdout.strip()
+    return ssid or "(不明)"
 
 
 def main() -> int:

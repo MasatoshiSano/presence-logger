@@ -70,6 +70,9 @@ services:
       - /etc/presence-logger/profiles.yaml:/etc/presence-logger/profiles.yaml:ro
       - /etc/presence-logger/bridge.yaml:/etc/presence-logger/bridge.yaml:ro
       - /etc/presence-logger/wallets:/etc/presence-logger/wallets:ro
+      # pi-writable (no sudo), re-read on every MERGE -- lets an operator flip
+      # UPCMPFLG without touching root-owned profiles.yaml or restarting bridge.
+      - /etc/presence-logger/upcmpflg.override:/etc/presence-logger/upcmpflg.override:ro
       - /etc/hostname:/etc/host_hostname:ro
       - /var/lib/presence-logger:/var/lib/presence-logger
       - /var/log/presence-logger:/var/log/presence-logger
