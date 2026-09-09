@@ -45,9 +45,9 @@ SITE = textwrap.dedent("""\
     """)
 
 
-def _render(tmp_path, fn):
+def _render(tmp_path, fn, site=SITE):
     env_file = tmp_path / "site.env"
-    env_file.write_text(SITE, encoding="utf-8")
+    env_file.write_text(site, encoding="utf-8")
     return run_bash(
         f'{SOURCE}; site_env_load "{env_file}"; {fn}',
         env=dict(os.environ),
@@ -76,11 +76,16 @@ def test_profiles_yaml_has_no_station_override(tmp_path):
 def test_password_is_a_variable_reference_not_a_value(tmp_path):
     body = _render(tmp_path, "configs_render_profiles_yaml")
     assert "${ORACLE_PASSWORD_HHC}" in body
+    doc = yaml.safe_load(body)
+    assert doc["profiles"]["HIME-H-REAP"]["oracle"]["password"] == "${ORACLE_PASSWORD_HHC}"
 
 
 def test_unknown_ssid_policy_is_carried_through(tmp_path):
     doc = yaml.safe_load(_render(tmp_path, "configs_render_profiles_yaml"))
     assert doc["unknown_ssid_policy"] == "drop"
+    hold_site = SITE.replace("UNKNOWN_SSID_POLICY=drop", "UNKNOWN_SSID_POLICY=hold")
+    hold_doc = yaml.safe_load(_render(tmp_path, "configs_render_profiles_yaml", site=hold_site))
+    assert hold_doc["unknown_ssid_policy"] == "hold"
 
 
 def test_device_yaml_uses_parent_sta_no(tmp_path):
