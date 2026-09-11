@@ -284,6 +284,7 @@ function bindMigrateForm() {
   const input = document.getElementById('old-host');
   input.addEventListener('input', () => {
     renderMigrateStatus();
+    setMigrateMsg('', false);
   });
   document.getElementById('migrate-list').onclick = listRemoteChildren;
 }
