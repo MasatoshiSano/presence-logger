@@ -22,6 +22,12 @@
         white-space: pre-wrap; }
   .target { font-size: 12px; color: #666; }
   .dim { opacity: .55; }
+  label { display: block; margin: 12px 0 8px; }
+  input[type="text"] { font: inherit; padding: 4px 8px; }
+  .err { color: #a13d5c; }
+  #migrate-children { list-style: none; padding: 0; margin: 0; }
+  #migrate-children li { display: flex; gap: 12px; align-items: center;
+                         padding: 8px 0; border-bottom: 1px solid #eee; }
 </style>
 
 <h1>フリート管理</h1>
@@ -37,6 +43,16 @@
 
 <h2>未登録の端末</h2>
 <div id="candidates"></div>
+
+<h2>他のハブから引き継ぐ</h2>
+<p class="target">親機に付いている稼働中の子を、ホスト名と局番号を変えずにこのハブへ移します。新機登録ウィザードは使わないでください。AP のパスワードはこの画面には出しません。</p>
+<div id="migrate-status"></div>
+<label>旧ハブ（工場網のホスト名または IP）
+  <input type="text" id="old-host" size="28" autocomplete="off">
+</label>
+<button type="button" id="migrate-list">子機一覧を取る</button>
+<p id="migrate-msg"></p>
+<ul id="migrate-children"></ul>
 
 <script>
 'use strict';
@@ -142,7 +158,134 @@ function renderCandidates() {
 function render() {
   renderChildren();
   renderDuplicates();
-  renderCandidates();
+  if (!WIZARD_ACTIVE) renderCandidates();
+  renderMigrateStatus();
+}
+
+function migrateView() {
+  return VIEW && VIEW.migrate ? VIEW.migrate : {};
+}
+
+function renderMigrateStatus() {
+  const box = document.getElementById('migrate-status');
+  clear(box);
+  const m = migrateView();
+  if (m.ap_ssid) {
+    box.appendChild(el('p', 'このハブの AP: ' + m.ap_ssid));
+  }
+  if (m.has_psk === false) {
+    box.appendChild(el(
+      'div',
+      'このハブの AP パスワードが読めません。.kit/ap-join.env が必要です（ハブ初期設定が書きます）。パスワード自体はこの画面には出しません。',
+      'warn'
+    ));
+  }
+  if (m.pubkey) {
+    box.appendChild(el('p', '先に、旧ハブへこのハブの公開鍵を1回入れてください。'));
+    box.appendChild(el('pre', m.pubkey));
+    const cmd = el('p');
+    cmd.appendChild(document.createTextNode('このハブから: '));
+    cmd.appendChild(el('code', copyIdCommand()));
+    box.appendChild(cmd);
+  } else {
+    box.appendChild(el(
+      'div',
+      'このハブに SSH 公開鍵がありません。ssh-keygen -t ed25519 を実行してください。',
+      'warn'
+    ));
+  }
+}
+
+function copyIdCommand() {
+  const host = (document.getElementById('old-host').value || '').trim() || '旧ハブのアドレス';
+  return 'ssh-copy-id -i ~/.ssh/id_ed25519.pub pi@' + host;
+}
+
+function setMigrateMsg(text, isError) {
+  const msg = document.getElementById('migrate-msg');
+  clear(msg);
+  if (!text) return;
+  msg.appendChild(el(isError ? 'span' : 'span', text, isError ? 'err' : null));
+}
+
+async function listRemoteChildren() {
+  const host = document.getElementById('old-host').value;
+  const list = document.getElementById('migrate-children');
+  clear(list);
+  setMigrateMsg('旧ハブへ問い合わせています…', false);
+  let res;
+  try {
+    const r = await fetch('/api/migrate/list', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json', [CSRF_HEADER]: '1'},
+      body: JSON.stringify({old_host: host}),
+    });
+    res = await r.json();
+  } catch (e) {
+    res = {ok: false, message: '通信に失敗しました: ' + e};
+  }
+  if (!res.ok) {
+    setMigrateMsg(res.message || '子機一覧を取れませんでした', true);
+    return;
+  }
+  const children = res.children || [];
+  setMigrateMsg(res.message || (children.length + ' 台'), false);
+  if (!children.length) {
+    list.appendChild(el('li', '旧ハブの一覧は空です。'));
+    return;
+  }
+  for (const c of children) {
+    const li = document.createElement('li');
+    li.appendChild(el('span', c.entry || c.name || '?'));
+    const btn = el('button', 'このハブへ移す');
+    btn.onclick = () => takeRemoteChild(c, btn, li);
+    li.appendChild(btn);
+    list.appendChild(li);
+  }
+}
+
+async function takeRemoteChild(child, btn, li) {
+  const entry = child.entry || '';
+  if (!confirm(
+    entry + ' をこのハブの AP に切り替えます。旧ハブの一覧からは外します。' +
+    'ホスト名と局番号はそのままです。続けますか？'
+  )) return;
+  const host = document.getElementById('old-host').value;
+  const label = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '移しています…（数分かかることがあります）';
+  let res;
+  try {
+    const r = await fetch('/api/migrate/take', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json', [CSRF_HEADER]: '1'},
+      body: JSON.stringify({old_host: host, entry: entry}),
+    });
+    res = await r.json();
+  } catch (e) {
+    res = {ok: false, message: '通信に失敗しました: ' + e};
+  }
+  if (!res.ok) {
+    setMigrateMsg(res.message || '引き継ぎに失敗しました', true);
+    if (res.output) {
+      const msg = document.getElementById('migrate-msg');
+      msg.appendChild(el('pre', res.output));
+    }
+    btn.disabled = false;
+    btn.textContent = label;
+    return;
+  }
+  setMigrateMsg(res.message || '移しました', false);
+  li.remove();
+  load();
+}
+
+function bindMigrateForm() {
+  const input = document.getElementById('old-host');
+  input.addEventListener('input', () => {
+    renderMigrateStatus();
+  });
+  document.getElementById('migrate-list').onclick = listRemoteChildren;
 }
 
 function startWizard(cand) {
@@ -208,6 +351,7 @@ async function runStep(id, cand, div, btn) {
 }
 
 // 一覧は定期更新する。ウィザードを開いている間は止める。
+bindMigrateForm();
 setInterval(() => { if (!WIZARD_ACTIVE) load(); }, 15000);
 load();
 </script>

@@ -47,3 +47,20 @@ def test_profiles_yaml_has_no_station_block():
     assert "172.22.13.18/24" in out
     assert "${ORACLE_PASSWORD_HHC}" in out
     assert "${WIFI_PSK_HIMEREAP}" in out
+
+
+def test_configs_write_ap_join_from_secrets_file(tmp_path):
+    secrets = tmp_path / "secrets.env"
+    secrets.write_text(
+        "ORACLE_PASSWORD_HHC=nope\nWIFI_AP_PSK=ap-secret9\n", encoding="utf-8"
+    )
+    dest = tmp_path / "ap-join.env"
+    run_bash(
+        f'{CFG}; AP_SSID=sibling-hub configs_write_ap_join "{dest}" "{secrets}"',
+        env=dict(os.environ),
+    )
+    body = dest.read_text(encoding="utf-8")
+    assert "AP_SSID=sibling-hub" in body
+    assert "WIFI_AP_PSK=ap-secret9" in body
+    assert "nope" not in body
+    assert oct(dest.stat().st_mode & 0o777) == "0o600"

@@ -71,6 +71,29 @@ configs_install_file() {
     rm -f "$tmp"
 }
 
+# フリート管理(pi)が AP へ子を付け替えるときに読む。PSK は画面へ出さない。
+configs_write_ap_join() {
+    local dest="${1:-$REPO_DIR/.kit/ap-join.env}"
+    local secrets_src="${2:-}"
+    local psk=""
+    if [ -z "$secrets_src" ]; then
+        if [ -f "$REPO_DIR/.kit/secrets.env" ]; then
+            secrets_src="$REPO_DIR/.kit/secrets.env"
+        elif [ -f "$ETC_DIR/secrets.env" ]; then
+            secrets_src="$ETC_DIR/secrets.env"
+        fi
+    fi
+    if [ -n "$secrets_src" ] && [ -f "$secrets_src" ]; then
+        psk="$(grep -E '^WIFI_AP_PSK=' "$secrets_src" | head -1 | cut -d= -f2-)"
+        psk="${psk%$'\r'}"
+    fi
+    if [ -z "${AP_SSID:-}" ] || [ -z "$psk" ]; then
+        echo "skip ap-join.env (AP_SSID or WIFI_AP_PSK missing)"
+        return 0
+    fi
+    write_ap_join_env "$dest" "$AP_SSID" "$psk" "${SUDO_USER:-${USER:-pi}}"
+}
+
 main() {
     site_env_require
     local user="${SUDO_USER:-$USER}"
@@ -112,6 +135,8 @@ main() {
     else
         echo "exists, skipped: $secrets"
     fi
+
+    configs_write_ap_join
 
     if [ -f "$REPO_DIR/scripts/install.sh" ]; then
         # timesyncd と systemd unit。configs は上で書いたので install.sh は

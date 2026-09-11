@@ -298,3 +298,26 @@ def test_unique_identity_against_origin_passes(tmp_path):
         env=env, check=False,
     )
     assert proc.returncode == 0, proc.stderr
+
+
+def test_write_ap_join_env_mode_and_keys(tmp_path):
+    dest = tmp_path / "ap-join.env"
+    proc = run_bash(
+        f'{SOURCE}; write_ap_join_env "{dest}" sibling-hub ap-secret9',
+        env=dict(os.environ),
+    )
+    assert proc.returncode == 0, proc.stderr
+    body = dest.read_text(encoding="utf-8")
+    assert body == "AP_SSID=sibling-hub\nWIFI_AP_PSK=ap-secret9\n"
+    assert oct(dest.stat().st_mode & 0o777) == "0o600"
+
+
+def test_write_ap_join_env_rejects_empty_psk(tmp_path):
+    dest = tmp_path / "ap-join.env"
+    proc = run_bash(
+        f'{SOURCE}; write_ap_join_env "{dest}" sibling-hub ""',
+        env=dict(os.environ),
+        check=False,
+    )
+    assert proc.returncode != 0
+    assert not dest.exists()

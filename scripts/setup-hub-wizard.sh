@@ -241,6 +241,8 @@ main() {
     local oracle_key="${ORACLE_PASSWORD_VAR:-ORACLE_PASSWORD_HHC}"
     wizard_merge_secrets "$secrets_tmpl" "$repo/.kit/secrets.env" \
         "$oracle_key" "$oracle_pass" "$ap_psk" || return 1
+    chown "$user:$user" "$repo/.kit/secrets.env" 2>/dev/null || true
+    write_ap_join_env "$repo/.kit/ap-join.env" "$ap_ssid" "$ap_psk" "$user" || return 1
 
     echo
     echo "ここから管理者権限でパッケージ導入・ドライバ・コンテナを進めます。"
@@ -258,7 +260,9 @@ main() {
 
 ✅ ハブの初期設定が終わりました。
 
-  子Pi を次の AP に繋いでから、デスクトップの「フリート管理」を開いて追加してください。
+  新しい子Pi は次の AP に繋いでから、デスクトップの「フリート管理」で追加してください。
+  親機に付いている子を移すときは、登録ウィザードではなく
+  「他のハブから引き継ぐ」を使ってください（ホスト名と局番号が残ります）。
       SSID : $ap_ssid
       PASS : （いま入れた AP パスワード）
 

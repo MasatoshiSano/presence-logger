@@ -179,6 +179,18 @@ def test_merge_secrets_sets_typed_keys_and_keeps_factory_psk(tmp_path):
     assert "WIFI_PSK_HOME=home" in body
 
 
+def test_write_ap_join_env_from_wizard_helpers(tmp_path):
+    dest = tmp_path / ".kit" / "ap-join.env"
+    dest.parent.mkdir()
+    run_bash(
+        f'{SITE}; {SOURCE}; write_ap_join_env "{dest}" sibling-hub ap-secret9',
+        env=_env(),
+    )
+    body = dest.read_text(encoding="utf-8")
+    assert "AP_SSID=sibling-hub" in body
+    assert "WIFI_AP_PSK=ap-secret9" in body
+
+
 def test_already_configured_when_marker_exists(tmp_path):
     marker = tmp_path / "setup-complete"
     marker.write_text("ok\n", encoding="utf-8")

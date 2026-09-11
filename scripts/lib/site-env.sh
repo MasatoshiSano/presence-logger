@@ -200,3 +200,24 @@ site_env_require() {
     site_env_validate || exit 1
     site_env_reject_origin || exit 1
 }
+
+# フリート管理が pi で読める AP 参加情報。/etc の secrets.env は root:docker 0600
+# なので、子の引き継ぎでは使えない。PSK はここにだけ置き、画面へは出さない。
+write_ap_join_env() {
+    local dest="${1:?}"
+    local ssid="${2:-${AP_SSID:-}}"
+    local psk="${3:-${WIFI_AP_PSK:-}}"
+    local owner="${4:-${SUDO_USER:-${USER:-pi}}}"
+    if [ -z "$ssid" ] || [ -z "$psk" ]; then
+        echo "AP_SSID または WIFI_AP_PSK が空のため ap-join.env を書けません" >&2
+        return 1
+    fi
+    mkdir -p "$(dirname "$dest")"
+    local old_umask
+    old_umask="$(umask)"
+    umask 077
+    printf 'AP_SSID=%s\nWIFI_AP_PSK=%s\n' "$ssid" "$psk" > "$dest"
+    umask "$old_umask"
+    chown "$owner:$owner" "$dest" 2>/dev/null || true
+    chmod 600 "$dest"
+}

@@ -14,7 +14,7 @@ import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from fleet_ui import provision
+from fleet_ui import migrate, provision
 from fleet_ui.collect import ChildStatus, collect_status
 from fleet_ui.discovery import (
     classify,
@@ -135,6 +135,7 @@ def _gather() -> dict:
     newly = view.pop("_newly_trusted_macs", {})
     if newly:
         save_known_macs({**known, **newly})
+    view["migrate"] = migrate.migrate_status()
     return view
 
 
@@ -242,10 +243,19 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError:
             self._json({"ok": False, "message": "リクエストを解析できません"}, 400)
             return
-        if self.path != "/api/step":
-            self._json({"error": "not found"}, 404)
+        if self.path == "/api/step":
+            self._json(run_step(req))
             return
-        self._json(run_step(req))
+        if self.path == "/api/migrate/list":
+            self._json(migrate.list_children_payload(req.get("old_host") or ""))
+            return
+        if self.path == "/api/migrate/take":
+            self._json(migrate.take_payload(
+                req.get("old_host") or "",
+                req.get("entry") or "",
+            ))
+            return
+        self._json({"ok": False, "error": "not found"}, 404)
 
     def log_message(self, fmt, *args):
         print(f"[fleet-ui] {fmt % args}")

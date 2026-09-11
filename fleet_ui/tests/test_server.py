@@ -2,6 +2,8 @@
 
 HTTPの配線ではなく、組み立てロジック(純関数)を検証する。
 """
+from pathlib import Path
+
 from fleet_ui.collect import ChildStatus
 from fleet_ui.discovery import Neighbor
 from fleet_ui.server import build_fleet_view, run_step
@@ -113,3 +115,15 @@ def test_steps_without_hostname_are_unaffected():
     res = run_step({"step": "unknown-step", "ip": "10.42.0.9"})
     assert res["ok"] is False
     assert "不明な工程" in res["message"]
+
+
+def test_index_html_has_handoff_section_and_never_mentions_psk():
+    html = (Path(__file__).resolve().parents[1] / "static" / "index.html").read_text(
+        encoding="utf-8"
+    )
+    assert "他のハブから引き継ぐ" in html
+    assert "/api/migrate/list" in html
+    assert "/api/migrate/take" in html
+    assert "WIFI_AP_PSK" not in html
+    assert ".innerHTML" not in html
+    assert "innerHTML =" not in html
