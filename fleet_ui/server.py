@@ -24,7 +24,7 @@ from fleet_ui.discovery import (
     resolve_inventory_ips,
     save_known_macs,
 )
-from fleet_ui.hostname import suggest_hostname, validate_hostname
+from fleet_ui.hostname import read_hub_hostname, suggest_hostname, validate_hostname
 
 
 def _load_sta_no_report():
@@ -66,6 +66,7 @@ def build_fleet_view(
     inventory_ips: dict[str, str | None],
     statuses: dict[str, ChildStatus],
     known_macs: dict[str, str] | None = None,
+    hub: str = "",
 ) -> dict:
     """画面へ渡すJSONを組み立てる純関数。
 
@@ -115,7 +116,7 @@ def build_fleet_view(
         "duplicates": [
             {"sta_no": list(t), "where": labels} for t, labels in dups.items()
         ],
-        "suggested_hostname": suggest_hostname([n for n in known_names if n]),
+        "suggested_hostname": suggest_hostname([n for n in known_names if n], hub=hub),
         "steps": [{"id": i, "label": lbl} for i, lbl in provision.STEPS],
         "_newly_trusted_macs": learned_macs(rows, known_macs),
     }
@@ -143,8 +144,10 @@ def _gather() -> dict:
     neighbors = read_neighbors()
     statuses = {ip: collect_status(ip) for ip in inv.values() if ip}
     known = load_known_macs()
+    hub = read_hub_hostname(Path(__file__).resolve().parents[1] / "site.env")
     view = build_fleet_view(
-        neighbors=neighbors, inventory_ips=inv, statuses=statuses, known_macs=known
+        neighbors=neighbors, inventory_ips=inv, statuses=statuses, known_macs=known,
+        hub=hub,
     )
     # TOFU: 今回新たに信頼した組があれば永続化する。フロントには内部実装の
     # 詳細を渡さないため、送信前に取り除く。

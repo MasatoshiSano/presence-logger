@@ -5,7 +5,9 @@
 既存接続を切断するため、2台が互いを蹴り合う無限ループになる。実際に起きた事故なので、
 UIは保存前に必ず弾く。
 """
-from fleet_ui.hostname import suggest_hostname, validate_hostname
+from pathlib import Path
+
+from fleet_ui.hostname import read_hub_hostname, suggest_hostname, validate_hostname
 
 
 def test_accepts_a_normal_name():
@@ -42,20 +44,27 @@ def test_rejects_too_long():
     assert validate_hostname("a" * 64, []) is not None
 
 
-def test_suggest_continues_the_existing_sequence():
-    assert suggest_hostname(["pizero2w", "pizero2w-2.local"]) == "pizero2w-3"
+def test_suggest_is_hub_name_plus_next_ordinal():
+    assert suggest_hostname(["zero2.local"], hub="tpc12345") == "tpc12345-2"
 
 
-def test_suggest_skips_used_numbers():
-    assert suggest_hostname(["pizero2w", "pizero2w-2", "pizero2w-3"]) == "pizero2w-4"
+def test_suggest_first_child_is_one():
+    assert suggest_hostname([], hub="tpc12345") == "tpc12345-1"
 
 
-def test_suggest_from_single_child():
-    assert suggest_hostname(["pizero2w"]) == "pizero2w-2"
+def test_suggest_skips_a_name_already_taken():
+    assert suggest_hostname(["tpc12345-2.local"], hub="tpc12345") == "tpc12345-3"
 
 
-def test_suggest_with_no_children():
-    assert suggest_hostname([]) == "pizero2w-2"
+def test_suggest_without_hub_uses_child_prefix():
+    assert suggest_hostname([]) == "child-1"
+    assert suggest_hostname(["zero2"]) == "child-2"
+
+
+def test_read_hub_hostname_from_site_env(tmp_path: Path):
+    p = tmp_path / "site.env"
+    p.write_text("HUB_HOSTNAME=tpc12345\nAP_SSID=tpc12345-hub\n", encoding="utf-8")
+    assert read_hub_hostname(p) == "tpc12345"
 
 
 def test_rejects_trailing_newline():

@@ -9,10 +9,10 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 _VALID_RE = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?\Z")
-_SEQ_RE = re.compile(r"^(?P<base>.+?)-(?P<n>\d+)$")
-_FALLBACK = "pizero2w-2"
+_FALLBACK_HUB = "child"
 
 
 def _short(name: str) -> str:
@@ -36,30 +36,34 @@ def validate_hostname(name: str, existing: list[str]) -> str | None:
     return None
 
 
-def suggest_hostname(existing: list[str]) -> str:
-    """既存の連番の続きを提案する。例: pizero2w, pizero2w-2 → pizero2w-3"""
-    names = [_short(e) for e in existing if e]
-    if not names:
-        return _FALLBACK
+def read_hub_hostname(path: Path) -> str:
+    """site.env の HUB_HOSTNAME。無ければ空。"""
+    if not path.is_file():
+        return ""
+    for line in path.read_text(encoding="utf-8").splitlines():
+        s = line.split("#", 1)[0].strip()
+        if s.startswith("HUB_HOSTNAME="):
+            return s.split("=", 1)[1].strip().strip("\"'")
+    return ""
 
-    # 最も多く使われている基底名を採る(同数なら短い方)。
-    counts: dict[str, int] = {}
-    for n in names:
-        m = _SEQ_RE.match(n)
-        base = m.group("base") if m else n
-        counts[base] = counts.get(base, 0) + 1
-    base = max(counts, key=lambda b: (counts[b], -len(b)))
 
-    used: set[int] = set()
-    for n in names:
-        if n == base:
-            used.add(1)
-            continue
-        m = _SEQ_RE.match(n)
-        if m and m.group("base") == base:
-            used.add(int(m.group("n")))
+def suggest_hostname(existing: list[str], hub: str = "") -> str:
+    """このハブの N 台目の子。例: ハブ tpc12345、名簿が1台 → tpc12345-2。
 
-    nxt = 2
-    while nxt in used:
-        nxt += 1
-    return f"{base}-{nxt}"
+    N はいまの名簿の台数+1。同じ名前が既にあれば一つ進める。
+    """
+    hub = _short((hub or "").strip().lower())
+    if not hub or not _VALID_RE.match(hub):
+        hub = _FALLBACK_HUB
+
+    names = {_short(e) for e in existing if e}
+    names.add(hub)
+    n = len([e for e in existing if e]) + 1
+    if n < 1:
+        n = 1
+    while n <= 9999:
+        cand = f"{hub}-{n}"
+        if cand not in names and len(cand) <= 63:
+            return cand
+        n += 1
+    return f"{_FALLBACK_HUB}-1"

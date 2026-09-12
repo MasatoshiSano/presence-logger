@@ -284,7 +284,8 @@ for c in d.get("candidates") or []:
     print("%s %s %s" % (c.get("ip") or "", c.get("mac") or "", extra))
 ' <<<"$payload"
     echo
-    suggest="$(children_cli suggest | python3 -c 'import json,sys; print(json.load(sys.stdin).get("hostname") or "pizero2w-2")')"
+    echo "新しい名前の既定は「このハブのホスト名-何台目」です。Enter ならそのまま。"
+    suggest="$(children_cli suggest | python3 -c 'import json,sys; print(json.load(sys.stdin).get("hostname") or "child-1")')"
     while IFS=$'\t' read -r ip mac host ok <&3; do
         [ -n "$ip" ] || continue
         if [ "$ok" != "1" ]; then
@@ -296,6 +297,8 @@ for c in d.get("candidates") or []:
             if ! children_cli register "$ip" "$mac" "$name" | children_json_message; then
                 echo "登録に失敗しました。" >&2
                 failed=1
+            else
+                suggest="$(children_cli suggest | python3 -c 'import json,sys; print(json.load(sys.stdin).get("hostname") or "child-1")')"
             fi
         fi
     done 3< <(python3 -c '

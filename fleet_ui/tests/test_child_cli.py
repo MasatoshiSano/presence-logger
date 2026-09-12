@@ -109,11 +109,12 @@ def test_candidates_includes_kind_new(monkeypatch, capsys):
 
 
 def test_suggest_returns_hostname(monkeypatch, capsys):
-    monkeypatch.setattr(child_cli, "_inventory_entries", lambda: ["pizero2w.local", "pizero2w-2.local"])
+    monkeypatch.setattr(child_cli, "_inventory_entries", lambda: ["zero2.local"])
+    monkeypatch.setattr(child_cli, "_hub_hostname", lambda: "tpc12345")
     assert child_cli.main(["suggest"]) == 0
     body = json.loads(capsys.readouterr().out)
     assert body["ok"] is True
-    assert body["hostname"] == "pizero2w-3"
+    assert body["hostname"] == "tpc12345-2"
 
 
 def test_register_dispatches(monkeypatch, capsys):

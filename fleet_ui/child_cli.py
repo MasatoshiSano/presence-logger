@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 
 from fleet_ui import migrate, provision
-from fleet_ui.hostname import suggest_hostname, validate_hostname
+from fleet_ui.hostname import read_hub_hostname, suggest_hostname, validate_hostname
 from fleet_ui.discovery import (
     classify,
     load_known_macs,
@@ -80,8 +80,15 @@ def cmd_candidates(_args: list[str]) -> int:
     return _emit({"ok": True, "candidates": rows})
 
 
+def _hub_hostname() -> str:
+    return read_hub_hostname(REPO / "site.env")
+
+
 def cmd_suggest(_args: list[str]) -> int:
-    return _emit({"ok": True, "hostname": suggest_hostname(_inventory_entries())})
+    return _emit({
+        "ok": True,
+        "hostname": suggest_hostname(_inventory_entries(), hub=_hub_hostname()),
+    })
 
 
 def cmd_register(args: list[str]) -> int:
