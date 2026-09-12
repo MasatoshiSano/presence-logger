@@ -187,6 +187,7 @@ children_wizard_from_old_parent() {
             echo "移しています（AP に現れるまで数分かかることがあります）…"
             if ! children_cli take "$old_host" "$entry" | children_json_message; then
                 echo "この子の付け替えは失敗しました。残りの子は続けます。" >&2
+                echo "  子がこのハブの AP に居るなら、終わったあと 1 → 3 で取り込んでください。" >&2
                 failed=1
             fi
         else

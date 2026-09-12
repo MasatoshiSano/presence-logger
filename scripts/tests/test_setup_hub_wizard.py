@@ -449,3 +449,73 @@ def test_already_configured_when_marker_exists(tmp_path):
         check=False,
     )
     assert proc2.returncode != 0
+
+
+def test_replace_env_key_keeps_other_lines(tmp_path):
+    dest = tmp_path / "secrets.env"
+    dest.write_text("ORACLE_PASSWORD_HHC=keep\nWIFI_AP_PSK=oldoldold\n", encoding="utf-8")
+    run_bash(
+        f'{SOURCE}; wizard_replace_env_key "{dest}" WIFI_AP_PSK newpsk99',
+        env=_env(),
+    )
+    body = dest.read_text(encoding="utf-8")
+    assert "ORACLE_PASSWORD_HHC=keep" in body
+    assert "WIFI_AP_PSK=newpsk99" in body
+    assert "oldoldold" not in body
+
+
+def test_sync_psk_to_etc_reads_kit_file(tmp_path):
+    kit = tmp_path / "ap-join.env"
+    kit.write_text("AP_SSID=tpc12345-hub\nWIFI_AP_PSK=kitpsk99\n", encoding="utf-8")
+    etc = tmp_path / "secrets.env"
+    etc.write_text("ORACLE_PASSWORD_HHC=ora\nWIFI_AP_PSK=wrongpsk\n", encoding="utf-8")
+    run_bash(
+        f'{SOURCE}; wizard_sync_psk_to_etc "{kit}" "{etc}"',
+        env=_env(),
+    )
+    body = etc.read_text(encoding="utf-8")
+    assert "ORACLE_PASSWORD_HHC=ora" in body
+    assert "WIFI_AP_PSK=kitpsk99" in body
+    assert "wrongpsk" not in body
+
+
+def test_already_configured_p_redoes_ap_psk_without_bootstrap(tmp_path):
+    work = tmp_path
+    kit = work / ".kit"
+    kit.mkdir()
+    (kit / "setup-complete").write_text("done\n", encoding="utf-8")
+    (kit / "ap-join.env").write_text(
+        "AP_SSID=tpc12345-hub\nWIFI_AP_PSK=wrongpsk\n", encoding="utf-8"
+    )
+    (kit / "secrets.env").write_text(
+        "ORACLE_PASSWORD_HHC=ora\nWIFI_AP_PSK=wrongpsk\n", encoding="utf-8"
+    )
+    proc = run_bash(
+        "timeout 20 bash -c 'source scripts/setup-hub-wizard.sh; main'",
+        env=_env({"WIZARD_WORKDIR": str(work), "WIZARD_DRY_RUN": "1"}),
+        stdin="p\nCorrect99\n\n",
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    assert "パスワードだけ" in proc.stdout or "パスワードを打ち間違えて" in proc.stdout
+    join = (kit / "ap-join.env").read_text(encoding="utf-8")
+    assert "WIFI_AP_PSK=Correct99" in join
+    assert "AP_SSID=tpc12345-hub" in join
+    secrets = (kit / "secrets.env").read_text(encoding="utf-8")
+    assert "WIFI_AP_PSK=Correct99" in secrets
+    assert "ORACLE_PASSWORD_HHC=ora" in secrets
+    assert "DRY-RUN" in proc.stdout
+    marker = tmp_path / "setup-complete"
+    marker.write_text("ok\n", encoding="utf-8")
+    proc = run_bash(
+        f'{SOURCE}; wizard_already_configured "{marker}"',
+        env=_env(),
+        check=False,
+    )
+    assert proc.returncode == 0
+    proc2 = run_bash(
+        f'{SOURCE}; wizard_already_configured "{tmp_path}/missing"',
+        env=_env(),
+        check=False,
+    )
+    assert proc2.returncode != 0

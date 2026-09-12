@@ -151,6 +151,7 @@ def test_new_child_default_hostname_is_hub_plus_ordinal():
     assert "children_cli suggest" in text
     assert "間違えたら 0 で直前" in text
     assert "1 → 3" in text
+    assert "1 → 3 で取り込んで" in text
 
 
 def test_children_ask_back_word_is_a_token():

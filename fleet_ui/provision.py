@@ -42,7 +42,12 @@ class StepResult:
 
 def _ssh(ip: str, remote: str, runner: Callable[[list[str]], str]) -> str:
     return runner([
-        "ssh", "-o", "ConnectTimeout=8", "-o", "BatchMode=yes", f"pi@{ip}", remote
+        "ssh",
+        "-o", "ConnectTimeout=8",
+        "-o", "BatchMode=yes",
+        "-o", "StrictHostKeyChecking=accept-new",
+        f"pi@{ip}",
+        remote,
     ])
 
 

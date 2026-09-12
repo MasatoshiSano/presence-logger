@@ -382,6 +382,41 @@ def test_take_child_keyscans_ip_when_hostname_mdns_is_empty(tmp_path):
     assert "ip-hostkey" in known.read_text(encoding="utf-8")
 
 
+def test_take_child_wifi_ack_missing_still_waits_for_mac(tmp_path):
+    repo, inv = _take_repo(tmp_path)
+    waited = []
+
+    def script(joined, remote):
+        if "wlan0/address" in remote or "wlan0/address" in joined:
+            return "aa:bb:cc:dd:ee:ff\n"
+        if "authorized_keys" in remote:
+            return f"{KEY_OK}\n"
+        if "children.conf" in remote and "cat " in remote:
+            return f"zero2\n{CAT_OK}\n"
+        if "ssh-keyscan" in joined:
+            return "hostkey-line\n"
+        return ""
+
+    runner = _recorder(script)
+    from fleet_ui.provision import StepResult
+    res = take_child(
+        old_host="172.22.13.17",
+        entry="zero2",
+        repo=repo,
+        pubkey="ssh-ed25519 AAAA newhub",
+        runner=runner,
+        wait_fn=lambda mac, **k: waited.append(mac) or StepResult(
+            ok=True, message="復帰", output="10.42.0.9"
+        ),
+        inventory_path=inv,
+        known_hosts=tmp_path / "known_hosts",
+        remote_inventory="~/projects/presence-logger/fleet/children.conf",
+    )
+    assert res.ok, res.message
+    assert waited == ["aa:bb:cc:dd:ee:ff"]
+    assert "zero2.local" in inv.read_text(encoding="utf-8")
+
+
 def test_take_child_wifi_failure_does_not_wait_or_inventory(tmp_path):
     repo, inv = _take_repo(tmp_path)
     waited = []
@@ -401,10 +436,13 @@ def test_take_child_wifi_failure_does_not_wait_or_inventory(tmp_path):
         repo=repo,
         pubkey="ssh-ed25519 AAAA newhub",
         runner=runner,
-        wait_fn=lambda mac, **k: waited.append(mac) or StepResult(ok=True, message=""),
+        wait_fn=lambda mac, **k: waited.append(mac) or StepResult(
+            ok=False, message="180秒待っても復帰しませんでした"
+        ),
         inventory_path=inv,
     )
     assert not res.ok
-    assert "Wi-Fi" in res.message
-    assert waited == []
+    assert "AP" in res.message
+    assert "1 → 3" in res.message
+    assert waited == ["aa:bb:cc:dd:ee:ff"]
     assert "zero2.local" not in inv.read_text(encoding="utf-8")
