@@ -220,6 +220,17 @@ def test_ask_empty_reply_keeps_default():
     assert proc.stdout.strip() == "HIME-H-REAP"
 
 
+def test_coexist_prompts_keep_hostname_factory_ip_and_ap_ssid_separate():
+    from pathlib import Path
+    text = Path("scripts/setup-hub-wizard.sh").read_text(encoding="utf-8")
+    assert 'wizard_ask "このハブのホスト名"' in text
+    assert 'wizard_ask "このハブの工場固定IP"' in text
+    assert 'wizard_ask "子Pi用ハブAPの Wi-Fi名"' in text
+    # 同居時の AP 既定をホスト名にすると、3項目が同じ値に見えて混同する
+    assert 'wizard_ask "ドングルの AP 名" "${hostname}"' not in text
+    assert 'wizard_ask "子Pi用ハブAPの Wi-Fi名" "presence-hub-2"' in text
+
+
 def test_render_appends_prefix_when_user_omits_it(tmp_path):
     tmpl = tmp_path / "site.env.template"
     tmpl.write_text(TEMPLATE, encoding="utf-8")

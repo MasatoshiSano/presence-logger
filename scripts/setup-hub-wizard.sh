@@ -228,9 +228,9 @@ main() {
     site_env_load_origin "$origin" || return 1
 
     echo "この Raspberry Pi を子Pi専用ハブにします。"
-    echo "[] の中はコピー元の値です。未回答（Enter）ならそのまま使います。"
+    echo "質問は 1 項目ずつです。[] はコピー元（または推奨）の値。Enter ならそのまま。"
     echo
-    echo "  1) 親機と同時に動かす（同じ工場網。ホスト名・固定IP・AP名は必ず別）"
+    echo "  1) 親機と同時に動かす（同じ工場網。このハブの名前・工場IP・子Pi用AP名は親機と別）"
     echo "  2) 親機はもう使わない、または別の工場網"
     echo "     （コピー元と同じ値でもよい。クローンした子が自動で付きます）"
     echo
@@ -243,27 +243,39 @@ main() {
     fi
     echo
 
+    echo "----- ① このハブのホスト名 -----"
+    echo "この Raspberry Pi 自身の名前です。子Piが探す Wi-Fi 名ではありません。"
+    if [ "$allow_same" != "1" ]; then
+        echo "コピー元の親機は ${ORIGIN_HOSTNAME:-?} です。同居するので別の名前にしてください。"
+    fi
     while true; do
         if [ "$allow_same" = "1" ]; then
-            hostname="$(wizard_ask "ホスト名" "${ORIGIN_HOSTNAME:-presence-hub-2}")"
+            hostname="$(wizard_ask "このハブのホスト名" "${ORIGIN_HOSTNAME:-presence-hub-2}")"
         else
-            hostname="$(wizard_ask "ホスト名" "presence-hub-2")"
+            hostname="$(wizard_ask "このハブのホスト名" "presence-hub-2")"
         fi
         wizard_validate_hostname "$hostname" "$origin" "$allow_same" && break
     done
+    echo
+    echo "----- ② 工場の Wi-Fi（このハブが工場網へ繋がる先） -----"
     while true; do
-        factory_ssid="$(wizard_ask "工場の SSID" "${ORIGIN_FACTORY_SSID:-$FACTORY_SSID}")"
-        wizard_validate_not_empty "$factory_ssid" "工場の SSID" && break
+        factory_ssid="$(wizard_ask "工場の Wi-Fi 名（SSID）" "${ORIGIN_FACTORY_SSID:-$FACTORY_SSID}")"
+        wizard_validate_not_empty "$factory_ssid" "工場の Wi-Fi 名" && break
     done
+    echo
+    echo "----- ③ このハブの工場網アドレス -----"
+    echo "工場 Wi-Fi 上での、この機械の固定IPです（内蔵 wlan0）。子Pi用 AP の 10.42.0.1 ではありません。"
     while true; do
         if [ "$allow_same" = "1" ]; then
-            factory_ip="$(wizard_ask "工場網の固定IP" "${ORIGIN_FACTORY_IP:-}")"
+            factory_ip="$(wizard_ask "このハブの工場固定IP" "${ORIGIN_FACTORY_IP:-}")"
         else
-            echo "親機の固定IPは ${ORIGIN_FACTORY_IP:-?} です。別のIPを入れてください。"
-            factory_ip="$(wizard_ask "工場網の固定IP")"
+            echo "親機の工場固定IPは ${ORIGIN_FACTORY_IP:-?} です。同居するので別のIPにしてください。"
+            factory_ip="$(wizard_ask "このハブの工場固定IP")"
         fi
         wizard_validate_factory_ip "$factory_ip" "$origin" "$allow_same" && break
     done
+    echo
+    echo "----- ④ 工場のゲートウェイと DNS -----"
     while true; do
         factory_gw="$(wizard_ask "工場のゲートウェイ" "${ORIGIN_FACTORY_GW:-$FACTORY_GW}")"
         wizard_validate_ipv4 "$factory_gw" "ゲートウェイ" && break
@@ -272,6 +284,8 @@ main() {
         factory_dns="$(wizard_ask "工場の DNS" "${ORIGIN_FACTORY_DNS:-$FACTORY_DNS}")"
         wizard_validate_not_empty "$factory_dns" "DNS" && break
     done
+    echo
+    echo "----- ⑤ Oracle（記録の書き先） -----"
     while true; do
         oracle_host="$(wizard_ask "Oracle のホスト" "${ORIGIN_ORACLE_HOST:-$ORACLE_HOST}")"
         wizard_validate_not_empty "$oracle_host" "Oracle のホスト" && break
@@ -292,19 +306,25 @@ main() {
         oracle_table="$(wizard_ask "Oracle のテーブル" "${ORIGIN_ORACLE_TABLE:-$ORACLE_TABLE}")"
         wizard_validate_not_empty "$oracle_table" "テーブル" && break
     done
+    echo
+    echo "----- ⑥ 子Pi用ハブAPの Wi-Fi 名 -----"
+    echo "子Piが選ぶ Wi-Fi の名前（SSID）です。①のホスト名とは別の項目です。"
+    echo "装置名 wlan1 を付ける作業ではありません。"
     while true; do
         if [ "$allow_same" = "1" ]; then
-            echo "親機の AP 名は ${ORIGIN_AP_SSID:-?} です。同じにするとクローンした子が付きます。"
-            ap_ssid="$(wizard_ask "ドングルの AP 名" "${ORIGIN_AP_SSID:-$hostname}")"
+            echo "親機の子Pi用 AP は ${ORIGIN_AP_SSID:-?} です。同じにするとクローンした子が付きます。"
+            ap_ssid="$(wizard_ask "子Pi用ハブAPの Wi-Fi名" "${ORIGIN_AP_SSID:-presence-hub}")"
             wizard_validate_ap_ssid "$ap_ssid" "$origin" 1 && break
         else
-            echo "親機の AP 名は ${ORIGIN_AP_SSID:-?} です。別の名前にしてください。"
-            ap_ssid="$(wizard_ask "ドングルの AP 名" "${hostname}")"
+            echo "親機の子Pi用 AP は ${ORIGIN_AP_SSID:-?} です。同居するので別の Wi-Fi 名にしてください。"
+            ap_ssid="$(wizard_ask "子Pi用ハブAPの Wi-Fi名" "presence-hub-2")"
             wizard_validate_ap_ssid "$ap_ssid" "$origin" && break
         fi
     done
+    echo
+    echo "----- ⑦ パスワード（画面には出ません） -----"
     while true; do
-        ap_psk="$(wizard_ask_secret "AP のパスワード（8文字以上・画面には出ません）")"
+        ap_psk="$(wizard_ask_secret "子Pi用ハブAPのパスワード（8文字以上）")"
         wizard_validate_ap_psk "$ap_psk" && break
     done
     while true; do
@@ -317,16 +337,15 @@ main() {
 
     echo
     echo "----- 確認 -----"
-    echo "  ホスト名     : $hostname"
-    echo "  工場 SSID    : $factory_ssid"
-    echo "  固定IP       : $factory_ip"
-    echo "  ゲートウェイ : $factory_gw"
-    echo "  DNS          : $factory_dns"
-    echo "  Oracle       : $oracle_user@$oracle_host:$oracle_port/$oracle_service"
-    echo "  テーブル     : $oracle_table"
-    echo "  AP 名        : $ap_ssid"
-    echo "  AP パスワード: （入力済み）"
-    echo "  Oracle パス  : （入力済み）"
+    echo "  ① このハブのホスト名         : $hostname"
+    echo "  ② 工場の Wi-Fi 名            : $factory_ssid"
+    echo "  ③ このハブの工場固定IP       : $factory_ip"
+    echo "  ④ ゲートウェイ / DNS         : $factory_gw / $factory_dns"
+    echo "  ⑤ Oracle                     : $oracle_user@$oracle_host:$oracle_port/$oracle_service"
+    echo "     テーブル                   : $oracle_table"
+    echo "  ⑥ 子Pi用ハブAPの Wi-Fi名     : $ap_ssid"
+    echo "  ⑦ 子Pi用APパスワード         : （入力済み）"
+    echo "     Oracle パスワード          : （入力済み）"
     echo "---------------"
     local yn
     read -r -p "この内容で進めますか？ [y/N]: " yn
