@@ -228,7 +228,20 @@ def test_coexist_prompts_keep_hostname_factory_ip_and_ap_ssid_separate():
     assert 'wizard_ask "子Pi用ハブAPの Wi-Fi名"' in text
     # 同居時の AP 既定をホスト名にすると、3項目が同じ値に見えて混同する
     assert 'wizard_ask "ドングルの AP 名" "${hostname}"' not in text
-    assert 'wizard_ask "子Pi用ハブAPの Wi-Fi名" "presence-hub-2"' in text
+    assert "wizard_sibling_name" in text
+
+
+def test_sibling_name_appends_dash_two():
+    proc = run_bash(
+        f'{SOURCE}; wizard_sibling_name raspberrypi5 raspberrypi5-2',
+        env=_env(),
+    )
+    assert proc.stdout.strip() == "raspberrypi5-2"
+    proc = run_bash(
+        f'{SOURCE}; wizard_sibling_name presence-hub presence-hub-2',
+        env=_env(),
+    )
+    assert proc.stdout.strip() == "presence-hub-2"
 
 
 def test_render_appends_prefix_when_user_omits_it(tmp_path):

@@ -81,6 +81,15 @@ wizard_validate_port() {
     fi
 }
 
+wizard_sibling_name() {
+    local base="${1:-}"
+    if [ -z "$base" ]; then
+        printf '%s\n' "$2"
+        return 0
+    fi
+    printf '%s-2\n' "$base"
+}
+
 wizard_validate_not_empty() {
     local v="$1" label="$2"
     if [ -z "$v" ]; then
@@ -244,15 +253,16 @@ main() {
     echo
 
     echo "----- ① このハブのホスト名 -----"
-    echo "この Raspberry Pi 自身の名前です。子Piが探す Wi-Fi 名ではありません。"
+    echo "Linux がこの Raspberry Pi を呼ぶ名前です（親機は ${ORIGIN_HOSTNAME:-?}）。"
+    echo "子Piが探す Wi-Fi 名（親機では ${ORIGIN_AP_SSID:-?}）ではありません。"
     if [ "$allow_same" != "1" ]; then
-        echo "コピー元の親機は ${ORIGIN_HOSTNAME:-?} です。同居するので別の名前にしてください。"
+        echo "同居するので、親機のホスト名 ${ORIGIN_HOSTNAME:-?} 以外にしてください。"
     fi
     while true; do
         if [ "$allow_same" = "1" ]; then
-            hostname="$(wizard_ask "このハブのホスト名" "${ORIGIN_HOSTNAME:-presence-hub-2}")"
+            hostname="$(wizard_ask "このハブのホスト名" "${ORIGIN_HOSTNAME:-raspberrypi5}")"
         else
-            hostname="$(wizard_ask "このハブのホスト名" "presence-hub-2")"
+            hostname="$(wizard_ask "このハブのホスト名" "$(wizard_sibling_name "${ORIGIN_HOSTNAME:-}" raspberrypi5-2)")"
         fi
         wizard_validate_hostname "$hostname" "$origin" "$allow_same" && break
     done
@@ -308,16 +318,17 @@ main() {
     done
     echo
     echo "----- ⑥ 子Pi用ハブAPの Wi-Fi 名 -----"
-    echo "子Piが選ぶ Wi-Fi の名前（SSID）です。①のホスト名とは別の項目です。"
+    echo "子Piが選ぶ Wi-Fi の名前（SSID）です（親機は ${ORIGIN_AP_SSID:-?}）。"
+    echo "①のホスト名（親機では ${ORIGIN_HOSTNAME:-?}）とは別の項目です。"
     echo "装置名 wlan1 を付ける作業ではありません。"
     while true; do
         if [ "$allow_same" = "1" ]; then
-            echo "親機の子Pi用 AP は ${ORIGIN_AP_SSID:-?} です。同じにするとクローンした子が付きます。"
+            echo "同じにすると、クローンした子がこのハブへ付きます。"
             ap_ssid="$(wizard_ask "子Pi用ハブAPの Wi-Fi名" "${ORIGIN_AP_SSID:-presence-hub}")"
             wizard_validate_ap_ssid "$ap_ssid" "$origin" 1 && break
         else
-            echo "親機の子Pi用 AP は ${ORIGIN_AP_SSID:-?} です。同居するので別の Wi-Fi 名にしてください。"
-            ap_ssid="$(wizard_ask "子Pi用ハブAPの Wi-Fi名" "presence-hub-2")"
+            echo "同居するので、親機のハブAP名 ${ORIGIN_AP_SSID:-?} 以外にしてください。"
+            ap_ssid="$(wizard_ask "子Pi用ハブAPの Wi-Fi名" "$(wizard_sibling_name "${ORIGIN_AP_SSID:-}" presence-hub-2)")"
             wizard_validate_ap_ssid "$ap_ssid" "$origin" && break
         fi
     done
