@@ -13,6 +13,7 @@ from services.bridge.src.circuit_breaker import CircuitBreaker
 from services.bridge.src.inbox import InboxEvent, InboxRepository
 from services.bridge.src.liveness import LivenessTracker, device_id_from_topic
 from services.bridge.src.logging_setup import setup_logging
+from services.bridge.src.mqtt_file_log import MqttFileLog
 from services.bridge.src.mqtt_listener import BridgeMqttClient, EventPayload
 from services.bridge.src.network_watcher import NetworkWatcher
 from services.bridge.src.oracle_client import (
@@ -202,14 +203,16 @@ def main() -> int:    # pragma: no cover
     hb_timeout = liv_cfg.get("heartbeat_timeout_seconds", 60)
     liveness_report_interval = liv_cfg.get("report_interval_seconds", 30)
     liveness = LivenessTracker(heartbeat_timeout_seconds=hb_timeout)
+    mqtt_file = MqttFileLog(
+        liv_cfg.get("mqtt_log_path", "/var/log/presence-logger/child-mqtt.log")
+    )
 
     def _on_status(topic: str, payload: bytes) -> None:
+        text = payload.decode("utf-8", errors="replace").strip()
         dev = device_id_from_topic(topic, status_prefix)
         if dev:
-            liveness.record_status(
-                dev, payload.decode("utf-8", errors="replace").strip(),
-                now=time.monotonic(),
-            )
+            liveness.record_status(dev, text, now=time.monotonic())
+            mqtt_file.write("status", dev, text)
 
     def _on_heartbeat(topic: str, payload: bytes) -> None:
         dev = device_id_from_topic(topic, hb_prefix)
@@ -222,6 +225,7 @@ def main() -> int:    # pragma: no cover
         except (UnicodeDecodeError, json.JSONDecodeError):
             data = {}
         liveness.record_heartbeat(dev, data, now=time.monotonic())
+        mqtt_file.write("heartbeat", dev, payload.decode("utf-8", errors="replace"))
 
     mqtt.subscribe_text(status_prefix + "#", _on_status)
     mqtt.subscribe_text(hb_prefix + "#", _on_heartbeat)
@@ -263,6 +267,11 @@ def main() -> int:    # pragma: no cover
             "record_received",
             extra={"event": "record_received", "event_id": rec.event_id,
                    "device_id": rec.device_id},
+        )
+        mqtt_file.write(
+            "record",
+            rec.device_id,
+            payload.decode("utf-8", errors="replace"),
         )
 
     mqtt.subscribe_text(record_topic, _on_record)

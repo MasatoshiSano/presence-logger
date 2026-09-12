@@ -8,6 +8,7 @@ import subprocess  # noqa: S404
 from pipeline_monitor.config import load_oracle_query
 from pipeline_monitor.dashboard import Deps, run
 from pipeline_monitor.inbox_reader import RecordInboxReader
+from pipeline_monitor.mqtt_file_log import MqttFileLog
 from pipeline_monitor.mqtt_tail import MqttTail
 from pipeline_monitor.oracle_reader import OracleRecentReader
 
@@ -47,9 +48,16 @@ def _get_ssid() -> str:
     return ssid or "(不明)"
 
 
+def _mqtt_log_path() -> str:
+    return os.environ.get(
+        "PIPELINE_MQTT_LOG",
+        os.path.expanduser("~/projects/presence-logger/logs/pipeline-mqtt.log"),
+    )
+
+
 def main() -> int:
     deps = Deps(
-        tail=MqttTail(MQTT_HOST, MQTT_PORT),
+        tail=MqttTail(MQTT_HOST, MQTT_PORT, file_log=MqttFileLog(_mqtt_log_path())),
         inbox=RecordInboxReader(INBOX_DB, bridge_container=BRIDGE_CONTAINER),
         oracle=OracleRecentReader(JDBC_CONTAINER, SIDECAR_URL),
         oracle_query_loader=lambda: load_oracle_query(PROFILES_YAML, PROFILE_NAME, LIMIT),

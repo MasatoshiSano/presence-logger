@@ -1,3 +1,6 @@
+import json
+
+from pipeline_monitor.mqtt_file_log import MqttFileLog
 from pipeline_monitor.mqtt_tail import MqttTail
 
 
@@ -34,6 +37,19 @@ def test_ring_buffer_bounds_length():
     msgs = t.messages()
     assert len(msgs) == 2
     assert msgs[-1].device_id == "dev4"     # newest kept
+
+
+def test_ingest_writes_file_log(tmp_path):
+    path = tmp_path / "pipeline-mqtt.log"
+    t = _tail(file_log=MqttFileLog(str(path)))
+    t.ingest_line('presence/heartbeat/zero2 {"uptime_s":1}')
+    lines = path.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 1
+    row = json.loads(lines[0])
+    assert row["kind"] == "heartbeat"
+    assert row["device_id"] == "zero2"
+    assert row["payload"]["uptime_s"] == 1
+    assert "ts" in row
 
 
 def test_blank_line_ignored():

@@ -13,6 +13,7 @@ from collections import deque
 from collections.abc import Callable
 
 from pipeline_monitor.model import LogLine, MqttMsg
+from pipeline_monitor.mqtt_file_log import MqttFileLog
 
 RECORD_TOPIC = "presence/record"
 STATUS_PREFIX = "presence/status/"
@@ -120,11 +121,13 @@ class MqttTail:
         topic: str = "presence/#",
         maxlen: int = 500,
         clock: Callable[[], float] = time.time,
+        file_log: MqttFileLog | None = None,
     ):
         self._host = host
         self._port = port
         self._topic = topic
         self._clock = clock
+        self._file_log = file_log
         self._buf: deque[MqttMsg] = deque(maxlen=maxlen)
         self._lock = threading.Lock()
         self._proc: subprocess.Popen | None = None
@@ -140,6 +143,8 @@ class MqttTail:
         msg = mqtt_summarize(topic, payload, now=self._clock())
         with self._lock:
             self._buf.append(msg)
+        if self._file_log is not None:
+            self._file_log.write(msg.kind, msg.device_id or "", payload)
 
     def messages(self) -> list[MqttMsg]:
         with self._lock:

@@ -50,12 +50,14 @@ logging:
 # Last-Will) and <heartbeat_topic_prefix><device_id> (periodic JSON), then logs a
 # "liveness" snapshot every report_interval_seconds and a "device_down" warning
 # for any device that is offline or whose heartbeat is older than
-# heartbeat_timeout_seconds.
+# heartbeat_timeout_seconds. mqtt_log_path に heartbeat/status/record を
+# JSON 1行ずつ残す（10MB×5本でローテ）。空なら書かない。
 liveness:
   status_topic_prefix: "presence/status/"
   heartbeat_topic_prefix: "presence/heartbeat/"
   heartbeat_timeout_seconds: 60
   report_interval_seconds: 30
+  mqtt_log_path: "/var/log/presence-logger/child-mqtt.log"
 
 # Child-Pi "record" ingestion (optional; defaults shown). Children publish
 # fully-formed Oracle rows (MK_DATE/STA_NO1-3/T1_STATUS) as JSON to `topic`; the

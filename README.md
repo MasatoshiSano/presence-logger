@@ -306,6 +306,8 @@ dev イメージは `services/<name>/src` と `tests/` を **read-only bind moun
 |---|---|---|
 | detector ログ | `/var/log/presence-logger/detector.log` | カメラ・推論・FSM 遷移・MQTT publish・ACK 受信（JSON Lines、10 MB × 5 ローテーション） |
 | bridge ログ | `/var/log/presence-logger/bridge.log` | MQTT 受信・SSID 解決・Oracle MERGE・ACK 送信・SNTP 状態（同上） |
+| child MQTT ログ | `/var/log/presence-logger/child-mqtt.log` | 子Pi の heartbeat / status / record（JSON Lines、10 MB × 5）。パイプライン監視を閉じていても残る |
+| パイプライン監視 MQTT | `~/projects/presence-logger/logs/pipeline-mqtt.log` | 監視TUI起動中の `presence/#`（`PIPELINE_MQTT_LOG` で変更可） |
 | mosquitto ログ | `docker compose logs mosquitto`（永続化なし） | broker 接続・切断 |
 | detector バッファ | `/var/lib/presence-logger/detector_buf.db` | 未 ACK イベント（永続化、再起動後リカバリ用） |
 | bridge inbox | `/var/lib/presence-logger/bridge_buf.db` | 受信済み・未送信イベント |
@@ -393,6 +395,9 @@ dev イメージは `services/<name>/src` と `tests/` を **read-only bind moun
 # 特定の event_id の「一生」を時系列で追う（detector → bridge → ACK）
 EID="e6ed87d4-1a92-4aa6-bbb2-129dc66c327b"
 sudo cat /var/log/presence-logger/*.log | jq -c "select(.event_id == \"$EID\")" | jq -s 'sort_by(.ts)'
+
+# 子Pi の heartbeat / status / record（監視TUIを閉じても残る）
+sudo tail -n 200 /var/log/presence-logger/child-mqtt.log | jq -c '{ts, kind, device_id, payload}'
 
 # 直近 5 分の ENTER / EXIT 確定だけ抽出
 sudo tail -n 5000 /var/log/presence-logger/detector.log | jq -c 'select(.event == "transition")'
