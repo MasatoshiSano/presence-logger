@@ -55,14 +55,21 @@ if e:
 ' "$1"
 }
 
+children_reply_is_back() {
+    case "${1:-}" in
+        0|戻る|"<<") return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 children_ask() {
     local prompt="$1" default="${2:-}" reply
     if [ -n "$default" ]; then
-        read -r -p "$prompt [$default]: " reply || return 1
+        read -r -p "$prompt [$default] (0=戻る): " reply || return 1
     else
-        read -r -p "$prompt: " reply || return 1
+        read -r -p "$prompt (0=戻る): " reply || return 1
     fi
-    if [ "$reply" = "戻る" ] || [ "$reply" = "<<" ]; then
+    if children_reply_is_back "$reply"; then
         printf '%s\n' "$CHILD_WIZ_BACK"
         return 0
     fi
@@ -76,8 +83,8 @@ children_ask() {
 # 0=yes  1=no  2=戻る
 children_ask_yn() {
     local prompt="$1" default="${2:-N}" reply
-    read -r -p "$prompt [$default]: " reply || return 1
-    if [ "$reply" = "戻る" ] || [ "$reply" = "<<" ]; then
+    read -r -p "$prompt [$default] (0=戻る): " reply || return 1
+    if children_reply_is_back "$reply"; then
         return 2
     fi
     reply="${reply:-$default}"
@@ -414,7 +421,7 @@ children_wizard_keep_identity() {
 
 main() {
     echo "このハブへ子Pi を付けます。"
-    echo "間違えたら「戻る」と入れて直前の質問に戻れます。"
+    echo "間違えたら 0 で直前の質問に戻れます。"
     echo
     echo "  1) すでに動いている子を移す（名前と局番号はそのまま）"
     echo "  2) 新しい子を増やす（クローンして改名する。局番号は空になる）"

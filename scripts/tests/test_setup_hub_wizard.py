@@ -298,7 +298,7 @@ def test_mode_two_text_does_not_promise_auto_join_without_psk():
     text = Path("scripts/setup-hub-wizard.sh").read_text(encoding="utf-8")
     assert "パスワードが旧ハブと同じときに限ります" in text
     assert "クローンした子が自動で付きます" not in text
-    assert "間違えたら「戻る」" in text
+    assert "間違えたら 0 で直前" in text
     assert "親機は本当に止まっていますか" in text
 
 
@@ -386,6 +386,14 @@ def test_write_ap_join_env_from_wizard_helpers(tmp_path):
     assert "WIFI_AP_PSK=ap-secret9" in body
 
 
+def test_ask_zero_is_a_back_token():
+    proc = run_bash(
+        f'{SOURCE}; printf "0\\n" | wizard_ask "工場の SSID" HIME-H-REAP',
+        env=_env(),
+    )
+    assert proc.stdout.strip() == "__WIZ_BACK__"
+
+
 def test_ask_double_angle_is_a_back_token():
     proc = run_bash(
         f'{SOURCE}; printf "<<\\n" | wizard_ask "工場の SSID" HIME-H-REAP',
@@ -398,7 +406,7 @@ def test_hub_wizard_back_from_ssid_reasks_hostname(tmp_path):
     work = _kit_workdir(tmp_path)
     proc = _run_hub_wizard(
         work,
-        ["1", "tpc-wrong", "戻る", "tpc99999", ""] + _AFTER_SSID + ["y"],
+        ["1", "tpc-wrong", "0", "tpc99999", ""] + _AFTER_SSID + ["y"],
     )
     assert proc.returncode == 0, proc.stderr + proc.stdout
     assert "----- ① このハブのホスト名 -----" in proc.stdout

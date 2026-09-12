@@ -149,7 +149,7 @@ def test_new_child_default_hostname_is_hub_plus_ordinal():
     text = Path("scripts/setup-children-wizard.sh").read_text(encoding="utf-8")
     assert "このハブのホスト名-001" in text
     assert "children_cli suggest" in text
-    assert "間違えたら「戻る」" in text
+    assert "間違えたら 0 で直前" in text
     assert "1 → 3" in text
 
 
@@ -161,7 +161,21 @@ def test_children_ask_back_word_is_a_token():
     assert proc.stdout.strip() == "__WIZ_BACK__"
 
 
-def test_children_ask_yn_back_returns_2():
+def test_children_ask_zero_is_a_back_token():
+    proc = run_bash(
+        f'{SOURCE}; printf "0\\n" | children_ask "番号で選ぶ" 1',
+        env=_env(),
+    )
+    assert proc.stdout.strip() == "__WIZ_BACK__"
+
+
+def test_children_ask_yn_zero_returns_2():
+    proc = run_bash(
+        f'{SOURCE}; printf "0\\n" | children_ask_yn "入れましたか" N; echo rc:$?',
+        env=_env(),
+        check=False,
+    )
+    assert "rc:2" in proc.stdout
     proc = run_bash(
         f'{SOURCE}; printf "戻る\\n" | children_ask_yn "入れましたか" N; echo rc:$?',
         env=_env(),

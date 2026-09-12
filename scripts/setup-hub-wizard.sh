@@ -208,14 +208,22 @@ wizard_is_back() {
     [ "${1:-}" = "$WIZ_BACK" ]
 }
 
+# 漢字は不要。0 が本線。戻る / << も受け付ける。
+wizard_reply_is_back() {
+    case "${1:-}" in
+        0|戻る|"<<") return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 wizard_ask() {
     local prompt="$1" default="${2:-}" reply
     if [ -n "$default" ]; then
-        read -r -p "$prompt [$default]: " reply || return 1
+        read -r -p "$prompt [$default] (0=戻る): " reply || return 1
     else
-        read -r -p "$prompt: " reply || return 1
+        read -r -p "$prompt (0=戻る): " reply || return 1
     fi
-    if [ "$reply" = "戻る" ] || [ "$reply" = "<<" ]; then
+    if wizard_reply_is_back "$reply"; then
         printf '%s\n' "$WIZ_BACK"
         return 0
     fi
@@ -228,9 +236,9 @@ wizard_ask() {
 
 wizard_ask_secret() {
     local prompt="$1" reply
-    read -r -s -p "$prompt: " reply || return 1
+    read -r -s -p "$prompt (0=戻る): " reply || return 1
     echo >&2
-    if [ "$reply" = "戻る" ] || [ "$reply" = "<<" ]; then
+    if wizard_reply_is_back "$reply"; then
         printf '%s\n' "$WIZ_BACK"
         return 0
     fi
@@ -269,7 +277,7 @@ main() {
 
     echo "この Raspberry Pi を子Pi専用ハブにします。"
     echo "質問は 1 項目ずつです。[] はコピー元（または推奨）の値。Enter ならそのまま。"
-    echo "間違えたら「戻る」と入れて直前の質問に戻れます。確認では 1〜7 でその項目からやり直せます。"
+    echo "間違えたら 0 で直前の質問に戻れます。確認では 1〜7 でその項目からやり直せます。"
     echo
     echo "  1) 親機と同時に動かす（同じ工場網。このハブの名前・工場IP・子Pi用AP名は親機と別）"
     echo "  2) 親機はもう使わない、または別の工場網"
@@ -484,11 +492,11 @@ main() {
                 echo "  ⑦ 子Pi用APパスワード         : （入力済み）"
                 echo "     Oracle パスワード          : （入力済み）"
                 echo "---------------"
-                echo "y で進める / n で中止 / 戻る で直前 / 1〜7 でその項目からやり直し"
+                echo "y で進める / n で中止 / 0 で直前 / 1〜7 でその項目からやり直し"
                 read -r -p "この内容で進めますか？ [y/N]: " yn || return 1
                 case "$yn" in
                     y|Y) step=-1 ;;
-                    戻る|"<<") step=14 ;;
+                    0|戻る|"<<") step=14 ;;
                     1) step=1 ;;
                     2) step=2 ;;
                     3) step=3 ;;
