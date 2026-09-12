@@ -202,6 +202,87 @@ wizard_merge_secrets() {
     chmod 600 "$dest"
 }
 
+wizard_replace_env_key() {
+    local dest="$1" key="$2" val="$3" tmp
+    mkdir -p "$(dirname "$dest")"
+    tmp="$(mktemp)"
+    if [ -f "$dest" ]; then
+        grep -vE "^${key}=" "$dest" > "$tmp" || true
+    fi
+    printf '%s=%s\n' "$key" "$val" >> "$tmp"
+    mv "$tmp" "$dest"
+    chmod 600 "$dest"
+}
+
+wizard_current_ap_ssid() {
+    local repo="$1" join="$repo/.kit/ap-join.env" site="$repo/site.env"
+    local ssid=""
+    if [ -f "$join" ]; then
+        ssid="$(grep -E '^AP_SSID=' "$join" | head -1 | cut -d= -f2-)"
+    fi
+    if [ -z "$ssid" ] && [ -f "$site" ]; then
+        ssid="$(grep -E '^AP_SSID=' "$site" | head -1 | cut -d= -f2-)"
+    fi
+    printf '%s\n' "$ssid"
+}
+
+# キットの ap-join.env から /etc の WIFI_AP_PSK を直す。PSK はファイルから読む。
+wizard_sync_psk_to_etc() {
+    local kit_join="${1:?}"
+    local etc_secrets="${2:-/etc/presence-logger/secrets.env}"
+    local psk tmp
+    psk="$(grep -E '^WIFI_AP_PSK=' "$kit_join" | head -1 | cut -d= -f2-)"
+    psk="${psk%$'\r'}"
+    if [ "${#psk}" -lt 8 ]; then
+        echo "ap-join.env のパスワードが短すぎます" >&2
+        return 1
+    fi
+    tmp="$(mktemp)"
+    if [ -f "$etc_secrets" ]; then
+        grep -vE '^WIFI_AP_PSK=' "$etc_secrets" > "$tmp" || true
+    fi
+    printf 'WIFI_AP_PSK=%s\n' "$psk" >> "$tmp"
+    mkdir -p "$(dirname "$etc_secrets")"
+    install -m 600 "$tmp" "$etc_secrets"
+    if getent group docker >/dev/null 2>&1; then
+        chown root:docker "$etc_secrets" 2>/dev/null || true
+    fi
+    rm -f "$tmp"
+}
+
+wizard_redo_ap_psk() {
+    local repo="$1" user="$2"
+    local ssid psk
+    ssid="$(wizard_current_ap_ssid "$repo")"
+    if [ -z "$ssid" ]; then
+        echo "AP 名が読めません。site.env か .kit/ap-join.env を確認してください。" >&2
+        return 1
+    fi
+    echo "子Pi用ハブAPの名前は ${ssid} のままです。"
+    echo "パスワードを打ち間違えてクローンが付かないときに、ここだけやり直します。"
+    psk="$(wizard_ask_secret "子Pi用ハブAPのパスワード（8文字以上）")" || return 1
+    wizard_is_back "$psk" && return 0
+    wizard_validate_ap_psk "$psk" || return 1
+    write_ap_join_env "$repo/.kit/ap-join.env" "$ssid" "$psk" "$user" || return 1
+    if [ -f "$repo/.kit/secrets.env" ]; then
+        wizard_replace_env_key "$repo/.kit/secrets.env" WIFI_AP_PSK "$psk"
+        chown "$user:$user" "$repo/.kit/secrets.env" 2>/dev/null || true
+    fi
+    if [ "${WIZARD_DRY_RUN:-}" = "1" ]; then
+        echo "DRY-RUN: AP は再起動しません。キットのパスワードだけ書きました。"
+        return 0
+    fi
+    if [ "$(id -u)" -ne 0 ]; then
+        sudo env KIT_JOIN="$repo/.kit/ap-join.env" bash "$WIZARD_REPO_DIR/scripts/setup-hub-wizard.sh" --sync-psk-to-etc \
+            || return 1
+        sudo AP_FORCE=1 bash "$repo/scripts/bootstrap/50-ap.sh" || return 1
+    else
+        wizard_sync_psk_to_etc "$repo/.kit/ap-join.env" /etc/presence-logger/secrets.env || return 1
+        AP_FORCE=1 bash "$repo/scripts/bootstrap/50-ap.sh" || return 1
+    fi
+    echo "AP パスワードを書き直して、子Pi用 AP を上げ直しました。"
+}
+
 WIZ_BACK='__WIZ_BACK__'
 
 wizard_is_back() {
@@ -255,9 +336,22 @@ main() {
 
     if wizard_already_configured "$marker"; then
         echo "既に設定済みです（$marker）。"
-        echo "やり直すときはそのファイルを消してから、もう一度このアイコンを開いてください。"
-        read -r -p "Enterで閉じる " _
-        return 0
+        echo "ホスト名や工場IPのやり直しは、そのファイルを消してからもう一度開いてください。"
+        echo
+        echo "  Enter : 閉じる"
+        echo "  p     : 子Pi用APのパスワードだけやり直す（クローンが付かないとき）"
+        read -r -p "番号または Enter: " v || return 0
+        case "$v" in
+            p|P)
+                wizard_redo_ap_psk "$repo" "$user"
+                echo "Enterで閉じる"
+                read -r -p "" _ || true
+                return 0
+                ;;
+            *)
+                return 0
+                ;;
+        esac
     fi
 
     if [ ! -f "$origin" ]; then
@@ -573,4 +667,14 @@ EOF
     read -r -p "" _
 }
 
-[[ "${BASH_SOURCE[0]}" == "$0" ]] && main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    case "${1:-}" in
+        --sync-psk-to-etc)
+            wizard_sync_psk_to_etc "${KIT_JOIN:?KIT_JOIN が空です}" \
+                "${ETC_SECRETS:-/etc/presence-logger/secrets.env}"
+            ;;
+        *)
+            main "$@"
+            ;;
+    esac
+fi

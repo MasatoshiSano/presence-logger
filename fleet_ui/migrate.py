@@ -348,25 +348,20 @@ def take_child(
         runner=runner,
         input_text=nm_join_keyfile(ssid, psk),
     )
-    if WIFI_OK not in (wifi_out or ""):
-        return StepResult(
-            ok=False,
-            message=(
-                f"{entry} の Wi-Fi 切替に失敗しました。"
-                "公開鍵は入っています。子の無線を確認してください。"
-            ),
-            output=wifi_out,
-        )
-
+    # 切替が成功すると旧親への SSH が切れる。WIFI_OK が届かないのは正常。
+    # 成功の判定は、このハブの AP に同じ MAC が現れること。
     waited = wait_fn(mac)
     if not waited.ok:
         return StepResult(
             ok=False,
             message=(
                 f"{entry} がこのハブの AP ({ssid}) に現れません。"
+                " 無線切替の返事が途中で切れるのは正常です。"
+                " パスワードが違うか、電波の外の可能性があります。"
+                " このハブの AP に居るなら、ウィザードで 1 → 3 を選んでください。"
                 f" {waited.message}"
             ),
-            output=waited.output,
+            output=(wifi_out or "") + (waited.output or ""),
         )
 
     inv_name = inventory_name(entry)

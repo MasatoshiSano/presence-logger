@@ -31,7 +31,11 @@ def _recorder(fail_on=None, out=""):
     return run
 
 
-def test_stop_publisher_targets_the_ip_not_a_hostname():
+def test_register_new_child_ssh_uses_accept_new():
+    r = _recorder()
+    stop_publisher("10.42.0.194", runner=r)
+    joined = " ".join(" ".join(c) for c in r.calls)
+    assert "StrictHostKeyChecking=accept-new" in joined
     r = _recorder()
     assert stop_publisher("10.42.0.194", runner=r).ok
     joined = " ".join(" ".join(c) for c in r.calls)
