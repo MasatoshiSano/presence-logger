@@ -46,32 +46,6 @@ COMPOSE_PROJECT_NAME=presence-logger
 EOF
 }
 
-stack_enable_fleet_ui() {
-    local user="${SUDO_USER:-$USER}" home
-    home="$(getent passwd "$user" | cut -d: -f6)"
-    local unit=/etc/systemd/system/fleet-ui.service
-    mkdir -p /etc/systemd/system
-    cat > "$unit" <<EOF
-[Unit]
-Description=Fleet management UI (parent-side, localhost only)
-After=network.target
-
-[Service]
-Type=simple
-WorkingDirectory=$REPO_DIR
-Environment=AP_DEV=${AP_IF:-wlan1}
-ExecStart=$REPO_DIR/.venv/bin/python -m fleet_ui.server
-Restart=on-failure
-User=$user
-
-[Install]
-WantedBy=multi-user.target
-EOF
-    chmod 644 "$unit"
-    systemctl daemon-reload || return 1
-    systemctl enable --now fleet-ui.service || return 1
-}
-
 main() {
     site_env_require
     stack_write_env "$REPO_DIR/.env"

@@ -6,6 +6,8 @@
 import os
 import textwrap
 
+from pathlib import Path
+
 from scripts.tests.shellhelp import run_bash
 
 SOURCE = "source scripts/setup-hub-wizard.sh"
@@ -56,6 +58,58 @@ ORIGIN = textwrap.dedent("""\
     ORIGIN_PARENT_STA_NO2=995
     ORIGIN_PARENT_STA_NO3=994
     """)
+
+ORIGIN_PACK = textwrap.dedent("""\
+    ORIGIN_HOSTNAME=raspberrypi5
+    ORIGIN_FACTORY_IP=172.22.13.17/24
+    ORIGIN_FACTORY_SSID=HIME-H-REAP
+    ORIGIN_FACTORY_GW=172.22.13.1
+    ORIGIN_FACTORY_DNS=10.166.1.70,10.166.1.17
+    ORIGIN_AP_SSID=presence-hub
+    ORIGIN_ORACLE_HOST=10.166.5.93
+    ORIGIN_ORACLE_PORT=1521
+    ORIGIN_ORACLE_SERVICE=HHC001
+    ORIGIN_ORACLE_USER=ZHH001
+    ORIGIN_ORACLE_TABLE=HF1RCM01
+    ORIGIN_PARENT_STA_NO1=996
+    ORIGIN_PARENT_STA_NO2=995
+    ORIGIN_PARENT_STA_NO3=994
+    """)
+
+# ホスト名のあと。工場SSIDは Enter、固定IPは手入力、残りはコピー元。
+_AFTER_SSID = [
+    "172.22.13.21",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "Abc12345",
+    "ora12345",
+]
+
+
+def _kit_workdir(tmp_path: Path) -> Path:
+    kit = tmp_path / ".kit"
+    kit.mkdir()
+    (kit / "origin.env").write_text(ORIGIN_PACK, encoding="utf-8")
+    (tmp_path / "site.env.example").write_text(
+        Path("site.env.example").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    return tmp_path
+
+
+def _run_hub_wizard(tmp_path: Path, lines: list[str]):
+    return run_bash(
+        "timeout 20 bash -c 'source scripts/setup-hub-wizard.sh; main'",
+        env=_env({"WIZARD_WORKDIR": str(tmp_path), "WIZARD_DRY_RUN": "1"}),
+        stdin="\n".join(lines) + "\n",
+        check=False,
+    )
 
 
 def test_hostname_matching_origin_is_rejected(tmp_path):
@@ -330,6 +384,46 @@ def test_write_ap_join_env_from_wizard_helpers(tmp_path):
     body = dest.read_text(encoding="utf-8")
     assert "AP_SSID=sibling-hub" in body
     assert "WIFI_AP_PSK=ap-secret9" in body
+
+
+def test_ask_double_angle_is_a_back_token():
+    proc = run_bash(
+        f'{SOURCE}; printf "<<\\n" | wizard_ask "工場の SSID" HIME-H-REAP',
+        env=_env(),
+    )
+    assert proc.stdout.strip() == "__WIZ_BACK__"
+
+
+def test_hub_wizard_back_from_ssid_reasks_hostname(tmp_path):
+    work = _kit_workdir(tmp_path)
+    proc = _run_hub_wizard(
+        work,
+        ["1", "tpc-wrong", "戻る", "tpc99999", ""] + _AFTER_SSID + ["y"],
+    )
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    assert "----- ① このハブのホスト名 -----" in proc.stdout
+    assert proc.stdout.count("----- ① このハブのホスト名 -----") >= 2
+    assert "① このハブのホスト名         : tpc99999" in proc.stdout
+    assert "tpc-wrong" not in proc.stdout.split("----- 確認 -----")[-1]
+    assert "DRY-RUN" in proc.stdout
+    assert not (work / "site.env").exists()
+
+
+def test_hub_wizard_confirm_jump_rewrites_factory_ip(tmp_path):
+    work = _kit_workdir(tmp_path)
+    proc = _run_hub_wizard(
+        work,
+        ["1", "tpc12345", ""]
+        + _AFTER_SSID
+        + ["3", "172.22.13.22"]
+        + _AFTER_SSID[1:]
+        + ["y"],
+    )
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    confirm = proc.stdout.split("----- 確認 -----")[-1]
+    assert "172.22.13.22" in confirm
+    assert "tpc12345" in confirm
+    assert "DRY-RUN" in proc.stdout
 
 
 def test_already_configured_when_marker_exists(tmp_path):

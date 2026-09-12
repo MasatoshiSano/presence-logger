@@ -161,6 +161,22 @@ def test_children_ask_back_word_is_a_token():
     assert proc.stdout.strip() == "__WIZ_BACK__"
 
 
+def test_children_ask_yn_back_returns_2():
+    proc = run_bash(
+        f'{SOURCE}; printf "戻る\\n" | children_ask_yn "入れましたか" N; echo rc:$?',
+        env=_env(),
+        check=False,
+    )
+    assert "rc:2" in proc.stdout
+
+
+def test_children_keep_path_back_returns_to_kind():
+    from pathlib import Path
+    text = Path("scripts/setup-children-wizard.sh").read_text(encoding="utf-8")
+    assert "children_wizard_is_back \"$path\" && return 2" in text
+    assert "[ \"$rc\" -eq 2 ] && continue" in text
+
+
 def test_find_sd_root_prefers_media_then_mnt(tmp_path):
     media = tmp_path / "media" / "pi" / "child"
     (media / "home" / "pi").mkdir(parents=True)

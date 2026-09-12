@@ -346,12 +346,13 @@ ls -l /etc/presence-logger/
 
 ### 3.5 `.venv`（#10）
 
-`fleet-ui.service` が `/home/pi/projects/presence-logger/.venv/bin/python` を**絶対パスで**
-起動するため、無いとフリート監視が動かない。
+フェーズ20 が `.venv` を作る。子の付け替えはデスクトップの
+「子をこのハブへ付ける」（システム `python3` + `fleet_ui` パッケージ）を使う。
+ブラウザの `fleet-ui.service` は起動しない。
 
-`fleet_ui` の依存は**標準ライブラリだけ**（`json` / `subprocess` / `shlex` / `http.server` /
-`pathlib` 等）。したがって空の venv で足りる。システムの `python3-yaml` も見えるように
-しておくと、後から他のツールを venv 側で動かしたくなったときに困らない。
+`fleet_ui` の依存は**標準ライブラリだけ**（`json` / `subprocess` / `shlex` /
+`pathlib` 等）。システムの `python3-yaml` も見えるようにしておくと、後から
+他のツールを venv 側で動かしたくなったときに困らない。
 
 ```bash
 cd ~/projects/presence-logger

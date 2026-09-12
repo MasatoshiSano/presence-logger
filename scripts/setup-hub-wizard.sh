@@ -6,6 +6,8 @@
 set -uo pipefail
 
 WIZARD_REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# キットと書き出し先。テストでは tmp に向け、本番ではリポジトリそのもの。
+WIZARD_WORKDIR="${WIZARD_WORKDIR:-$WIZARD_REPO_DIR}"
 # shellcheck source=scripts/lib/site-env.sh
 source "$WIZARD_REPO_DIR/scripts/lib/site-env.sh"
 
@@ -236,7 +238,7 @@ wizard_ask_secret() {
 }
 
 main() {
-    local repo="${WIZARD_REPO_DIR}"
+    local repo="${WIZARD_WORKDIR}"
     local origin="$repo/.kit/origin.env"
     local tmpl="$repo/.kit/site.env.template"
     local secrets_tmpl="$repo/.kit/secrets.env.template"
@@ -514,6 +516,11 @@ main() {
     WIZ_ORACLE_TABLE="$oracle_table"
     export WIZ_FACTORY_SSID WIZ_FACTORY_GW WIZ_FACTORY_DNS
     export WIZ_ORACLE_HOST WIZ_ORACLE_PORT WIZ_ORACLE_SERVICE WIZ_ORACLE_USER WIZ_ORACLE_TABLE
+
+    if [ "${WIZARD_DRY_RUN:-}" = "1" ]; then
+        echo "DRY-RUN: この内容は書き込みません。確認までで終わります。"
+        return 0
+    fi
 
     local site_out="$repo/site.env"
     wizard_render_site_env "$tmpl" "$origin" "$hostname" "$factory_ip" "$ap_ssid" \
