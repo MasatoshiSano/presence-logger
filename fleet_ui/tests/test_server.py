@@ -40,7 +40,7 @@ def test_suggested_hostname_is_included_for_registration():
         statuses={"10.42.0.52": ChildStatus(ip="10.42.0.52", hostname="pizero2w")},
         hub="tpc12345",
     )
-    assert view["suggested_hostname"] == "tpc12345-2"
+    assert view["suggested_hostname"] == "tpc12345-002"
 
 
 def test_duplicate_sta_no_is_reported():

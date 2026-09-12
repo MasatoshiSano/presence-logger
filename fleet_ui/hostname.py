@@ -48,9 +48,9 @@ def read_hub_hostname(path: Path) -> str:
 
 
 def suggest_hostname(existing: list[str], hub: str = "") -> str:
-    """このハブの N 台目の子。例: ハブ tpc12345、名簿が1台 → tpc12345-2。
+    """このハブの N 台目の子。例: ハブ tpc12345、名簿が1台 → tpc12345-002。
 
-    N はいまの名簿の台数+1。同じ名前が既にあれば一つ進める。
+    N はいまの名簿の台数+1。3桁ゼロ埋め。同じ名前が既にあれば一つ進める。
     """
     hub = _short((hub or "").strip().lower())
     if not hub or not _VALID_RE.match(hub):
@@ -62,8 +62,9 @@ def suggest_hostname(existing: list[str], hub: str = "") -> str:
     if n < 1:
         n = 1
     while n <= 9999:
-        cand = f"{hub}-{n}"
-        if cand not in names and len(cand) <= 63:
+        cand = f"{hub}-{n:03d}"
+        taken = cand in names or f"{hub}-{n}" in names
+        if not taken and len(cand) <= 63:
             return cand
         n += 1
-    return f"{_FALLBACK_HUB}-1"
+    return f"{_FALLBACK_HUB}-001"

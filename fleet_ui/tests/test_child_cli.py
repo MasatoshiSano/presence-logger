@@ -114,7 +114,7 @@ def test_suggest_returns_hostname(monkeypatch, capsys):
     assert child_cli.main(["suggest"]) == 0
     body = json.loads(capsys.readouterr().out)
     assert body["ok"] is True
-    assert body["hostname"] == "tpc12345-2"
+    assert body["hostname"] == "tpc12345-002"
 
 
 def test_register_dispatches(monkeypatch, capsys):

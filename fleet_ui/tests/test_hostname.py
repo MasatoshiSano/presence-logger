@@ -45,20 +45,20 @@ def test_rejects_too_long():
 
 
 def test_suggest_is_hub_name_plus_next_ordinal():
-    assert suggest_hostname(["zero2.local"], hub="tpc12345") == "tpc12345-2"
+    assert suggest_hostname(["zero2.local"], hub="tpc12345") == "tpc12345-002"
 
 
 def test_suggest_first_child_is_one():
-    assert suggest_hostname([], hub="tpc12345") == "tpc12345-1"
+    assert suggest_hostname([], hub="tpc12345") == "tpc12345-001"
 
 
 def test_suggest_skips_a_name_already_taken():
-    assert suggest_hostname(["tpc12345-2.local"], hub="tpc12345") == "tpc12345-3"
+    assert suggest_hostname(["tpc12345-002.local"], hub="tpc12345") == "tpc12345-003"
 
 
 def test_suggest_without_hub_uses_child_prefix():
-    assert suggest_hostname([]) == "child-1"
-    assert suggest_hostname(["zero2"]) == "child-2"
+    assert suggest_hostname([]) == "child-001"
+    assert suggest_hostname(["zero2"]) == "child-002"
 
 
 def test_read_hub_hostname_from_site_env(tmp_path: Path):

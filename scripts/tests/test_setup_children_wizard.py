@@ -147,7 +147,7 @@ def test_wizard_does_not_embed_psk_in_bash_c():
 def test_new_child_default_hostname_is_hub_plus_ordinal():
     from pathlib import Path
     text = Path("scripts/setup-children-wizard.sh").read_text(encoding="utf-8")
-    assert "このハブのホスト名-何台目" in text
+    assert "このハブのホスト名-001" in text
     assert "children_cli suggest" in text
 
 
