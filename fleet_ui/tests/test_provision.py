@@ -106,6 +106,24 @@ def test_wait_for_return_times_out_cleanly():
     assert res.ok is False
 
 
+def test_wait_for_return_uses_ap_dev_env(monkeypatch):
+    monkeypatch.setenv("AP_DEV", "wlan0")
+    seen = []
+
+    def runner(cmd):
+        seen.append(cmd)
+        return "10.42.0.77 lladdr 88:a2:9e:30:5e:46 REACHABLE\n"
+
+    res = wait_for_return(
+        "88:a2:9e:30:5e:46",
+        timeout_s=30,
+        runner=runner,
+        sleeper=lambda s: None,
+    )
+    assert res.ok
+    assert seen[0] == ["ip", "-4", "neigh", "show", "dev", "wlan0"]
+
+
 def test_register_host_key_appends_to_known_hosts(tmp_path):
     """本物の ~/.ssh/known_hosts を汚さないよう、必ず known_hosts を渡すこと。"""
     kh = tmp_path / "known_hosts"

@@ -29,6 +29,9 @@ _PUBKEY_RE = re.compile(
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_REMOTE_INVENTORY = "~/projects/presence-logger/fleet/children.conf"
+CAT_OK = "__PRESENCE_CAT_OK__"
+MISSING = "__PRESENCE_MISSING__"
+KEY_OK = "KEY_OK"
 
 
 def validate_old_host(host: str) -> str | None:
@@ -140,6 +143,31 @@ def ssh_pi(
     ])
 
 
+def _read_remote_inventory(
+    old_host: str,
+    remote_inventory: str,
+    *,
+    runner: Callable[[list[str]], str],
+) -> tuple[str | None, str]:
+    """旧親の children.conf を読む。失敗と空ファイルを区別する。
+
+    run_cmd_long は終了コードを捨てるので、sentinel が付くまで成功とみなさない。
+    失敗なのに空文字を書き戻すと、旧親の名簿が消える。
+    """
+    remote = (
+        f"if test -f {remote_inventory}; then "
+        f"cat {remote_inventory}; printf '\\n{CAT_OK}\\n'; "
+        f"else echo {MISSING}; fi"
+    )
+    out = ssh_pi(old_host, remote, runner=runner) or ""
+    lines = [ln for ln in out.splitlines() if ln]
+    if lines and lines[-1] == MISSING and CAT_OK not in out:
+        return "", "missing"
+    if CAT_OK not in out:
+        return None, "fail"
+    return out[: out.rfind(CAT_OK)], "ok"
+
+
 def list_remote_children(
     old_host: str,
     *,
@@ -149,8 +177,8 @@ def list_remote_children(
     err = validate_old_host(old_host)
     if err:
         return StepResult(ok=False, message=err)
-    text = ssh_pi(old_host, f"cat {remote_inventory}", runner=runner)
-    if not text.strip():
+    text, status = _read_remote_inventory(old_host, remote_inventory, runner=runner)
+    if status != "ok":
         pubkey = read_pubkey()
         hint = ""
         if pubkey:
@@ -162,9 +190,9 @@ def list_remote_children(
             ok=False,
             message="旧親の子一覧を読めませんでした。工場網で SSH できるか確認してください。"
             + hint,
-            output=text,
+            output=text or "",
         )
-    entries = parse_children_conf(text)
+    entries = parse_children_conf(text or "")
     return StepResult(ok=True, message=f"{len(entries)} 台", output="\n".join(entries))
 
 
@@ -239,13 +267,26 @@ def take_child(
     key_inner = (
         "umask 077; mkdir -p ~/.ssh; touch ~/.ssh/authorized_keys; "
         f"grep -qxF {shlex.quote(pubkey)} ~/.ssh/authorized_keys || "
-        f"printf '%s\\n' {shlex.quote(pubkey)} >> ~/.ssh/authorized_keys"
+        f"printf '%s\\n' {shlex.quote(pubkey)} >> ~/.ssh/authorized_keys; "
+        f"grep -qxF {shlex.quote(pubkey)} ~/.ssh/authorized_keys && echo {KEY_OK}"
     )
-    ssh_pi(old_host, _nested_ssh(entry, key_inner), runner=runner)
+    key_out = ssh_pi(old_host, _nested_ssh(entry, key_inner), runner=runner)
+    if KEY_OK not in (key_out or ""):
+        return StepResult(
+            ok=False,
+            message=(
+                f"{entry} に新しい公開鍵を入れられませんでした。"
+                "Wi-Fi は切り替えていません。"
+            ),
+            output=key_out,
+        )
 
     wifi_inner = (
         f"sudo nmcli -w 15 dev wifi connect {shlex.quote(ssid)} "
-        f"password {shlex.quote(psk)}"
+        f"password {shlex.quote(psk)}; "
+        f"sudo nmcli connection modify {shlex.quote(ssid)} "
+        "connection.autoconnect yes connection.autoconnect-priority 200 "
+        "2>/dev/null || true"
     )
     ssh_pi(old_host, _nested_ssh(entry, wifi_inner), runner=runner)
 
@@ -262,13 +303,27 @@ def take_child(
 
     inv_name = inventory_name(entry)
     kh = register_host_key(inv_name, runner=runner, known_hosts=known_hosts)
+    ip = (waited.output or "").strip()
+    if not (kh.output or "").strip() and _IPV4_RE.match(ip):
+        kh = register_host_key(ip, runner=runner, known_hosts=known_hosts)
     if not kh.ok:
         return kh
     added = add_to_inventory(inv_name, path=inv_file)
     if not added.ok:
         return added
 
-    remote_text = ssh_pi(old_host, f"cat {remote_inventory}", runner=runner)
+    remote_text, status = _read_remote_inventory(
+        old_host, remote_inventory, runner=runner
+    )
+    if status != "ok" or remote_text is None:
+        return StepResult(
+            ok=True,
+            message=(
+                f"{entry} をこのハブへ移しました（ホスト名と局番号はそのまま）。"
+                "旧親の名簿は更新できませんでした。旧親で手動削除してください。"
+            ),
+            output=waited.output,
+        )
     stripped = strip_inventory_entry(remote_text, entry)
     write_remote = f"printf %s {shlex.quote(stripped)} > {remote_inventory}"
     ssh_pi(old_host, write_remote, runner=runner)

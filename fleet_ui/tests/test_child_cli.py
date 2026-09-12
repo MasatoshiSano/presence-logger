@@ -60,3 +60,49 @@ def test_unknown_command_is_not_ok(capsys):
     assert child_cli.main(["nope"]) == 1
     body = json.loads(capsys.readouterr().out)
     assert "不明なコマンド" in body["message"]
+
+
+def test_candidates_skips_unverified_and_known(monkeypatch, capsys):
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(child_cli, "_inventory_entries", lambda: ["zero2.local"])
+    monkeypatch.setattr(
+        child_cli, "resolve_inventory_ips", lambda entries: {"zero2.local": "10.42.0.10"}
+    )
+    monkeypatch.setattr(child_cli, "load_known_macs", lambda: {"zero2.local": "aa:bb:cc:dd:ee:ff"})
+    monkeypatch.setattr(child_cli, "read_neighbors", lambda: [])
+    monkeypatch.setattr(
+        child_cli,
+        "classify",
+        lambda *a, **k: [
+            SimpleNamespace(kind="known", ip="10.42.0.10", mac="aa:bb:cc:dd:ee:ff", entry="zero2.local"),
+            SimpleNamespace(kind="unverified", ip="10.42.0.20", mac="11:22:33:44:55:66", entry=None),
+        ],
+    )
+    monkeypatch.setattr(child_cli.provision, "probe_hostname", lambda ip, **k: "drifted")
+    assert child_cli.main(["candidates"]) == 0
+    body = json.loads(capsys.readouterr().out)
+    assert body["ok"] is True
+    assert body["candidates"] == []
+
+
+def test_candidates_includes_kind_new(monkeypatch, capsys):
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(child_cli, "_inventory_entries", lambda: [])
+    monkeypatch.setattr(child_cli, "resolve_inventory_ips", lambda entries: {})
+    monkeypatch.setattr(child_cli, "load_known_macs", lambda: {})
+    monkeypatch.setattr(child_cli, "read_neighbors", lambda: [])
+    monkeypatch.setattr(
+        child_cli,
+        "classify",
+        lambda *a, **k: [
+            SimpleNamespace(kind="new", ip="10.42.0.9", mac="aa:bb:cc:dd:ee:01", entry=None),
+        ],
+    )
+    monkeypatch.setattr(child_cli.provision, "probe_hostname", lambda ip, **k: "zero2")
+    assert child_cli.main(["candidates"]) == 0
+    body = json.loads(capsys.readouterr().out)
+    assert body["candidates"][0]["hostname"] == "zero2"
+    assert body["candidates"][0]["ssh_ok"] is True
+    assert body["candidates"][0]["kind"] == "new"

@@ -49,13 +49,24 @@ child_sd_install_pubkey() {
     chown "$owner_uid:$owner_uid" "$root/home/pi/.ssh" "$dest" 2>/dev/null || true
 }
 
+# NetworkManager の keyfile は未引用だと # 以降がコメントになる。
+# 引用符とバックスラッシュだけエスケープして二重引用符で囲む。
+child_sd_nm_quote() {
+    local v="${1:-}"
+    v="${v//\\/\\\\}"
+    v="${v//\"/\\\"}"
+    printf '"%s"' "$v"
+}
+
 child_sd_write_wifi() {
     local root="${1:?}" ssid="${2:?}" psk="${3:?}"
     local dir="$root/etc/NetworkManager/system-connections"
     local dest="$dir/presence-hub-join.nmconnection"
-    local uuid
+    local uuid qssid qpsk
     mkdir -p "$dir"
     uuid="$(cat /proc/sys/kernel/random/uuid 2>/dev/null || python3 -c 'import uuid; print(uuid.uuid4())')"
+    qssid="$(child_sd_nm_quote "$ssid")"
+    qpsk="$(child_sd_nm_quote "$psk")"
     umask 077
     cat > "$dest" <<EOF
 [connection]
@@ -63,15 +74,15 @@ id=presence-hub-join
 uuid=$uuid
 type=wifi
 autoconnect=true
-autoconnect-priority=100
+autoconnect-priority=200
 
 [wifi]
 mode=infrastructure
-ssid=$ssid
+ssid=$qssid
 
 [wifi-security]
 key-mgmt=wpa-psk
-psk=$psk
+psk=$qpsk
 
 [ipv4]
 method=auto
@@ -101,6 +112,10 @@ main() {
             return 1
         }
     fi
+    if [[ "$root" != /* || "$root" == *..* ]]; then
+        echo "マウント先が不正です: $root" >&2
+        return 1
+    fi
     child_sd_is_child_root "$root" || return 1
 
     ssid=""
@@ -123,7 +138,9 @@ main() {
     echo "  ホスト名と局番号はそのままにします。"
     echo "  このハブの公開鍵と AP（$ssid）を書き込みます。"
     if [ "$(id -u)" -ne 0 ]; then
-        sudo bash "$PREPARE_REPO_DIR/scripts/prepare-child-sd.sh" "$root" || return 1
+        # sudo すると HOME が /root になる。公開鍵のパスと HOME を明示して渡す。
+        sudo env CHILD_SD_PUBKEY="$pub" HOME="$HOME" \
+            bash "$PREPARE_REPO_DIR/scripts/prepare-child-sd.sh" "$root" || return 1
         echo
         echo "SD を外して子Pi に挿し、電源を入れてください。"
         echo "起動したらデスクトップの「子をこのハブへ付ける」を開き、3 を選んでください。"

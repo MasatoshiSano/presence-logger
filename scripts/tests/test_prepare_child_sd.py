@@ -65,8 +65,9 @@ def test_prepare_writes_key_and_wifi_keeps_identity(tmp_path):
     assert "ssh-ed25519 AAAA newhub" in keys
     wifi = (root / "etc" / "NetworkManager" / "system-connections" / "presence-hub-join.nmconnection")
     body = wifi.read_text(encoding="utf-8")
-    assert "ssid=sibling-hub" in body
-    assert "psk=ap-secret9" in body
+    assert 'ssid="sibling-hub"' in body
+    assert 'psk="ap-secret9"' in body
+    assert "autoconnect-priority=200" in body
     assert oct(wifi.stat().st_mode & 0o777) == "0o600"
     assert (root / "home" / "pi" / "id_names_config.json").read_text(encoding="utf-8") == (
         '{"id_names":{"1":["H","T","1"]}}\n'
@@ -85,3 +86,24 @@ def test_prepare_does_not_duplicate_pubkey(tmp_path):
     )
     keys = (root / "home" / "pi" / ".ssh" / "authorized_keys").read_text(encoding="utf-8")
     assert keys.count("ssh-ed25519 AAAA newhub") == 1
+
+
+def test_prepare_quotes_hash_in_psk_so_nm_does_not_truncate(tmp_path):
+    root = _child_root(tmp_path)
+    pub = tmp_path / "id_ed25519.pub"
+    pub.write_text("ssh-ed25519 AAAA newhub\n", encoding="utf-8")
+    run_bash(
+        f'{SOURCE}; child_sd_write_wifi "{root}" sibling-hub "sec#ret99"',
+        env=_env(),
+    )
+    body = (
+        root / "etc" / "NetworkManager" / "system-connections" / "presence-hub-join.nmconnection"
+    ).read_text(encoding="utf-8")
+    assert 'psk="sec#ret99"' in body
+
+
+def test_sudo_reexec_passes_pubkey_and_home():
+    from pathlib import Path
+    text = Path("scripts/prepare-child-sd.sh").read_text(encoding="utf-8")
+    assert 'sudo env CHILD_SD_PUBKEY="$pub" HOME="$HOME"' in text
+    assert 'sudo bash "$PREPARE_REPO_DIR/scripts/prepare-child-sd.sh" "$root"' not in text

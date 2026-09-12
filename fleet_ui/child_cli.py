@@ -10,7 +10,12 @@ import sys
 from pathlib import Path
 
 from fleet_ui import migrate, provision
-from fleet_ui.discovery import read_neighbors, resolve_inventory_ips
+from fleet_ui.discovery import (
+    classify,
+    load_known_macs,
+    read_neighbors,
+    resolve_inventory_ips,
+)
 
 REPO = Path(__file__).resolve().parents[1]
 INVENTORY = REPO / "fleet" / "children.conf"
@@ -57,17 +62,19 @@ def cmd_take(args: list[str]) -> int:
 
 def cmd_candidates(_args: list[str]) -> int:
     entries = _inventory_entries()
-    inv_ips = {ip for ip in resolve_inventory_ips(entries).values() if ip}
+    inventory_ips = resolve_inventory_ips(entries)
+    known = load_known_macs()
     rows = []
-    for n in read_neighbors():
-        if n.ip in inv_ips:
+    for r in classify(read_neighbors(), inventory_ips, known):
+        if r.kind != "new":
             continue
-        host = provision.probe_hostname(n.ip)
+        host = provision.probe_hostname(r.ip) if r.ip else ""
         rows.append({
-            "mac": n.mac,
-            "ip": n.ip,
+            "mac": r.mac,
+            "ip": r.ip,
             "ssh_ok": bool(host),
             "hostname": host or None,
+            "kind": r.kind,
         })
     return _emit({"ok": True, "candidates": rows})
 

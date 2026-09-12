@@ -59,7 +59,33 @@ children_json_entries() {
 }
 
 children_json_message() {
-    python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("message") or "")'
+    python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+msg = d.get("message") or ""
+if not d.get("ok"):
+    print(msg or "失敗しました", file=sys.stderr)
+    sys.exit(1)
+print(msg or "完了")
+'
+}
+
+children_wizard_validate_sd_root() {
+    local r="${1:-}"
+    case "$r" in
+        /*) ;;
+        *)
+            echo "マウント先は絶対パスで指定してください" >&2
+            return 1
+            ;;
+    esac
+    case "$r" in
+        *..*|*[\'\"$\`\;]*)
+            echo "マウント先に使えない文字があります" >&2
+            return 1
+            ;;
+    esac
+    return 0
 }
 
 children_wizard_show_hub() {
@@ -80,7 +106,7 @@ children_wizard_show_hub() {
 }
 
 children_wizard_from_old_parent() {
-    local old_host payload entries entry yn
+    local old_host payload entries entry yn failed=0
     children_wizard_show_hub || return 1
     echo
     while true; do
@@ -113,15 +139,19 @@ children_wizard_from_old_parent() {
         [ -n "$entry" ] || continue
         if children_ask_yn "$entry をこのハブへ移しますか？" Y; then
             echo "移しています（AP に現れるまで数分かかることがあります）…"
-            children_cli take "$old_host" "$entry" | children_json_message
+            if ! children_cli take "$old_host" "$entry" | children_json_message; then
+                echo "この子の付け替えは失敗しました。残りの子は続けます。" >&2
+                failed=1
+            fi
         else
             echo "  スキップ: $entry"
         fi
     done 3<<< "$entries"
+    return "$failed"
 }
 
 children_wizard_write_sd() {
-    local root pub ssid psk
+    local root pub ssid
     children_wizard_show_hub || return 1
     echo
     echo "クローンした子の SD を USB カードリーダに挿してください。"
@@ -136,29 +166,24 @@ children_wizard_write_sd() {
             return 1
         }
     fi
+    children_wizard_validate_sd_root "$root" || return 1
     pub="${HOME}/.ssh/id_ed25519.pub"
     ssid="$(grep -E '^AP_SSID=' "$CHILD_WIZARD_REPO/.kit/ap-join.env" 2>/dev/null | head -1 | cut -d= -f2-)"
-    psk="$(grep -E '^WIFI_AP_PSK=' "$CHILD_WIZARD_REPO/.kit/ap-join.env" 2>/dev/null | head -1 | cut -d= -f2-)"
-    if [ -z "$ssid" ] || [ -z "$psk" ]; then
+    if [ -z "$ssid" ] || ! grep -q '^WIFI_AP_PSK=.' "$CHILD_WIZARD_REPO/.kit/ap-join.env" 2>/dev/null; then
         echo ".kit/ap-join.env が読めません。ハブ初期設定が済んでいるか確認してください。" >&2
         return 1
     fi
     echo "SD: $root"
     echo "  ホスト名と局番号はそのまま、公開鍵と AP（$ssid）を書きます。"
-    if [ "$(id -u)" -ne 0 ]; then
-        sudo bash -c "
-            source '$CHILD_WIZARD_REPO/scripts/prepare-child-sd.sh'
-            child_sd_prepare '$root' '$pub' '$ssid' '$psk'
-        " || return 1
-    else
-        child_sd_prepare "$root" "$pub" "$ssid" "$psk" || return 1
-    fi
+    # PSK もマウント先も bash -c に埋め込まない。prepare-child-sd.sh が ap-join.env を読む。
+    sudo env CHILD_SD_PUBKEY="$pub" HOME="$HOME" \
+        bash "$CHILD_WIZARD_REPO/scripts/prepare-child-sd.sh" "$root" || return 1
     echo
     echo "SD を外して子Pi に挿し、電源を入れてください。"
 }
 
 children_wizard_adopt_on_ap() {
-    local payload ip host ok
+    local payload ip host ok failed=0
     echo "このハブの AP に居る未登録の子を探します…"
     payload="$(children_cli candidates)" || true
     python3 -c 'import json,sys; d=json.load(sys.stdin); rows=d.get("candidates") or []; sys.exit(0 if rows else 1)' <<<"$payload" || {
@@ -180,7 +205,10 @@ for c in d.get("candidates") or []:
             continue
         fi
         if children_ask_yn "${host:-$ip} を名前と局番号そのままで取り込みますか？" Y; then
-            children_cli adopt "$ip" | children_json_message
+            if ! children_cli adopt "$ip" | children_json_message; then
+                echo "取り込みに失敗しました。" >&2
+                failed=1
+            fi
         fi
     done 3< <(python3 -c '
 import json,sys
@@ -188,6 +216,7 @@ d=json.load(sys.stdin)
 for c in d.get("candidates") or []:
     print("%s\t%s\t%s" % (c.get("ip") or "", c.get("hostname") or "", "1" if c.get("ssh_ok") else "0"))
 ' <<<"$payload")
+    return "$failed"
 }
 
 main() {
@@ -199,26 +228,32 @@ main() {
     echo "  2) 旧親はもう使わない / 別の工場網 / 子のSDをクローンした"
     echo "  3) 子はもうこのハブの AP に繋がっている"
     echo
-    local mode
+    local mode rc=0
     while true; do
         mode="$(children_ask "番号で選ぶ" "1")" || return 1
         children_wizard_validate_mode "$mode" && break
     done
     echo
     case "$mode" in
-        1) children_wizard_from_old_parent || true ;;
+        1) children_wizard_from_old_parent || rc=$? ;;
         2)
-            children_wizard_write_sd || true
+            children_wizard_write_sd || rc=$?
             echo
             if children_ask_yn "子の電源を入れましたか？ AP から取り込みます" N; then
-                children_wizard_adopt_on_ap || true
+                children_wizard_adopt_on_ap || rc=$?
             else
                 echo "起動したら、もう一度このアイコンを開いて 3 を選んでください。"
             fi
             ;;
-        3) children_wizard_adopt_on_ap || true ;;
+        3) children_wizard_adopt_on_ap || rc=$? ;;
     esac
     echo
+    if [ "$rc" -ne 0 ]; then
+        echo "途中で失敗しました。上のメッセージを確認してください。"
+        echo "Enterで閉じる"
+        read -r -p "" _ || true
+        return "$rc"
+    fi
     echo "終わりです。Enterで閉じる"
     read -r -p "" _ || true
 }

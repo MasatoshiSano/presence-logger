@@ -68,3 +68,55 @@ def test_wizard_stops_on_eof_instead_of_looping():
     )
     assert proc.returncode != 0
     assert "1 / 2 / 3" in proc.stderr
+
+
+def test_json_message_fails_when_not_ok():
+    proc = run_bash(
+        f'{SOURCE}; printf \'%s\\n\' \'{{"ok": false, "message": "公開鍵を入れられませんでした"}}\' | children_json_message',
+        env=_env(),
+        check=False,
+    )
+    assert proc.returncode != 0
+    assert "公開鍵" in proc.stderr
+
+
+def test_json_message_prints_success():
+    proc = run_bash(
+        f'{SOURCE}; printf \'%s\\n\' \'{{"ok": true, "message": "移しました"}}\' | children_json_message',
+        env=_env(),
+    )
+    assert "移しました" in proc.stdout
+
+
+def test_sd_root_rejects_relative_and_injection():
+    proc = run_bash(
+        f'{SOURCE}; children_wizard_validate_sd_root "media/rootfs"',
+        env=_env(),
+        check=False,
+    )
+    assert proc.returncode != 0
+    proc = run_bash(
+        f'{SOURCE}; children_wizard_validate_sd_root "/tmp/root; rm -rf /"',
+        env=_env(),
+        check=False,
+    )
+    assert proc.returncode != 0
+
+
+def test_sd_root_accepts_absolute_path():
+    proc = run_bash(
+        f'{SOURCE}; children_wizard_validate_sd_root /media/pi/rootfs',
+        env=_env(),
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+
+
+def test_wizard_does_not_embed_psk_in_bash_c():
+    from pathlib import Path
+    text = Path("scripts/setup-children-wizard.sh").read_text(encoding="utf-8")
+    assert "sudo bash -c" not in text
+    write_sd = text.split("children_wizard_write_sd()")[1].split("children_wizard_adopt_on_ap()")[0]
+    assert "CHILD_SD_PUBKEY" in write_sd
+    assert "psk=" not in write_sd
+    assert "sudo env CHILD_SD_PUBKEY=" in write_sd

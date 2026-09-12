@@ -8,6 +8,7 @@ MACだけが個体に固定され、クローンでも複製されない。
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 from collections.abc import Callable
@@ -30,6 +31,13 @@ _NEIGH_RE = re.compile(
 )
 
 AP_DEV = "wlan1"
+_AP_DEV_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
+
+
+def current_ap_dev() -> str:
+    """site.env の AP_IF と揃える。変な値は argv に渡さない。"""
+    raw = (os.environ.get("AP_DEV") or AP_DEV).strip() or AP_DEV
+    return raw if _AP_DEV_RE.fullmatch(raw) else AP_DEV
 
 
 @dataclass(frozen=True)
@@ -71,10 +79,12 @@ def run_cmd(cmd: list[str]) -> str:
 
 
 def read_neighbors(
-    *, dev: str = AP_DEV, runner: Callable[[list[str]], str] = run_cmd
+    *, dev: str | None = None, runner: Callable[[list[str]], str] = run_cmd
 ) -> list[Neighbor]:
     """AP配下の端末を列挙する。sudo は不要。"""
-    return parse_neigh(runner(["ip", "-4", "neigh", "show", "dev", dev]))
+    return parse_neigh(
+        runner(["ip", "-4", "neigh", "show", "dev", dev or current_ap_dev()])
+    )
 
 
 def parse_neigh(text: str) -> list[Neighbor]:
