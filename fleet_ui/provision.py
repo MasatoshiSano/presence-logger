@@ -252,3 +252,60 @@ def adopt_keeping_identity(
         message=f"{hostname} をこのハブへ取り込みました（ホスト名と局番号はそのまま）",
         output=kh.output,
     )
+
+
+def register_new_child(
+    ip: str,
+    mac: str,
+    new_hostname: str,
+    *,
+    existing: list[str],
+    runner: Callable[[list[str]], str] = run_cmd,
+    wait_fn: Callable[..., StepResult] = wait_for_return,
+    known_hosts: Path | None = None,
+    inventory_path: Path | None = None,
+) -> StepResult:
+    """クローン増設向けの6工程。STA_NO を空にし、ホスト名を変える。
+
+    既存の子を別ハブへ移すときは adopt_keeping_identity を使う。
+    """
+    if not ip or any(c in ip for c in " ;|&$()`<>\"'\\"):
+        return StepResult(ok=False, message="子の IP が不正です")
+    mac = (mac or "").strip().lower()
+    if not re.fullmatch(r"(?:[0-9a-f]{2}:){5}[0-9a-f]{2}", mac):
+        return StepResult(ok=False, message="子の MAC が不正です")
+    err = validate_hostname(new_hostname, existing)
+    if err:
+        return StepResult(ok=False, message=err)
+
+    r = stop_publisher(ip, runner=runner)
+    if not r.ok:
+        return r
+    r = blank_sta_no(ip, runner=runner)
+    if not r.ok:
+        return r
+    r = rename_and_reboot(ip, new_hostname, runner=runner)
+    if not r.ok:
+        return r
+    waited = wait_fn(mac, runner=runner)
+    if not waited.ok:
+        return waited
+    new_ip = (waited.output or "").strip() or ip
+    r = restart_mdns([new_ip], runner=runner)
+    if not r.ok:
+        return r
+    inv_name = f"{new_hostname}.local"
+    kh = register_host_key(inv_name, runner=runner, known_hosts=known_hosts)
+    if not kh.ok:
+        return kh
+    added = add_to_inventory(inv_name, path=inventory_path or INVENTORY)
+    if not added.ok:
+        return added
+    return StepResult(
+        ok=True,
+        message=(
+            f"{new_hostname} を登録しました。"
+            "局番号は空です。子の画面で付けてください。"
+        ),
+        output=new_ip,
+    )

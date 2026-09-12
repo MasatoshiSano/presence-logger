@@ -101,6 +101,14 @@ def test_pack_writes_origin_from_parent_site_env(tmp_path):
             PARENT_STA_NO1=996
             PARENT_STA_NO2=995
             PARENT_STA_NO3=994
+            FACTORY_SSID=HIME-H-REAP
+            FACTORY_GW=172.22.13.1
+            FACTORY_DNS=10.166.1.70,10.166.1.17
+            ORACLE_HOST=10.166.5.93
+            ORACLE_PORT=1521
+            ORACLE_SERVICE=HHC001
+            ORACLE_USER=ZHH001
+            ORACLE_TABLE=HF1RCM01
             """),
         encoding="utf-8",
     )
@@ -114,6 +122,10 @@ def test_pack_writes_origin_from_parent_site_env(tmp_path):
     assert "ORIGIN_FACTORY_IP=172.22.13.17/24" in body
     assert "ORIGIN_AP_SSID=presence-hub" in body
     assert "ORIGIN_PARENT_STA_NO1=996" in body
+    assert "ORIGIN_FACTORY_SSID=HIME-H-REAP" in body
+    assert "ORIGIN_FACTORY_GW=172.22.13.1" in body
+    assert "ORIGIN_ORACLE_HOST=10.166.5.93" in body
+    assert "ORIGIN_ORACLE_PORT=1521" in body
 
 
 def test_pack_skips_docker_save_when_requested(tmp_path, fake_bin):

@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # setup-children-wizard.sh — デスクトップの「子をこのハブへ付ける」から呼ばれる対話。
 #
-# ブラウザは使わない。順番に答えると、既存の子をホスト名と局番号そのままで
-# このハブへ付ける。
+# ブラウザは使わない。樹形図で答え、既存の子の引っ越しか新規クローン増設かを選ぶ。
 set -uo pipefail
 
 CHILD_WIZARD_REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -16,7 +15,17 @@ children_cli() {
         python3 -m fleet_ui.child_cli "$@"
 }
 
-children_wizard_validate_mode() {
+children_wizard_validate_kind() {
+    case "${1:-}" in
+        1|2) return 0 ;;
+        *)
+            echo "1 / 2 で選んでください" >&2
+            return 1
+            ;;
+    esac
+}
+
+children_wizard_validate_keep_path() {
     case "${1:-}" in
         1|2|3) return 0 ;;
         *)
@@ -24,6 +33,11 @@ children_wizard_validate_mode() {
             return 1
             ;;
     esac
+}
+
+# 旧名。テストと呼び出しの互換用。
+children_wizard_validate_mode() {
+    children_wizard_validate_keep_path "$@"
 }
 
 children_wizard_validate_old_host() {
@@ -219,33 +233,101 @@ for c in d.get("candidates") or []:
     return "$failed"
 }
 
-main() {
-    echo "このハブへ子Pi を付けます。"
-    echo "ホスト名と局番号はそのまま残します。"
-    echo "（同じハブへのクローン増設で改名したいときだけ、フリート管理の登録ウィザードを使います）"
+children_wizard_register_new() {
+    local payload ip mac host ok failed=0 suggest name
+    echo "新しい子は、このハブの AP に繋いでから登録します。"
+    echo "SD クローンなら、先にこのハブの鍵と AP を SD へ書いておいてください。"
+    echo "登録するとホスト名が変わり、局番号は空になります。"
+    echo
+    if children_ask_yn "先にクローンSDへ鍵と AP を書きますか？" N; then
+        children_wizard_write_sd || return 1
+        echo
+        children_ask_yn "子の電源を入れましたか？" Y || {
+            echo "起動したら、もう一度このアイコンを開いて 2 を選んでください。"
+            return 1
+        }
+    fi
+    echo "このハブの AP に居る未登録の子を探します…"
+    payload="$(children_cli candidates)" || true
+    python3 -c 'import json,sys; d=json.load(sys.stdin); rows=d.get("candidates") or []; sys.exit(0 if rows else 1)' <<<"$payload" || {
+        echo "未登録の端末はまだ見えません。子の電源と AP を確認してから、もう一度選んでください。"
+        return 1
+    }
+    python3 -c '
+import json,sys
+d=json.load(sys.stdin)
+for c in d.get("candidates") or []:
+    extra = c.get("hostname") or ("鍵なし" if not c.get("ssh_ok") else "")
+    print("%s %s %s" % (c.get("ip") or "", c.get("mac") or "", extra))
+' <<<"$payload"
+    echo
+    suggest="$(children_cli suggest | python3 -c 'import json,sys; print(json.load(sys.stdin).get("hostname") or "pizero2w-2")')"
+    while IFS=$'\t' read -r ip mac host ok <&3; do
+        [ -n "$ip" ] || continue
+        if [ "$ok" != "1" ]; then
+            echo "$ip はこのハブの鍵では SSH できません。先に SD へ鍵を書いてください。"
+            continue
+        fi
+        if children_ask_yn "${host:-$ip} を新しい子として改名登録しますか？" Y; then
+            name="$(children_ask "新しいホスト名（局番号は空になります）" "$suggest")" || return 1
+            if ! children_cli register "$ip" "$mac" "$name" | children_json_message; then
+                echo "登録に失敗しました。" >&2
+                failed=1
+            fi
+        fi
+    done 3< <(python3 -c '
+import json,sys
+d=json.load(sys.stdin)
+for c in d.get("candidates") or []:
+    print("%s\t%s\t%s\t%s" % (c.get("ip") or "", c.get("mac") or "", c.get("hostname") or "", "1" if c.get("ssh_ok") else "0"))
+' <<<"$payload")
+    return "$failed"
+}
+
+children_wizard_keep_identity() {
+    local path
+    echo "既存の子はホスト名と局番号を残します。"
     echo
     echo "  1) 旧親が同じ工場網でまだ動いている"
     echo "  2) 旧親はもう使わない / 別の工場網 / 子のSDをクローンした"
     echo "  3) 子はもうこのハブの AP に繋がっている"
     echo
-    local mode rc=0
     while true; do
-        mode="$(children_ask "番号で選ぶ" "1")" || return 1
-        children_wizard_validate_mode "$mode" && break
+        path="$(children_ask "番号で選ぶ" "1")" || return 1
+        children_wizard_validate_keep_path "$path" && break
     done
     echo
-    case "$mode" in
-        1) children_wizard_from_old_parent || rc=$? ;;
+    case "$path" in
+        1) children_wizard_from_old_parent ;;
         2)
-            children_wizard_write_sd || rc=$?
+            children_wizard_write_sd || return 1
             echo
             if children_ask_yn "子の電源を入れましたか？ AP から取り込みます" N; then
-                children_wizard_adopt_on_ap || rc=$?
+                children_wizard_adopt_on_ap
             else
-                echo "起動したら、もう一度このアイコンを開いて 3 を選んでください。"
+                echo "起動したら、もう一度このアイコンを開いて、既存の子 → 3 を選んでください。"
+                return 0
             fi
             ;;
-        3) children_wizard_adopt_on_ap || rc=$? ;;
+        3) children_wizard_adopt_on_ap ;;
+    esac
+}
+
+main() {
+    echo "このハブへ子Pi を付けます。"
+    echo
+    echo "  1) すでに動いている子を移す（名前と局番号はそのまま）"
+    echo "  2) 新しい子を増やす（クローンして改名する。局番号は空になる）"
+    echo
+    local kind rc=0
+    while true; do
+        kind="$(children_ask "番号で選ぶ" "1")" || return 1
+        children_wizard_validate_kind "$kind" && break
+    done
+    echo
+    case "$kind" in
+        1) children_wizard_keep_identity || rc=$? ;;
+        2) children_wizard_register_new || rc=$? ;;
     esac
     echo
     if [ "$rc" -ne 0 ]; then

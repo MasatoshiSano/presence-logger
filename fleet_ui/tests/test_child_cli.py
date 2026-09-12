@@ -106,3 +106,29 @@ def test_candidates_includes_kind_new(monkeypatch, capsys):
     assert body["candidates"][0]["hostname"] == "zero2"
     assert body["candidates"][0]["ssh_ok"] is True
     assert body["candidates"][0]["kind"] == "new"
+
+
+def test_suggest_returns_hostname(monkeypatch, capsys):
+    monkeypatch.setattr(child_cli, "_inventory_entries", lambda: ["pizero2w.local", "pizero2w-2.local"])
+    assert child_cli.main(["suggest"]) == 0
+    body = json.loads(capsys.readouterr().out)
+    assert body["ok"] is True
+    assert body["hostname"] == "pizero2w-3"
+
+
+def test_register_dispatches(monkeypatch, capsys):
+    from fleet_ui.provision import StepResult
+    calls = []
+    monkeypatch.setattr(child_cli, "_inventory_entries", lambda: [])
+    monkeypatch.setattr(
+        child_cli.provision,
+        "register_new_child",
+        lambda ip, mac, name, **k: (
+            calls.append((ip, mac, name)),
+            StepResult(ok=True, message="登録しました", output="10.42.0.80"),
+        )[1],
+    )
+    assert child_cli.main(["register", "10.42.0.9", "aa:bb:cc:dd:ee:01", "pizero2w-3"]) == 0
+    assert calls == [("10.42.0.9", "aa:bb:cc:dd:ee:01", "pizero2w-3")]
+    body = json.loads(capsys.readouterr().out)
+    assert body["ok"] is True

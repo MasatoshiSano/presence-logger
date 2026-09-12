@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 
 from fleet_ui import migrate, provision
+from fleet_ui.hostname import suggest_hostname, validate_hostname
 from fleet_ui.discovery import (
     classify,
     load_known_macs,
@@ -79,6 +80,26 @@ def cmd_candidates(_args: list[str]) -> int:
     return _emit({"ok": True, "candidates": rows})
 
 
+def cmd_suggest(_args: list[str]) -> int:
+    return _emit({"ok": True, "hostname": suggest_hostname(_inventory_entries())})
+
+
+def cmd_register(args: list[str]) -> int:
+    if len(args) < 3:
+        return _emit({"ok": False, "message": "IP と MAC と新しいホスト名を指定してください"})
+    err = validate_hostname(args[2], _inventory_entries())
+    if err:
+        return _emit({"ok": False, "message": err})
+    r = provision.register_new_child(
+        args[0],
+        args[1],
+        args[2],
+        existing=_inventory_entries(),
+        inventory_path=INVENTORY,
+    )
+    return _emit({"ok": r.ok, "message": r.message, "output": r.output})
+
+
 def cmd_adopt(args: list[str]) -> int:
     if not args:
         return _emit({"ok": False, "message": "子の IP を指定してください"})
@@ -94,6 +115,8 @@ COMMANDS = {
     "list": cmd_list,
     "take": cmd_take,
     "candidates": cmd_candidates,
+    "suggest": cmd_suggest,
+    "register": cmd_register,
     "adopt": cmd_adopt,
 }
 
@@ -103,7 +126,7 @@ def main(argv: list[str] | None = None) -> int:
     if not argv or argv[0] in ("-h", "--help"):
         print(
             "usage: python3 -m fleet_ui.child_cli "
-            "{status|pubkey|list|take|candidates|adopt} ...",
+            "{status|pubkey|list|take|candidates|suggest|register|adopt} ...",
             file=sys.stderr,
         )
         return 2

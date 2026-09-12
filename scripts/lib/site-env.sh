@@ -175,6 +175,10 @@ site_env_reject_origin() {
     local origin="${1:-$(site_env_origin_path)}"
     [ -f "$origin" ] || return 0
     site_env_load_origin "$origin" || return 1
+    # 親機を置き換える／別工場では、コピー元と同じホスト名・IP・AP名を許す。
+    if [ "${ORIGIN_REPLACE:-}" = "1" ]; then
+        return 0
+    fi
     local errors=0
     if [ -n "${ORIGIN_HOSTNAME:-}" ] && [ "${HUB_HOSTNAME:-}" = "$ORIGIN_HOSTNAME" ]; then
         echo "HUB_HOSTNAME が親機と同じです: $HUB_HOSTNAME" >&2

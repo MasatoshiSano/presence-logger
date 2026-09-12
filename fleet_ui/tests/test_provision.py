@@ -12,6 +12,7 @@ from fleet_ui.provision import (
     blank_sta_no,
     probe_hostname,
     register_host_key,
+    register_new_child,
     rename_and_reboot,
     stop_publisher,
     wait_for_return,
@@ -225,3 +226,52 @@ def test_probe_hostname_rejects_injection_without_running_ssh():
     host = probe_hostname("10.42.0.1; rm", runner=lambda cmd: calls.append(cmd) or "nope")
     assert host == ""
     assert calls == []
+
+
+def test_register_new_child_blanks_sta_and_renames(tmp_path):
+    from fleet_ui.provision import StepResult
+
+    calls = []
+
+    def run(cmd):
+        calls.append(cmd)
+        if "ssh-keyscan" in cmd:
+            return "hostkey-line\n"
+        return ""
+
+    inv = tmp_path / "children.conf"
+    inv.write_text("# empty\n", encoding="utf-8")
+    known = tmp_path / "known_hosts"
+    known.write_text("", encoding="utf-8")
+    res = register_new_child(
+        "10.42.0.194",
+        "aa:bb:cc:dd:ee:ff",
+        "pizero2w-3",
+        existing=[],
+        runner=run,
+        wait_fn=lambda mac, **k: StepResult(ok=True, message="復帰", output="10.42.0.80"),
+        known_hosts=known,
+        inventory_path=inv,
+    )
+    assert res.ok, res.message
+    joined = "\n".join(" ".join(c) for c in calls)
+    assert "stop child-csv-to-mqtt" in joined
+    assert "clone-backup" in joined
+    assert "set-hostname pizero2w-3" in joined
+    assert "pizero2w-3.local" in inv.read_text(encoding="utf-8")
+    assert "局番号は空" in res.message
+
+
+def test_register_new_child_rejects_duplicate_hostname(tmp_path):
+    from fleet_ui.provision import StepResult
+    res = register_new_child(
+        "10.42.0.194",
+        "aa:bb:cc:dd:ee:ff",
+        "zero2",
+        existing=["zero2.local"],
+        runner=lambda cmd: "",
+        wait_fn=lambda mac, **k: StepResult(ok=True, message=""),
+        inventory_path=tmp_path / "children.conf",
+    )
+    assert not res.ok
+    assert "既に使われています" in res.message

@@ -128,6 +128,7 @@ def test_render_same_ap_ssid_writes_allow_flag(tmp_path):
     ).stdout
     assert "AP_SSID=presence-hub" in out
     assert "ORIGIN_ALLOW_SAME_AP=1" in out
+    assert "ORIGIN_REPLACE=1" in out
 
 
 def test_short_ap_password_is_rejected():
@@ -173,6 +174,50 @@ def test_render_inherits_oracle_and_factory_ssid_and_shifts_sta_no(tmp_path):
     assert "PARENT_STA_NO1=999" in body
     assert "PARENT_STA_NO2=998" in body
     assert "PARENT_STA_NO3=997" in body
+
+
+def test_render_uses_wizard_factory_and_oracle_overrides(tmp_path):
+    tmpl = tmp_path / "site.env.template"
+    tmpl.write_text(TEMPLATE, encoding="utf-8")
+    origin = tmp_path / "origin.env"
+    origin.write_text(ORIGIN, encoding="utf-8")
+    out = run_bash(
+        f'{SITE}; {SOURCE}; '
+        f'export WIZ_FACTORY_SSID=OTHER-SSID WIZ_FACTORY_GW=10.1.1.1 '
+        f'WIZ_FACTORY_DNS=8.8.8.8 WIZ_ORACLE_HOST=10.0.0.9 '
+        f'WIZ_ORACLE_PORT=1522 WIZ_ORACLE_SERVICE=OTHER '
+        f'WIZ_ORACLE_USER=ZHH002 WIZ_ORACLE_TABLE=HF9; '
+        f'wizard_render_site_env "{tmpl}" "{origin}" '
+        f'presence-hub-2 172.22.13.18 sibling-hub',
+        env=_env(),
+    ).stdout
+    assert "FACTORY_SSID=OTHER-SSID" in out
+    assert "FACTORY_GW=10.1.1.1" in out
+    assert "FACTORY_DNS=8.8.8.8" in out
+    assert "ORACLE_HOST=10.0.0.9" in out
+    assert "ORACLE_PORT=1522" in out
+    assert "ORACLE_SERVICE=OTHER" in out
+    assert "ORACLE_USER=ZHH002" in out
+    assert "ORACLE_TABLE=HF9" in out
+
+
+def test_factory_ip_matching_origin_is_allowed_when_replacing(tmp_path):
+    origin = tmp_path / "origin.env"
+    origin.write_text(ORIGIN, encoding="utf-8")
+    proc = run_bash(
+        f'{SITE}; {SOURCE}; wizard_validate_factory_ip 172.22.13.17 "{origin}" 1',
+        env=_env(),
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+
+
+def test_ask_empty_reply_keeps_default():
+    proc = run_bash(
+        f'{SOURCE}; printf "\\n" | wizard_ask "工場の SSID" HIME-H-REAP',
+        env=_env(),
+    )
+    assert proc.stdout.strip() == "HIME-H-REAP"
 
 
 def test_render_appends_prefix_when_user_omits_it(tmp_path):

@@ -56,7 +56,7 @@ pack_write_empty_children() {
     mkdir -p "$repo/fleet"
     cat > "$repo/fleet/children.conf" <<'EOF'
 # このハブの子Pi。親機の一覧はコピーしていない。
-# デスクトップの「フリート管理」から追加する。
+# デスクトップの「子をこのハブへ付ける」から追加する。
 EOF
 }
 
@@ -67,20 +67,45 @@ _pack_get() {
     line="${line%%#*}"
     line="${line%"${line##*[![:space:]]}"}"
     line="${line#"${line%%[![:space:]]*}"}"
+    if [ "${#line}" -ge 2 ]; then
+        case "$line" in
+            \"*\") line="${line:1:-1}" ;;
+            \'*\') line="${line:1:-1}" ;;
+        esac
+    fi
     printf '%s\n' "$line"
+}
+
+_pack_origin_kv() {
+    local k="$1" v="$2"
+    if [[ "$v" == *" "* ]]; then
+        printf '%s="%s"\n' "$k" "$v"
+    else
+        printf '%s=%s\n' "$k" "$v"
+    fi
 }
 
 pack_write_origin() {
     local site="$1" dest="$2"
     mkdir -p "$(dirname "$dest")"
-    cat > "$dest" <<EOF
-ORIGIN_HOSTNAME=$(_pack_get HUB_HOSTNAME "$site")
-ORIGIN_FACTORY_IP=$(_pack_get FACTORY_IP "$site")
-ORIGIN_AP_SSID=$(_pack_get AP_SSID "$site")
-ORIGIN_PARENT_STA_NO1=$(_pack_get PARENT_STA_NO1 "$site")
-ORIGIN_PARENT_STA_NO2=$(_pack_get PARENT_STA_NO2 "$site")
-ORIGIN_PARENT_STA_NO3=$(_pack_get PARENT_STA_NO3 "$site")
-EOF
+    {
+        _pack_origin_kv ORIGIN_HOSTNAME "$(_pack_get HUB_HOSTNAME "$site")"
+        _pack_origin_kv ORIGIN_FACTORY_IP "$(_pack_get FACTORY_IP "$site")"
+        _pack_origin_kv ORIGIN_FACTORY_SSID "$(_pack_get FACTORY_SSID "$site")"
+        _pack_origin_kv ORIGIN_FACTORY_GW "$(_pack_get FACTORY_GW "$site")"
+        _pack_origin_kv ORIGIN_FACTORY_DNS "$(_pack_get FACTORY_DNS "$site")"
+        _pack_origin_kv ORIGIN_FACTORY_SUBNETS "$(_pack_get FACTORY_SUBNETS "$site")"
+        _pack_origin_kv ORIGIN_SNTP_SERVERS "$(_pack_get SNTP_SERVERS "$site")"
+        _pack_origin_kv ORIGIN_AP_SSID "$(_pack_get AP_SSID "$site")"
+        _pack_origin_kv ORIGIN_ORACLE_HOST "$(_pack_get ORACLE_HOST "$site")"
+        _pack_origin_kv ORIGIN_ORACLE_PORT "$(_pack_get ORACLE_PORT "$site")"
+        _pack_origin_kv ORIGIN_ORACLE_SERVICE "$(_pack_get ORACLE_SERVICE "$site")"
+        _pack_origin_kv ORIGIN_ORACLE_USER "$(_pack_get ORACLE_USER "$site")"
+        _pack_origin_kv ORIGIN_ORACLE_TABLE "$(_pack_get ORACLE_TABLE "$site")"
+        _pack_origin_kv ORIGIN_PARENT_STA_NO1 "$(_pack_get PARENT_STA_NO1 "$site")"
+        _pack_origin_kv ORIGIN_PARENT_STA_NO2 "$(_pack_get PARENT_STA_NO2 "$site")"
+        _pack_origin_kv ORIGIN_PARENT_STA_NO3 "$(_pack_get PARENT_STA_NO3 "$site")"
+    } > "$dest"
 }
 
 pack_blank_identity() {
@@ -134,8 +159,8 @@ Oracle のパスワードと新しい AP のパスワードは載せていませ
    （開かないときはターミナルで）
      bash /media/*/presence-hub-kit/copy-to-this-pi.sh
 3. デスクトップに「ハブ初期設定」が現れるのでクリックする
-4. ホスト名、固定IP、AP名、APパスワード、Oracleパスワードを順に答える
-5. 終わったら再起動し、子Pi を新しい AP に繋いでから「フリート管理」で追加する
+4. 工場の SSID・ゲートウェイ・Oracle なども順に答える（Enter でコピー元の値）
+5. 終わったら再起動し、デスクトップの「子をこのハブへ付ける」で子を追加する
 
 親機はそのまま運転したままで大丈夫です。新しいハブは別のホスト名・IP・AP名になります。
 EOF

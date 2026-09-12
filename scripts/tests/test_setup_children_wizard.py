@@ -67,7 +67,27 @@ def test_wizard_stops_on_eof_instead_of_looping():
         stdin="9\n",
     )
     assert proc.returncode != 0
-    assert "1 / 2 / 3" in proc.stderr
+    assert "1 / 2" in proc.stderr
+
+
+def test_kind_1_and_2_are_accepted():
+    for n in "1", "2":
+        proc = run_bash(
+            f'{SOURCE}; children_wizard_validate_kind {n}',
+            env=_env(),
+            check=False,
+        )
+        assert proc.returncode == 0, proc.stderr
+
+
+def test_kind_other_is_rejected():
+    proc = run_bash(
+        f'{SOURCE}; children_wizard_validate_kind 9',
+        env=_env(),
+        check=False,
+    )
+    assert proc.returncode != 0
+    assert "1 / 2" in proc.stderr
 
 
 def test_json_message_fails_when_not_ok():

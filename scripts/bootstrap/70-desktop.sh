@@ -28,6 +28,7 @@ main() {
         [ -f "$f" ] || continue
         base="$(basename "$f")"
         [ "$base" = "ハブ初期設定.desktop" ] && continue
+        [ "$base" = "フリート管理.desktop" ] && continue
         sed -e "s|__TOOLS_DIR__|$tools|g" \
             -e "s|__REPO_DIR__|$REPO_DIR|g" \
             -e "s|__HOME_SSID__|${HOME_SSID}|g" \

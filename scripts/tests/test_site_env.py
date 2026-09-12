@@ -361,3 +361,24 @@ def test_origin_same_ap_ssid_allowed_with_flag(tmp_path):
         env=env, check=False,
     )
     assert proc.returncode == 0, proc.stderr
+
+
+def test_origin_replace_allows_same_hostname_and_ip(tmp_path):
+    origin = tmp_path / "origin.env"
+    origin.write_text(
+        "ORIGIN_HOSTNAME=raspberrypi5\n"
+        "ORIGIN_FACTORY_IP=172.22.13.18/24\n"
+        "ORIGIN_AP_SSID=presence-hub\n",
+        encoding="utf-8",
+    )
+    body = VALID.replace("HUB_HOSTNAME=presence-hub-2", "HUB_HOSTNAME=raspberrypi5")
+    body += "ORIGIN_REPLACE=1\nORIGIN_ALLOW_SAME_AP=1\n"
+    env_file, inv = _write(tmp_path, body=body)
+    env = dict(os.environ)
+    env["CHILDREN_CONF"] = str(inv)
+    env["ORIGIN_ENV_PATH"] = str(origin)
+    proc = run_bash(
+        f'{SOURCE}; site_env_load "{env_file}" && site_env_validate',
+        env=env, check=False,
+    )
+    assert proc.returncode == 0, proc.stderr

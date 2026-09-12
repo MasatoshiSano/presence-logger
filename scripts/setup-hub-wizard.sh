@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # setup-hub-wizard.sh — デスクトップの「ハブ初期設定」から呼ばれる対話セットアップ。
 #
-# ホスト名・固定IP・AP名・APパスワード・Oracleパスワードを順に聞き、
+# ホスト名・工場網・AP・Oracle を順に聞く。空Enter はコピー元（USBキット）の値。
 # site.env と secrets を書いて bootstrap-hub.sh を回す。
 set -uo pipefail
 
@@ -22,14 +22,14 @@ wizard_validate_ap_psk() {
 }
 
 wizard_validate_hostname() {
-    local name="$1" origin="$2"
+    local name="$1" origin="$2" allow_same="${3:-0}"
     if ! site_env_valid_hostname "$name"; then
         echo "ホスト名に使えない文字が含まれています: $name" >&2
         echo "  英小文字・数字・ハイフンのみ（先頭末尾はハイフン不可）" >&2
         return 1
     fi
     site_env_load_origin "$origin" || return 1
-    if [ "$name" = "${ORIGIN_HOSTNAME:-}" ]; then
+    if [ "$name" = "${ORIGIN_HOSTNAME:-}" ] && [ "$allow_same" != "1" ]; then
         echo "親機と同じホスト名です: $name" >&2
         echo "  共存するには別の名前にしてください" >&2
         return 1
@@ -37,14 +37,14 @@ wizard_validate_hostname() {
 }
 
 wizard_validate_factory_ip() {
-    local ip="$1" origin="$2" addr
+    local ip="$1" origin="$2" allow_same="${3:-0}" addr
     addr="${ip%/*}"
     if [[ ! "$addr" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
         echo "固定IPの形式が不正です: $ip" >&2
         return 1
     fi
     site_env_load_origin "$origin" || return 1
-    if [ "$addr" = "${ORIGIN_FACTORY_IP%/*}" ]; then
+    if [ "$addr" = "${ORIGIN_FACTORY_IP%/*}" ] && [ "$allow_same" != "1" ]; then
         echo "親機と同じ固定IPです: $addr" >&2
         echo "  工場網で衝突します。情シスへ申請した別のIPを入れてください" >&2
         return 1
@@ -61,6 +61,30 @@ wizard_validate_ap_ssid() {
     if [ "$ssid" = "${ORIGIN_AP_SSID:-}" ] && [ "$allow_same" != "1" ]; then
         echo "親機と同じ AP 名です: $ssid" >&2
         echo "  子Pi がどちらのハブに付くか不定になります" >&2
+        return 1
+    fi
+}
+
+wizard_validate_ipv4() {
+    local ip="$1" label="$2"
+    if [[ ! "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+        echo "${label}の形式が不正です: $ip" >&2
+        return 1
+    fi
+}
+
+wizard_validate_port() {
+    local port="$1"
+    if [[ ! "$port" =~ ^[1-9][0-9]{0,4}$ ]] || [ "$port" -gt 65535 ]; then
+        echo "ポート番号が不正です: $port" >&2
+        return 1
+    fi
+}
+
+wizard_validate_not_empty() {
+    local v="$1" label="$2"
+    if [ -z "$v" ]; then
+        echo "${label}が空です" >&2
         return 1
     fi
 }
@@ -103,8 +127,8 @@ wizard_render_site_env() {
     # shellcheck disable=SC1090
     set -a; source "$tmpl"; set +a
     site_env_load_origin "$origin" || return 1
-    wizard_validate_hostname "$hostname" "$origin" || return 1
-    wizard_validate_factory_ip "$factory_ip" "$origin" || return 1
+    wizard_validate_hostname "$hostname" "$origin" "$allow_same" || return 1
+    wizard_validate_factory_ip "$factory_ip" "$origin" "$allow_same" || return 1
     wizard_validate_ap_ssid "$ap_ssid" "$origin" "$allow_same" || return 1
 
     HUB_HOSTNAME="$hostname"
@@ -113,6 +137,14 @@ wizard_render_site_env() {
     FACTORY_IP="$(wizard_normalize_factory_ip "$factory_ip" "$hint")"
     AP_SSID="$ap_ssid"
     AP_GW_IP="${AP_GW_IP:-10.42.0.1}"
+    [ -n "${WIZ_FACTORY_SSID:-}" ] && FACTORY_SSID="$WIZ_FACTORY_SSID"
+    [ -n "${WIZ_FACTORY_GW:-}" ] && FACTORY_GW="$WIZ_FACTORY_GW"
+    [ -n "${WIZ_FACTORY_DNS:-}" ] && FACTORY_DNS="$WIZ_FACTORY_DNS"
+    [ -n "${WIZ_ORACLE_HOST:-}" ] && ORACLE_HOST="$WIZ_ORACLE_HOST"
+    [ -n "${WIZ_ORACLE_PORT:-}" ] && ORACLE_PORT="$WIZ_ORACLE_PORT"
+    [ -n "${WIZ_ORACLE_SERVICE:-}" ] && ORACLE_SERVICE="$WIZ_ORACLE_SERVICE"
+    [ -n "${WIZ_ORACLE_USER:-}" ] && ORACLE_USER="$WIZ_ORACLE_USER"
+    [ -n "${WIZ_ORACLE_TABLE:-}" ] && ORACLE_TABLE="$WIZ_ORACLE_TABLE"
     PARENT_STA_NO1="$(wizard_shift_sta "${ORIGIN_PARENT_STA_NO1:-${PARENT_STA_NO1:-997}}")"
     PARENT_STA_NO2="$(wizard_shift_sta "${ORIGIN_PARENT_STA_NO2:-${PARENT_STA_NO2:-996}}")"
     PARENT_STA_NO3="$(wizard_shift_sta "${ORIGIN_PARENT_STA_NO3:-${PARENT_STA_NO3:-995}}")"
@@ -130,6 +162,7 @@ wizard_render_site_env() {
     done
     if [ "$allow_same" = "1" ]; then
         printf 'ORIGIN_ALLOW_SAME_AP=1\n'
+        printf 'ORIGIN_REPLACE=1\n'
     fi
 }
 
@@ -190,14 +223,20 @@ main() {
     fi
 
     site_env_load_origin "$origin" || return 1
+    # shellcheck disable=SC1090
+    set -a; source "$tmpl"; set +a
+    site_env_load_origin "$origin" || return 1
 
     echo "この Raspberry Pi を子Pi専用ハブにします。"
+    echo "[] の中はコピー元の値です。未回答（Enter）ならそのまま使います。"
     echo
-    echo "  1) 親機と同時に動かす（同じ工場網。AP名は必ず別）"
+    echo "  1) 親機と同時に動かす（同じ工場網。ホスト名・固定IP・AP名は必ず別）"
     echo "  2) 親機はもう使わない、または別の工場網"
-    echo "     （AP名は親と同じでもよい。クローンした子が自動で付きます）"
+    echo "     （コピー元と同じ値でもよい。クローンした子が自動で付きます）"
     echo
-    local hostname factory_ip ap_ssid ap_psk oracle_pass mode allow_same=0
+    local hostname factory_ip factory_ssid factory_gw factory_dns
+    local oracle_host oracle_port oracle_service oracle_user oracle_table
+    local ap_ssid ap_psk oracle_pass mode allow_same=0
     mode="$(wizard_ask "番号で選ぶ" "1")"
     if [ "$mode" = "2" ]; then
         allow_same=1
@@ -205,13 +244,53 @@ main() {
     echo
 
     while true; do
-        hostname="$(wizard_ask "ホスト名" "presence-hub-2")"
-        wizard_validate_hostname "$hostname" "$origin" && break
+        if [ "$allow_same" = "1" ]; then
+            hostname="$(wizard_ask "ホスト名" "${ORIGIN_HOSTNAME:-presence-hub-2}")"
+        else
+            hostname="$(wizard_ask "ホスト名" "presence-hub-2")"
+        fi
+        wizard_validate_hostname "$hostname" "$origin" "$allow_same" && break
     done
     while true; do
-        echo "親機の固定IPは ${ORIGIN_FACTORY_IP:-?} です。別のIPを入れてください。"
-        factory_ip="$(wizard_ask "工場網の固定IP")"
-        wizard_validate_factory_ip "$factory_ip" "$origin" && break
+        factory_ssid="$(wizard_ask "工場の SSID" "${ORIGIN_FACTORY_SSID:-$FACTORY_SSID}")"
+        wizard_validate_not_empty "$factory_ssid" "工場の SSID" && break
+    done
+    while true; do
+        if [ "$allow_same" = "1" ]; then
+            factory_ip="$(wizard_ask "工場網の固定IP" "${ORIGIN_FACTORY_IP:-}")"
+        else
+            echo "親機の固定IPは ${ORIGIN_FACTORY_IP:-?} です。別のIPを入れてください。"
+            factory_ip="$(wizard_ask "工場網の固定IP")"
+        fi
+        wizard_validate_factory_ip "$factory_ip" "$origin" "$allow_same" && break
+    done
+    while true; do
+        factory_gw="$(wizard_ask "工場のゲートウェイ" "${ORIGIN_FACTORY_GW:-$FACTORY_GW}")"
+        wizard_validate_ipv4 "$factory_gw" "ゲートウェイ" && break
+    done
+    while true; do
+        factory_dns="$(wizard_ask "工場の DNS" "${ORIGIN_FACTORY_DNS:-$FACTORY_DNS}")"
+        wizard_validate_not_empty "$factory_dns" "DNS" && break
+    done
+    while true; do
+        oracle_host="$(wizard_ask "Oracle のホスト" "${ORIGIN_ORACLE_HOST:-$ORACLE_HOST}")"
+        wizard_validate_not_empty "$oracle_host" "Oracle のホスト" && break
+    done
+    while true; do
+        oracle_port="$(wizard_ask "Oracle のポート" "${ORIGIN_ORACLE_PORT:-$ORACLE_PORT}")"
+        wizard_validate_port "$oracle_port" && break
+    done
+    while true; do
+        oracle_service="$(wizard_ask "Oracle のサービス名" "${ORIGIN_ORACLE_SERVICE:-$ORACLE_SERVICE}")"
+        wizard_validate_not_empty "$oracle_service" "サービス名" && break
+    done
+    while true; do
+        oracle_user="$(wizard_ask "Oracle のユーザ" "${ORIGIN_ORACLE_USER:-$ORACLE_USER}")"
+        wizard_validate_not_empty "$oracle_user" "ユーザ" && break
+    done
+    while true; do
+        oracle_table="$(wizard_ask "Oracle のテーブル" "${ORIGIN_ORACLE_TABLE:-$ORACLE_TABLE}")"
+        wizard_validate_not_empty "$oracle_table" "テーブル" && break
     done
     while true; do
         if [ "$allow_same" = "1" ]; then
@@ -239,7 +318,12 @@ main() {
     echo
     echo "----- 確認 -----"
     echo "  ホスト名     : $hostname"
+    echo "  工場 SSID    : $factory_ssid"
     echo "  固定IP       : $factory_ip"
+    echo "  ゲートウェイ : $factory_gw"
+    echo "  DNS          : $factory_dns"
+    echo "  Oracle       : $oracle_user@$oracle_host:$oracle_port/$oracle_service"
+    echo "  テーブル     : $oracle_table"
     echo "  AP 名        : $ap_ssid"
     echo "  AP パスワード: （入力済み）"
     echo "  Oracle パス  : （入力済み）"
@@ -247,6 +331,17 @@ main() {
     local yn
     read -r -p "この内容で進めますか？ [y/N]: " yn
     [[ "$yn" =~ ^[yY]$ ]] || { echo "中止しました"; return 1; }
+
+    WIZ_FACTORY_SSID="$factory_ssid"
+    WIZ_FACTORY_GW="$factory_gw"
+    WIZ_FACTORY_DNS="$factory_dns"
+    WIZ_ORACLE_HOST="$oracle_host"
+    WIZ_ORACLE_PORT="$oracle_port"
+    WIZ_ORACLE_SERVICE="$oracle_service"
+    WIZ_ORACLE_USER="$oracle_user"
+    WIZ_ORACLE_TABLE="$oracle_table"
+    export WIZ_FACTORY_SSID WIZ_FACTORY_GW WIZ_FACTORY_DNS
+    export WIZ_ORACLE_HOST WIZ_ORACLE_PORT WIZ_ORACLE_SERVICE WIZ_ORACLE_USER WIZ_ORACLE_TABLE
 
     local site_out="$repo/site.env"
     wizard_render_site_env "$tmpl" "$origin" "$hostname" "$factory_ip" "$ap_ssid" \
@@ -278,9 +373,8 @@ main() {
 
 ✅ ハブの初期設定が終わりました。
 
-  新しい子Pi は次の AP に繋いでから、デスクトップの「フリート管理」で追加してください。
-  既存の子はデスクトップの「子をこのハブへ付ける」をクリックし、質問に答えてください。
-  （ホスト名と局番号が残ります。登録ウィザードは使わないでください）
+  子Pi はデスクトップの「子をこのハブへ付ける」をクリックし、質問に答えてください。
+  （既存の子は名前と局番号が残ります。新しい子はそこで改名します）
       SSID : $ap_ssid
       PASS : （いま入れた AP パスワード）
 
