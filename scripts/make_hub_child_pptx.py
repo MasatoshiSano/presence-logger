@@ -10,7 +10,7 @@ from pptx.dml.color import RGBColor
 from pptx.enum.shapes import MSO_SHAPE
 from pptx.enum.text import PP_ALIGN
 from pptx.oxml.ns import qn
-from pptx.util import Emu, Inches, Pt
+from pptx.util import Inches, Pt
 
 NAVY = RGBColor(0x1B, 0x3A, 0x4B)
 TEAL = RGBColor(0x0D, 0x73, 0x77)
