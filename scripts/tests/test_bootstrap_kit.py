@@ -59,6 +59,14 @@ def test_dongle_modprobe_conf_sets_jp_and_disables_power_mgmt():
     assert "rtw_power_mgnt=0" in out
 
 
+def test_stack_does_not_enable_fleet_ui():
+    from pathlib import Path
+    text = Path("scripts/bootstrap/60-stack.sh").read_text(encoding="utf-8")
+    assert "fleet-ui.service" not in text
+    assert "systemctl enable --now fleet-ui" not in text
+    assert "子をこのハブへ付ける" in text
+
+
 def test_stack_services_omit_detector_in_hub_mode():
     out = run_bash(f'{STACK}; HUB_MODE=1 stack_services', env=_env()).stdout.split()
     assert out == ["mosquitto", "oracle-jdbc", "bridge"]

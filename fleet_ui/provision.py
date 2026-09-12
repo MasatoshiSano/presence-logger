@@ -291,7 +291,16 @@ def register_new_child(
     if not waited.ok:
         return waited
     new_ip = (waited.output or "").strip() or ip
-    r = restart_mdns([new_ip], runner=runner)
+    mdns_hosts: list[str] = []
+    seen: set[str] = set()
+    for e in existing:
+        e = (e or "").strip()
+        if e and e not in seen:
+            seen.add(e)
+            mdns_hosts.append(e)
+    if new_ip and new_ip not in seen:
+        mdns_hosts.append(new_ip)
+    r = restart_mdns(mdns_hosts, runner=runner)
     if not r.ok:
         return r
     inv_name = f"{new_hostname}.local"

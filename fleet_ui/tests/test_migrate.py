@@ -8,6 +8,7 @@ from pathlib import Path
 from fleet_ui.migrate import (
     CAT_OK,
     KEY_OK,
+    WIFI_OK,
     inventory_name,
     list_children_payload,
     list_remote_children,
@@ -111,14 +112,17 @@ def test_read_pubkey_returns_stripped_line(tmp_path):
 def _recorder(script):
     """ssh の remote 文字列を見て、stdout を返す偽 runner。"""
     calls = []
+    inputs = []
 
-    def run(cmd):
+    def run(cmd, input_text=None):
         calls.append(cmd)
+        inputs.append(input_text or "")
         remote = cmd[-1] if cmd else ""
         joined = " ".join(cmd)
         return script(joined, remote)
 
     run.calls = calls
+    run.inputs = inputs
     return run
 
 
@@ -143,8 +147,8 @@ def test_take_child_installs_key_switches_wifi_keeps_identity(tmp_path):
             return "aa:bb:cc:dd:ee:ff\n"
         if "authorized_keys" in remote:
             return f"{KEY_OK}\n"
-        if "nmcli" in remote:
-            return ""
+        if "presence-hub-join" in remote or "connection up" in remote:
+            return f"{WIFI_OK}\n"
         if "printf" in remote and "children.conf" in remote:
             # write-back of stripped inventory
             return ""
@@ -180,11 +184,13 @@ def test_take_child_installs_key_switches_wifi_keeps_identity(tmp_path):
     assert "hostnamectl" not in joined
     assert "blank" not in joined
     assert "authorized_keys" in joined
-    assert KEY_OK in joined
-    assert "nmcli" in joined
-    assert "autoconnect-priority" in joined
-    assert "sibling-hub" in joined
     assert "ssh-ed25519 AAAA newhub" in joined
+    assert KEY_OK in joined
+    assert "presence-hub-join" in joined
+    assert "password" not in joined
+    assert "pskpskpsk" not in joined
+    assert any("pskpskpsk" in blob for blob in runner.inputs)
+    assert "sibling-hub" in "\n".join(runner.inputs)
     assert waited == ["aa:bb:cc:dd:ee:ff"]
     body = inv.read_text(encoding="utf-8")
     assert "zero2.local" in body
@@ -304,8 +310,8 @@ def test_take_child_does_not_wipe_old_inventory_when_cat_fails(tmp_path):
             return "aa:bb:cc:dd:ee:ff\n"
         if "authorized_keys" in remote:
             return f"{KEY_OK}\n"
-        if "nmcli" in remote:
-            return ""
+        if "presence-hub-join" in remote or "connection up" in remote:
+            return f"{WIFI_OK}\n"
         if " > " in remote and "children.conf" in remote:
             writes.append(remote)
             return ""
@@ -345,8 +351,8 @@ def test_take_child_keyscans_ip_when_hostname_mdns_is_empty(tmp_path):
             return "aa:bb:cc:dd:ee:ff\n"
         if "authorized_keys" in remote:
             return f"{KEY_OK}\n"
-        if "nmcli" in remote:
-            return ""
+        if "presence-hub-join" in remote or "connection up" in remote:
+            return f"{WIFI_OK}\n"
         if "cat " in remote and "children.conf" in remote:
             return f"zero2\n{CAT_OK}\n"
         if "ssh-keyscan" in joined:
@@ -374,3 +380,31 @@ def test_take_child_keyscans_ip_when_hostname_mdns_is_empty(tmp_path):
     assert res.ok, res.message
     assert any("10.42.0.9" in s for s in scanned)
     assert "ip-hostkey" in known.read_text(encoding="utf-8")
+
+
+def test_take_child_wifi_failure_does_not_wait_or_inventory(tmp_path):
+    repo, inv = _take_repo(tmp_path)
+    waited = []
+
+    def script(joined, remote):
+        if "wlan0/address" in remote or "wlan0/address" in joined:
+            return "aa:bb:cc:dd:ee:ff\n"
+        if "authorized_keys" in remote:
+            return f"{KEY_OK}\n"
+        return ""
+
+    runner = _recorder(script)
+    from fleet_ui.provision import StepResult
+    res = take_child(
+        old_host="172.22.13.17",
+        entry="zero2",
+        repo=repo,
+        pubkey="ssh-ed25519 AAAA newhub",
+        runner=runner,
+        wait_fn=lambda mac, **k: waited.append(mac) or StepResult(ok=True, message=""),
+        inventory_path=inv,
+    )
+    assert not res.ok
+    assert "Wi-Fi" in res.message
+    assert waited == []
+    assert "zero2.local" not in inv.read_text(encoding="utf-8")
