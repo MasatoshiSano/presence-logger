@@ -140,3 +140,18 @@ def test_wizard_does_not_embed_psk_in_bash_c():
     assert "CHILD_SD_PUBKEY" in write_sd
     assert "psk=" not in write_sd
     assert "sudo env CHILD_SD_PUBKEY=" in write_sd
+    assert 'children_ask "マウント先' not in text
+    assert "children_wizard_wait_for_child_sd" in write_sd
+
+
+def test_find_sd_root_prefers_media_then_mnt(tmp_path):
+    media = tmp_path / "media" / "pi" / "child"
+    (media / "home" / "pi").mkdir(parents=True)
+    (media / "home" / "pi" / "id_names_config.json").write_text("{}\n", encoding="utf-8")
+    proc = run_bash(
+        f'{SOURCE}; child_sd_find_root "{tmp_path}/media"',
+        env=_env(),
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert str(media) in proc.stdout

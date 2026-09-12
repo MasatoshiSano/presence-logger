@@ -164,22 +164,45 @@ children_wizard_from_old_parent() {
     return "$failed"
 }
 
+children_wizard_find_sd_root() {
+    child_sd_find_root /media || child_sd_find_root /mnt
+}
+
+children_wizard_wait_for_child_sd() {
+    local root tries=0
+    while [ "$tries" -lt 2 ]; do
+        root="$(children_wizard_find_sd_root)" && {
+            printf '%s\n' "$root"
+            return 0
+        }
+        tries=$((tries + 1))
+        echo >&2
+        echo "カードの中身がまだ見えません。" >&2
+        echo "  ・カードリーダのランプは点いていますか" >&2
+        echo "  ・デスクトップにカードのアイコンやフォルダは出ましたか（中身は触らなくてよい）" >&2
+        echo "  ・ハブ用ではなく、子ラズパイをコピーしたカードですか" >&2
+        echo >&2
+        if [ "$tries" -ge 2 ]; then
+            break
+        fi
+        children_ask_yn "挿し直して、フォルダが出るまで待ったあと、続けますか？" Y || return 1
+    done
+    echo "まだ見つかりません。カードを挿したまま、もう一度このアイコンを開いてください。" >&2
+    return 1
+}
+
 children_wizard_write_sd() {
     local root pub ssid
     children_wizard_show_hub || return 1
     echo
-    echo "クローンした子の SD を USB カードリーダに挿してください。"
+    echo "クローンした子ラズパイの SD カードを、USB カードリーダに挿してください。"
+    echo "デスクトップにカードのフォルダが開いても、中身を触る必要はありません。"
+    echo "カードがどこに付いたかは聞かず、こちらで探します。"
     children_ask_yn "挿しましたか？" Y || {
         echo "挿してから、もう一度このアイコンを開いてください。"
         return 1
     }
-    root="$(children_ask "マウント先（空なら自動で探す）")"
-    if [ -z "$root" ]; then
-        root="$(child_sd_find_root /media)" || {
-            echo "子PiのSDが見つかりません。マウント先を指定してください。" >&2
-            return 1
-        }
-    fi
+    root="$(children_wizard_wait_for_child_sd)" || return 1
     children_wizard_validate_sd_root "$root" || return 1
     pub="${HOME}/.ssh/id_ed25519.pub"
     ssid="$(grep -E '^AP_SSID=' "$CHILD_WIZARD_REPO/.kit/ap-join.env" 2>/dev/null | head -1 | cut -d= -f2-)"
@@ -187,13 +210,13 @@ children_wizard_write_sd() {
         echo ".kit/ap-join.env が読めません。ハブ初期設定が済んでいるか確認してください。" >&2
         return 1
     fi
-    echo "SD: $root"
-    echo "  ホスト名と局番号はそのまま、公開鍵と AP（$ssid）を書きます。"
-    # PSK もマウント先も bash -c に埋め込まない。prepare-child-sd.sh が ap-join.env を読む。
+    echo "カードが見つかりました。このハブの鍵と Wi-Fi（$ssid）を書きます。"
+    echo "名前と局番号はそのままです。"
+    # PSK もパスも bash -c に埋め込まない。prepare-child-sd.sh が ap-join.env を読む。
     sudo env CHILD_SD_PUBKEY="$pub" HOME="$HOME" \
         bash "$CHILD_WIZARD_REPO/scripts/prepare-child-sd.sh" "$root" || return 1
     echo
-    echo "SD を外して子Pi に挿し、電源を入れてください。"
+    echo "書き終わりました。カードを外して子ラズパイに挿し、電源を入れてください。"
 }
 
 children_wizard_adopt_on_ap() {
