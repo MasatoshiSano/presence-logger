@@ -107,3 +107,25 @@ def test_sudo_reexec_passes_pubkey_and_home():
     text = Path("scripts/prepare-child-sd.sh").read_text(encoding="utf-8")
     assert 'sudo env CHILD_SD_PUBKEY="$pub" HOME="$HOME"' in text
     assert 'sudo bash "$PREPARE_REPO_DIR/scripts/prepare-child-sd.sh" "$root"' not in text
+    assert "トップの番号 3 はありません" in text
+    assert "1) すでに動いている子を移す" in text
+
+
+def test_prepare_disables_old_wifi_autoconnect(tmp_path):
+    root = _child_root(tmp_path)
+    conn = root / "etc" / "NetworkManager" / "system-connections"
+    conn.mkdir(parents=True)
+    old = conn / "old-hub.nmconnection"
+    old.write_text(
+        "[connection]\nid=presence-hub\ntype=wifi\nautoconnect=true\n",
+        encoding="utf-8",
+    )
+    pub = tmp_path / "id_ed25519.pub"
+    pub.write_text("ssh-ed25519 AAAA newhub\n", encoding="utf-8")
+    run_bash(
+        f'{SOURCE}; child_sd_prepare "{root}" "{pub}" sibling-hub ap-secret9',
+        env=_env(),
+    )
+    body = old.read_text(encoding="utf-8")
+    assert "autoconnect=false" in body
+    assert "autoconnect=true" not in body

@@ -247,7 +247,7 @@ def test_register_new_child_blanks_sta_and_renames(tmp_path):
         "10.42.0.194",
         "aa:bb:cc:dd:ee:ff",
         "pizero2w-3",
-        existing=[],
+        existing=["zero2.local"],
         runner=run,
         wait_fn=lambda mac, **k: StepResult(ok=True, message="復帰", output="10.42.0.80"),
         known_hosts=known,
@@ -258,6 +258,9 @@ def test_register_new_child_blanks_sta_and_renames(tmp_path):
     assert "stop child-csv-to-mqtt" in joined
     assert "clone-backup" in joined
     assert "set-hostname pizero2w-3" in joined
+    assert "avahi-daemon" in joined
+    assert "pi@zero2.local" in joined
+    assert "pi@10.42.0.80" in joined
     assert "pizero2w-3.local" in inv.read_text(encoding="utf-8")
     assert "局番号は空" in res.message
 

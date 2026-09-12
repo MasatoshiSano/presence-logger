@@ -220,6 +220,34 @@ def test_ask_empty_reply_keeps_default():
     assert proc.stdout.strip() == "HIME-H-REAP"
 
 
+def test_ask_back_word_is_a_token():
+    proc = run_bash(
+        f'{SOURCE}; printf "戻る\\n" | wizard_ask "工場の SSID" HIME-H-REAP',
+        env=_env(),
+    )
+    assert proc.stdout.strip() == "__WIZ_BACK__"
+
+
+def test_factory_ip_rejects_out_of_range_octet(tmp_path):
+    origin = tmp_path / "origin.env"
+    origin.write_text(ORIGIN, encoding="utf-8")
+    proc = run_bash(
+        f'{SITE}; {SOURCE}; wizard_validate_factory_ip 999.1.1.1 "{origin}"',
+        env=_env(),
+        check=False,
+    )
+    assert proc.returncode != 0
+
+
+def test_mode_two_text_does_not_promise_auto_join_without_psk():
+    from pathlib import Path
+    text = Path("scripts/setup-hub-wizard.sh").read_text(encoding="utf-8")
+    assert "パスワードが旧ハブと同じときに限ります" in text
+    assert "クローンした子が自動で付きます" not in text
+    assert "間違えたら「戻る」" in text
+    assert "親機は本当に止まっていますか" in text
+
+
 def test_coexist_prompts_keep_hostname_factory_ip_and_ap_ssid_separate():
     from pathlib import Path
     text = Path("scripts/setup-hub-wizard.sh").read_text(encoding="utf-8")

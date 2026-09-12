@@ -149,6 +149,16 @@ def test_new_child_default_hostname_is_hub_plus_ordinal():
     text = Path("scripts/setup-children-wizard.sh").read_text(encoding="utf-8")
     assert "このハブのホスト名-001" in text
     assert "children_cli suggest" in text
+    assert "間違えたら「戻る」" in text
+    assert "1 → 3" in text
+
+
+def test_children_ask_back_word_is_a_token():
+    proc = run_bash(
+        f'{SOURCE}; printf "戻る\\n" | children_ask "番号で選ぶ" 1',
+        env=_env(),
+    )
+    assert proc.stdout.strip() == "__WIZ_BACK__"
 
 
 def test_find_sd_root_prefers_media_then_mnt(tmp_path):

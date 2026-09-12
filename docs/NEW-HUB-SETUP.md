@@ -399,7 +399,9 @@ scripts/deploy-model.sh --list      # 版が見えることを確認
 >   場所（マウント先）は聞かない。見つかったら公開鍵と AP を書く。起動後にもう一度
 >   ウィザードで AP 上の子を取り込む。
 > - ハブ初期設定で「親機はもう使わない／別工場」を選ぶと、親と同じ AP 名を許可する
->   （`ORIGIN_ALLOW_SAME_AP=1`）。クローンした子が自動で付く。鍵は SD 書き込みが必要。
+>   （`ORIGIN_ALLOW_SAME_AP=1`）。クローンが自動で付くのは **AP 名とパスワードが旧ハブと
+>   同じときだけ**。パスワードは USB に入らない。鍵は SD 書き込みが必要。
+>   親機がまだ同じ工場網で動いていると、同じホスト名・工場IPは衝突する。
 >
 > 新しい子のクローン増設だけ、同じアイコンで「新しい子を増やす」を選ぶ。
 >
@@ -589,13 +591,8 @@ systemctl is-enabled presence-logger.service       # enabled
 > を書く。カメラ無しのハブに detector は存在しないが、行頭の `-` により失敗しても無視される
 > ので害はない（実装後は `HUB_MODE` で出し分ける）。
 
-フリート監視の常駐:
-
-```bash
-sudo install -m 644 fleet_ui/systemd/fleet-ui.service /etc/systemd/system/
-sudo systemctl daemon-reload && sudo systemctl enable --now fleet-ui.service
-ss -ltn | grep 8090                                # 127.0.0.1:8090 のみ
-```
+フリート監視のブラウザ常駐（fleet-ui）は**置かない**。子の付け替えはデスクトップの
+「子をこのハブへ付ける」だけを使う。
 
 ### 3.13 デスクトップのアイコンを置く（現地オペレーターの入り口）
 
@@ -687,8 +684,7 @@ scripts/fleet-status.sh                        # exit 0（1=STA_NO重複 / 2=検
 # コンテナ（detector が居ないこと）
 docker ps --format '{{.Names}}  {{.Status}}'
 
-# フリート監視がローカル限定で待ち受けていること
-ss -ltn | grep 8090                            # 127.0.0.1:8090 のみ
+# ブラウザのフリート管理は起動しない。子の付け替えは「子をこのハブへ付ける」
 ```
 
 `fleet-status.sh` の **`2` を `0` と混同しないこと**。「安全」ではなく「確かめられていない」

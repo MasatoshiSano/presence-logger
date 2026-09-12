@@ -94,11 +94,39 @@ EOF
     chown 0:0 "$dest" 2>/dev/null || true
 }
 
+# 旧ハブの Wi-Fi プロファイルが残ると、同居時にクローンが古い AP へ戻る。
+child_sd_disable_other_wifi() {
+    local root="${1:?}"
+    local dir="$root/etc/NetworkManager/system-connections"
+    local f tmp
+    [ -d "$dir" ] || return 0
+    shopt -s nullglob
+    for f in "$dir"/*.nmconnection; do
+        [ "$(basename "$f")" = "presence-hub-join.nmconnection" ] && continue
+        grep -qE '^type=(wifi|802-11-wireless)$' "$f" || continue
+        tmp="$(mktemp)"
+        awk '
+            BEGIN { in_c=0; seen=0 }
+            /^\[connection\]/ { in_c=1; print; next }
+            /^\[/ {
+                if (in_c && !seen) print "autoconnect=false"
+                in_c=0
+            }
+            in_c && /^autoconnect=/ { print "autoconnect=false"; seen=1; next }
+            { print }
+            END { if (in_c && !seen) print "autoconnect=false" }
+        ' "$f" > "$tmp" && cat "$tmp" > "$f"
+        rm -f "$tmp"
+        chmod 600 "$f" 2>/dev/null || true
+    done
+}
+
 child_sd_prepare() {
     local root="${1:?}" pub="${2:?}" ssid="${3:?}" psk="${4:?}"
     child_sd_is_child_root "$root" || return 1
     child_sd_install_pubkey "$root" "$pub" || return 1
     child_sd_write_wifi "$root" "$ssid" "$psk" || return 1
+    child_sd_disable_other_wifi "$root" || return 1
 }
 
 main() {
@@ -143,8 +171,10 @@ main() {
             bash "$PREPARE_REPO_DIR/scripts/prepare-child-sd.sh" "$root" || return 1
         echo
         echo "SD を外して子Pi に挿し、電源を入れてください。"
-        echo "起動したらデスクトップの「子をこのハブへ付ける」を開き、3 を選んでください。"
-        echo "登録ウィザード（局番号を空にする）は使わないでください。"
+        echo "起動したらデスクトップの「子をこのハブへ付ける」を開き、"
+        echo "  1) すでに動いている子を移す → 3) 子はもうこのハブの AP に繋がっている"
+        echo "を選んでください（トップの番号 3 はありません）。"
+        echo "2) 新しい子を増やす は局番号が空になり名前が変わるので、既存の子には使わないでください。"
         read -r -p "Enterで閉じる " _
         return 0
     fi

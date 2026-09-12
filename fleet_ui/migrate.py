@@ -12,6 +12,7 @@ from __future__ import annotations
 import re
 import shlex
 import subprocess
+import uuid
 from collections.abc import Callable
 from pathlib import Path
 
@@ -32,6 +33,7 @@ DEFAULT_REMOTE_INVENTORY = "~/projects/presence-logger/fleet/children.conf"
 CAT_OK = "__PRESENCE_CAT_OK__"
 MISSING = "__PRESENCE_MISSING__"
 KEY_OK = "KEY_OK"
+WIFI_OK = "WIFI_OK"
 
 
 def validate_old_host(host: str) -> str | None:
@@ -88,11 +90,18 @@ def _env_file_value(path: Path, key: str) -> str:
     return ""
 
 
-def run_cmd_long(cmd: list[str], timeout: int = 45) -> str:
+def run_cmd_long(
+    cmd: list[str], timeout: int = 45, input_text: str | None = None
+) -> str:
     """入れ子 SSH と nmcli は 10 秒では足りない。失敗しても空文字を返す。"""
     try:
         r = subprocess.run(  # noqa: S603 (fixed argv, no shell)
-            cmd, capture_output=True, text=True, timeout=timeout, check=False
+            cmd,
+            input=input_text,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
         )
     except (OSError, subprocess.SubprocessError):
         return ""
@@ -131,16 +140,21 @@ def ssh_pi(
     host: str,
     remote: str,
     *,
-    runner: Callable[[list[str]], str] = run_cmd_long,
+    runner: Callable[..., str] = run_cmd_long,
+    input_text: str | None = None,
 ) -> str:
-    return runner([
+    cmd = [
         "ssh",
         "-o", "ConnectTimeout=8",
         "-o", "BatchMode=yes",
         "-o", "StrictHostKeyChecking=accept-new",
         f"pi@{host}",
         remote,
-    ])
+    ]
+    try:
+        return runner(cmd, input_text=input_text)
+    except TypeError:
+        return runner(cmd)
 
 
 def _read_remote_inventory(
@@ -199,6 +213,7 @@ def list_remote_children(
 def _nested_ssh(entry: str, inner: str) -> str:
     return (
         "ssh -o ConnectTimeout=8 -o BatchMode=yes "
+        "-o StrictHostKeyChecking=accept-new "
         f"pi@{shlex.quote(entry)} {shlex.quote(inner)}"
     )
 
@@ -209,6 +224,52 @@ def _extract_mac(text: str) -> str:
         if _MAC_RE.match(cand):
             return cand
     return ""
+
+
+def nm_quote(value: str) -> str:
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def nm_join_keyfile(ssid: str, psk: str) -> str:
+    """子へ渡す NM 接続ファイル。PSK を argv に載せないための中身。"""
+    return (
+        "[connection]\n"
+        "id=presence-hub-join\n"
+        f"uuid={uuid.uuid4()}\n"
+        "type=wifi\n"
+        "autoconnect=true\n"
+        "autoconnect-priority=200\n"
+        "\n"
+        "[wifi]\n"
+        "mode=infrastructure\n"
+        f"ssid={nm_quote(ssid)}\n"
+        "\n"
+        "[wifi-security]\n"
+        "key-mgmt=wpa-psk\n"
+        f"psk={nm_quote(psk)}\n"
+        "\n"
+        "[ipv4]\n"
+        "method=auto\n"
+        "\n"
+        "[ipv6]\n"
+        "method=ignore\n"
+    )
+
+
+WIFI_INSTALL = """
+umask 077
+tmp=$(mktemp)
+cat > "$tmp" || exit 1
+sudo install -m 600 "$tmp" /etc/NetworkManager/system-connections/presence-hub-join.nmconnection
+rm -f "$tmp"
+sudo nmcli connection reload
+sudo nmcli -t -f NAME,TYPE connection show 2>/dev/null | while IFS=: read -r n t; do
+  [ "$t" = "802-11-wireless" ] || [ "$t" = "wifi" ] || continue
+  [ "$n" = "presence-hub-join" ] && continue
+  sudo nmcli connection modify "$n" connection.autoconnect no 2>/dev/null || true
+done
+sudo nmcli -w 15 connection up presence-hub-join && echo WIFI_OK
+""".strip()
 
 
 def take_child(
@@ -281,14 +342,21 @@ def take_child(
             output=key_out,
         )
 
-    wifi_inner = (
-        f"sudo nmcli -w 15 dev wifi connect {shlex.quote(ssid)} "
-        f"password {shlex.quote(psk)}; "
-        f"sudo nmcli connection modify {shlex.quote(ssid)} "
-        "connection.autoconnect yes connection.autoconnect-priority 200 "
-        "2>/dev/null || true"
+    wifi_out = ssh_pi(
+        old_host,
+        _nested_ssh(entry, WIFI_INSTALL),
+        runner=runner,
+        input_text=nm_join_keyfile(ssid, psk),
     )
-    ssh_pi(old_host, _nested_ssh(entry, wifi_inner), runner=runner)
+    if WIFI_OK not in (wifi_out or ""):
+        return StepResult(
+            ok=False,
+            message=(
+                f"{entry} の Wi-Fi 切替に失敗しました。"
+                "公開鍵は入っています。子の無線を確認してください。"
+            ),
+            output=wifi_out,
+        )
 
     waited = wait_fn(mac)
     if not waited.ok:
