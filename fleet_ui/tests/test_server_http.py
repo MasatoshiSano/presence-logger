@@ -239,3 +239,50 @@ def test_get_fleet_includes_migrate_without_psk(monkeypatch):
         assert set(body["migrate"]) == {"pubkey", "ap_ssid", "has_psk"}
     finally:
         srv.shutdown()
+
+
+def test_adopt_without_csrf_header_is_rejected(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        server_mod,
+        "run_adopt",
+        lambda req: calls.append(req) or {"ok": True},
+    )
+    srv, port = _start_server(monkeypatch, lambda req: {"ok": True})
+    try:
+        status, body = _post(
+            port,
+            {"Content-Type": "application/json"},
+            {"ip": "10.42.0.9"},
+            path="/api/adopt",
+        )
+        assert status == 403
+        assert calls == []
+        assert body["ok"] is False
+    finally:
+        srv.shutdown()
+
+
+def test_adopt_with_csrf_header_is_dispatched(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        server_mod,
+        "run_adopt",
+        lambda req: (
+            calls.append(req),
+            {"ok": True, "message": "zero2 をこのハブへ取り込みました", "output": ""},
+        )[1],
+    )
+    srv, port = _start_server(monkeypatch, lambda req: {"ok": True})
+    try:
+        status, body = _post(
+            port,
+            {"Content-Type": "application/json", "X-Fleet-UI": "1"},
+            {"ip": "10.42.0.9"},
+            path="/api/adopt",
+        )
+        assert status == 200
+        assert body["ok"] is True
+        assert calls == [{"ip": "10.42.0.9"}]
+    finally:
+        srv.shutdown()

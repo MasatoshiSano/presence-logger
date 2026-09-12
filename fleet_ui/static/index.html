@@ -45,7 +45,8 @@
 <div id="candidates"></div>
 
 <h2>他のハブから引き継ぐ</h2>
-<p class="target">親機に付いている稼働中の子を、ホスト名と局番号を変えずにこのハブへ移します。新機登録ウィザードは使わないでください。AP のパスワードはこの画面には出しません。</p>
+<p class="target">ホスト名と局番号を残したまま、このハブへ付け替えます。AP のパスワードはこの画面には出しません。</p>
+<p class="target">旧親が同じ工場網でまだ動いているときだけ、下の一覧を使います。旧親が無い・別工場で子のSDをクローンしたときは、デスクトップの「子SDをこのハブ用にする」で鍵と AP を書いてから起動し、上の未登録から「名前と局番号を残して取り込む」を押してください。同じハブへのクローン増設だけが登録ウィザード（局番号を空にする）です。</p>
 <div id="migrate-status"></div>
 <label>旧ハブ（工場網のホスト名または IP）
   <input type="text" id="old-host" size="28" autocomplete="off">
@@ -147,10 +148,28 @@ function renderCandidates() {
     t.appendChild(el('span', c.mac, 'mac'));
     t.appendChild(document.createTextNode(' / IP '));
     t.appendChild(el('span', c.ip, 'mac'));
+    if (c.hostname) {
+      t.appendChild(document.createTextNode(' / '));
+      t.appendChild(el('span', c.hostname));
+    }
     div.appendChild(t);
-    const btn = el('button', 'この端末を登録する');
-    btn.onclick = () => startWizard(c);
-    div.appendChild(btn);
+    if (c.ssh_ok) {
+      const keep = el('button', '名前と局番号を残して取り込む');
+      keep.onclick = () => adoptCandidate(c, div);
+      div.appendChild(keep);
+      const clone = el('button', 'クローンとして新規登録');
+      clone.onclick = () => startWizard(c);
+      div.appendChild(clone);
+    } else {
+      div.appendChild(el(
+        'p',
+        'このハブの鍵では SSH できません。旧親が工場網にいるなら下の引き継ぎ。旧親が無い・別工場なら、クローンした子SDを「子SDをこのハブ用にする」で書いてから起動してください。',
+        'target'
+      ));
+      const clone = el('button', 'クローンとして新規登録');
+      clone.onclick = () => startWizard(c);
+      div.appendChild(clone);
+    }
     box.appendChild(div);
   }
 }
@@ -287,6 +306,38 @@ function bindMigrateForm() {
     setMigrateMsg('', false);
   });
   document.getElementById('migrate-list').onclick = listRemoteChildren;
+}
+
+async function adoptCandidate(cand, div) {
+  if (!confirm(
+    (cand.hostname ? cand.hostname + ' を' : 'この端末を') +
+    'ホスト名と局番号そのままで取り込みます。クローン増設（改名）ではありません。続けますか？'
+  )) return;
+  WIZARD_ACTIVE = true;
+  const btns = div.querySelectorAll('button');
+  btns.forEach((b) => { b.disabled = true; });
+  let res;
+  try {
+    const r = await fetch('/api/adopt', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json', [CSRF_HEADER]: '1'},
+      body: JSON.stringify({ip: cand.ip, mac: cand.mac}),
+    });
+    res = await r.json();
+  } catch (e) {
+    res = {ok: false, message: '通信に失敗しました: ' + e};
+  }
+  div.className = 'step ' + (res.ok ? 'done' : 'failed');
+  const out = el('div');
+  out.appendChild(el('b', res.ok ? 'OK' : '失敗'));
+  out.appendChild(document.createTextNode(' ' + (res.message || '')));
+  if (res.output) out.appendChild(el('pre', res.output));
+  div.appendChild(out);
+  if (res.ok) { WIZARD_ACTIVE = false; load(); }
+  else {
+    btns.forEach((b) => { b.disabled = false; });
+    WIZARD_ACTIVE = false;
+  }
 }
 
 function startWizard(cand) {

@@ -321,3 +321,43 @@ def test_write_ap_join_env_rejects_empty_psk(tmp_path):
     )
     assert proc.returncode != 0
     assert not dest.exists()
+
+
+def test_origin_same_ap_ssid_is_rejected_without_flag(tmp_path):
+    origin = tmp_path / "origin.env"
+    origin.write_text(
+        "ORIGIN_HOSTNAME=raspberrypi5\n"
+        "ORIGIN_FACTORY_IP=172.22.13.17/24\n"
+        "ORIGIN_AP_SSID=presence-hub\n",
+        encoding="utf-8",
+    )
+    env_file, inv = _write(tmp_path)
+    env = dict(os.environ)
+    env["CHILDREN_CONF"] = str(inv)
+    env["ORIGIN_ENV_PATH"] = str(origin)
+    proc = run_bash(
+        f'{SOURCE}; site_env_load "{env_file}" && site_env_validate',
+        env=env, check=False,
+    )
+    assert proc.returncode != 0
+    assert "presence-hub" in proc.stderr
+
+
+def test_origin_same_ap_ssid_allowed_with_flag(tmp_path):
+    origin = tmp_path / "origin.env"
+    origin.write_text(
+        "ORIGIN_HOSTNAME=raspberrypi5\n"
+        "ORIGIN_FACTORY_IP=172.22.13.17/24\n"
+        "ORIGIN_AP_SSID=presence-hub\n",
+        encoding="utf-8",
+    )
+    body = VALID + "ORIGIN_ALLOW_SAME_AP=1\n"
+    env_file, inv = _write(tmp_path, body=body)
+    env = dict(os.environ)
+    env["CHILDREN_CONF"] = str(inv)
+    env["ORIGIN_ENV_PATH"] = str(origin)
+    proc = run_bash(
+        f'{SOURCE}; site_env_load "{env_file}" && site_env_validate',
+        env=env, check=False,
+    )
+    assert proc.returncode == 0, proc.stderr

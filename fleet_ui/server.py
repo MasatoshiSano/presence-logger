@@ -121,6 +121,22 @@ def build_fleet_view(
     }
 
 
+def enrich_candidates(view: dict, *, prober=None) -> dict:
+    """未登録端末に、このハブの鍵で SSH できるかを足す。
+
+    できるならホスト名と局番号を残して取り込める。できないなら子SDへの
+    書き込みか、旧親経由の引き継ぎが先。
+    """
+    probe = prober or provision.probe_hostname
+    for c in view.get("candidates") or []:
+        ip = c.get("ip") or ""
+        host = probe(ip) if ip else ""
+        c["ssh_ok"] = bool(host)
+        if host:
+            c["hostname"] = host
+    return view
+
+
 def _gather() -> dict:
     entries = _read_inventory()
     inv = resolve_inventory_ips(entries)
@@ -136,6 +152,7 @@ def _gather() -> dict:
     if newly:
         save_known_macs({**known, **newly})
     view["migrate"] = migrate.migrate_status()
+    enrich_candidates(view)
     return view
 
 
@@ -198,6 +215,16 @@ def run_step(req: dict) -> dict:
     return {"ok": r.ok, "message": r.message, "output": r.output}
 
 
+def run_adopt(req: dict) -> dict:
+    """AP 上の既存の子を、名前と局番号を変えずに取り込む。"""
+    ip = req.get("ip") or ""
+    inv = resolve_inventory_ips(_read_inventory())
+    if ip in {v for v in inv.values() if v}:
+        return {"ok": False, "message": "この端末は既にインベントリに登録されています"}
+    r = provision.adopt_keeping_identity(ip, existing=_read_inventory())
+    return {"ok": r.ok, "message": r.message, "output": r.output}
+
+
 class Handler(BaseHTTPRequestHandler):
     def _json(self, obj, code=200):
         body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
@@ -254,6 +281,9 @@ class Handler(BaseHTTPRequestHandler):
                 req.get("old_host") or "",
                 req.get("entry") or "",
             ))
+            return
+        if self.path == "/api/adopt":
+            self._json(run_adopt(req))
             return
         self._json({"ok": False, "error": "not found"}, 404)
 

@@ -188,9 +188,12 @@ site_env_reject_origin() {
         errors=$((errors + 1))
     fi
     if [ -n "${ORIGIN_AP_SSID:-}" ] && [ "${AP_SSID:-}" = "$ORIGIN_AP_SSID" ]; then
-        echo "AP_SSID が親機と同じです: $AP_SSID" >&2
-        echo "  子Pi がどちらのハブに付くか不定になります。別の AP 名にしてください" >&2
-        errors=$((errors + 1))
+        if [ "${ORIGIN_ALLOW_SAME_AP:-}" != "1" ]; then
+            echo "AP_SSID が親機と同じです: $AP_SSID" >&2
+            echo "  子Pi がどちらのハブに付くか不定になります。別の AP 名にしてください" >&2
+            echo "  親機を置き換える／別工場なら site.env に ORIGIN_ALLOW_SAME_AP=1" >&2
+            errors=$((errors + 1))
+        fi
     fi
     [ "$errors" -eq 0 ]
 }

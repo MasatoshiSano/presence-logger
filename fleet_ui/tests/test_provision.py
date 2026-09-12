@@ -8,7 +8,9 @@
 """
 from fleet_ui.provision import (
     add_to_inventory,
+    adopt_keeping_identity,
     blank_sta_no,
+    probe_hostname,
     register_host_key,
     rename_and_reboot,
     stop_publisher,
@@ -162,3 +164,46 @@ def test_rename_refuses_trailing_newline():
     r = _recorder()
     assert rename_and_reboot("10.42.0.194", "pizero2w-3\n", runner=r).ok is False
     assert r.calls == []
+
+
+def test_adopt_keeps_identity_and_skips_blank_rename(tmp_path):
+    calls = []
+
+    def run(cmd):
+        calls.append(cmd)
+        if cmd[-1] == "hostname":
+            return "zero2\n"
+        if "ssh-keyscan" in cmd:
+            return "hostkey-line\n"
+        return ""
+
+    inv = tmp_path / "children.conf"
+    inv.write_text("# empty\n", encoding="utf-8")
+    known = tmp_path / "known_hosts"
+    known.write_text("", encoding="utf-8")
+    res = adopt_keeping_identity(
+        "10.42.0.9",
+        existing=[],
+        runner=run,
+        known_hosts=known,
+        inventory_path=inv,
+    )
+    assert res.ok, res.message
+    joined = "\n".join(" ".join(c) for c in calls)
+    assert "hostnamectl" not in joined
+    assert "id_names_config" not in joined
+    assert "zero2.local" in inv.read_text(encoding="utf-8")
+    assert "hostkey-line" in known.read_text(encoding="utf-8")
+
+
+def test_adopt_without_ssh_key_explains_sd_path():
+    res = adopt_keeping_identity("10.42.0.9", existing=[], runner=lambda cmd: "")
+    assert not res.ok
+    assert "子SD" in res.message or "SSH" in res.message
+
+
+def test_probe_hostname_rejects_injection_without_running_ssh():
+    calls = []
+    host = probe_hostname("10.42.0.1; rm", runner=lambda cmd: calls.append(cmd) or "nope")
+    assert host == ""
+    assert calls == []

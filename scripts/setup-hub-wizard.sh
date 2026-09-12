@@ -52,13 +52,13 @@ wizard_validate_factory_ip() {
 }
 
 wizard_validate_ap_ssid() {
-    local ssid="$1" origin="$2"
+    local ssid="$1" origin="$2" allow_same="${3:-0}"
     if [ -z "$ssid" ]; then
         echo "AP 名が空です" >&2
         return 1
     fi
     site_env_load_origin "$origin" || return 1
-    if [ "$ssid" = "${ORIGIN_AP_SSID:-}" ]; then
+    if [ "$ssid" = "${ORIGIN_AP_SSID:-}" ] && [ "$allow_same" != "1" ]; then
         echo "親機と同じ AP 名です: $ssid" >&2
         echo "  子Pi がどちらのハブに付くか不定になります" >&2
         return 1
@@ -99,12 +99,13 @@ wizard_dump_kv() {
 
 wizard_render_site_env() {
     local tmpl="$1" origin="$2" hostname="$3" factory_ip="$4" ap_ssid="$5"
+    local allow_same="${6:-0}"
     # shellcheck disable=SC1090
     set -a; source "$tmpl"; set +a
     site_env_load_origin "$origin" || return 1
     wizard_validate_hostname "$hostname" "$origin" || return 1
     wizard_validate_factory_ip "$factory_ip" "$origin" || return 1
-    wizard_validate_ap_ssid "$ap_ssid" "$origin" || return 1
+    wizard_validate_ap_ssid "$ap_ssid" "$origin" "$allow_same" || return 1
 
     HUB_HOSTNAME="$hostname"
     HUB_MODE=1
@@ -127,6 +128,9 @@ wizard_render_site_env() {
         [ -n "${!k+x}" ] || continue
         wizard_dump_kv "$k"
     done
+    if [ "$allow_same" = "1" ]; then
+        printf 'ORIGIN_ALLOW_SAME_AP=1\n'
+    fi
 }
 
 wizard_merge_secrets() {
@@ -188,10 +192,18 @@ main() {
     site_env_load_origin "$origin" || return 1
 
     echo "この Raspberry Pi を子Pi専用ハブにします。"
-    echo "親機 ${ORIGIN_HOSTNAME:-?} はそのまま運転します。値を衝突させないでください。"
+    echo
+    echo "  1) 親機と同時に動かす（同じ工場網。AP名は必ず別）"
+    echo "  2) 親機はもう使わない、または別の工場網"
+    echo "     （AP名は親と同じでもよい。クローンした子が自動で付きます）"
+    echo
+    local hostname factory_ip ap_ssid ap_psk oracle_pass mode allow_same=0
+    mode="$(wizard_ask "番号で選ぶ" "1")"
+    if [ "$mode" = "2" ]; then
+        allow_same=1
+    fi
     echo
 
-    local hostname factory_ip ap_ssid ap_psk oracle_pass
     while true; do
         hostname="$(wizard_ask "ホスト名" "presence-hub-2")"
         wizard_validate_hostname "$hostname" "$origin" && break
@@ -202,9 +214,15 @@ main() {
         wizard_validate_factory_ip "$factory_ip" "$origin" && break
     done
     while true; do
-        echo "親機の AP 名は ${ORIGIN_AP_SSID:-?} です。別の名前にしてください。"
-        ap_ssid="$(wizard_ask "ドングルの AP 名" "${hostname}")"
-        wizard_validate_ap_ssid "$ap_ssid" "$origin" && break
+        if [ "$allow_same" = "1" ]; then
+            echo "親機の AP 名は ${ORIGIN_AP_SSID:-?} です。同じにするとクローンした子が付きます。"
+            ap_ssid="$(wizard_ask "ドングルの AP 名" "${ORIGIN_AP_SSID:-$hostname}")"
+            wizard_validate_ap_ssid "$ap_ssid" "$origin" 1 && break
+        else
+            echo "親機の AP 名は ${ORIGIN_AP_SSID:-?} です。別の名前にしてください。"
+            ap_ssid="$(wizard_ask "ドングルの AP 名" "${hostname}")"
+            wizard_validate_ap_ssid "$ap_ssid" "$origin" && break
+        fi
     done
     while true; do
         ap_psk="$(wizard_ask_secret "AP のパスワード（8文字以上・画面には出ません）")"
@@ -232,7 +250,7 @@ main() {
 
     local site_out="$repo/site.env"
     wizard_render_site_env "$tmpl" "$origin" "$hostname" "$factory_ip" "$ap_ssid" \
-        > "$site_out" || return 1
+        "$allow_same" > "$site_out" || return 1
     chmod 600 "$site_out"
     chown "$user:$user" "$site_out" 2>/dev/null || true
 
@@ -261,8 +279,10 @@ main() {
 ✅ ハブの初期設定が終わりました。
 
   新しい子Pi は次の AP に繋いでから、デスクトップの「フリート管理」で追加してください。
-  親機に付いている子を移すときは、登録ウィザードではなく
-  「他のハブから引き継ぐ」を使ってください（ホスト名と局番号が残ります）。
+  既存の子（SDクローン含む）は登録ウィザードを使わないでください。
+    ・旧親が同じ工場網で動いている → フリート管理の「他のハブから引き継ぐ」
+    ・旧親が無い / 別工場          → デスクトップ「子SDをこのハブ用にする」のあと
+                                     フリート管理で「名前と局番号を残して取り込む」
       SSID : $ap_ssid
       PASS : （いま入れた AP パスワード）
 

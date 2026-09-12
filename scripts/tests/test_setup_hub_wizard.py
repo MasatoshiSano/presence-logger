@@ -105,6 +105,31 @@ def test_ap_ssid_matching_origin_is_rejected(tmp_path):
     assert "presence-hub" in proc.stderr
 
 
+def test_ap_ssid_matching_origin_is_allowed_when_replacing(tmp_path):
+    origin = tmp_path / "origin.env"
+    origin.write_text(ORIGIN, encoding="utf-8")
+    proc = run_bash(
+        f'{SITE}; {SOURCE}; wizard_validate_ap_ssid presence-hub "{origin}" 1',
+        env=_env(),
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+
+
+def test_render_same_ap_ssid_writes_allow_flag(tmp_path):
+    tmpl = tmp_path / "site.env.template"
+    tmpl.write_text(TEMPLATE, encoding="utf-8")
+    origin = tmp_path / "origin.env"
+    origin.write_text(ORIGIN, encoding="utf-8")
+    out = run_bash(
+        f'{SITE}; {SOURCE}; wizard_render_site_env "{tmpl}" "{origin}" '
+        f'presence-hub-2 172.22.13.18 presence-hub 1',
+        env=_env(),
+    ).stdout
+    assert "AP_SSID=presence-hub" in out
+    assert "ORIGIN_ALLOW_SAME_AP=1" in out
+
+
 def test_short_ap_password_is_rejected():
     proc = run_bash(
         f'{SOURCE}; wizard_validate_ap_psk short',

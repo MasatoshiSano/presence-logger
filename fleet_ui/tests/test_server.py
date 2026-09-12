@@ -6,7 +6,7 @@ from pathlib import Path
 
 from fleet_ui.collect import ChildStatus
 from fleet_ui.discovery import Neighbor
-from fleet_ui.server import build_fleet_view, run_step
+from fleet_ui.server import build_fleet_view, enrich_candidates, run_step
 
 
 def _neigh():
@@ -125,5 +125,22 @@ def test_index_html_has_handoff_section_and_never_mentions_psk():
     assert "/api/migrate/list" in html
     assert "/api/migrate/take" in html
     assert "WIFI_AP_PSK" not in html
+    assert "/api/adopt" in html
+    assert "名前と局番号を残して取り込む" in html
+    assert "子SDをこのハブ用にする" in html
     assert ".innerHTML" not in html
     assert "innerHTML =" not in html
+
+
+def test_enrich_candidates_marks_ssh_ok():
+    view = {"candidates": [{"mac": "aa:bb:cc:dd:ee:ff", "ip": "10.42.0.9"}]}
+    enrich_candidates(view, prober=lambda ip: "zero2" if ip == "10.42.0.9" else "")
+    assert view["candidates"][0]["ssh_ok"] is True
+    assert view["candidates"][0]["hostname"] == "zero2"
+
+
+def test_enrich_candidates_without_key_is_not_ssh_ok():
+    view = {"candidates": [{"mac": "aa:bb:cc:dd:ee:ff", "ip": "10.42.0.9"}]}
+    enrich_candidates(view, prober=lambda ip: "")
+    assert view["candidates"][0]["ssh_ok"] is False
+    assert "hostname" not in view["candidates"][0]
