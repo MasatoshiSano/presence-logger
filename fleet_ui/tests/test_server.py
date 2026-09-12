@@ -2,9 +2,11 @@
 
 HTTPの配線ではなく、組み立てロジック(純関数)を検証する。
 """
+from pathlib import Path
+
 from fleet_ui.collect import ChildStatus
 from fleet_ui.discovery import Neighbor
-from fleet_ui.server import build_fleet_view, run_step
+from fleet_ui.server import build_fleet_view, enrich_candidates, run_step
 
 
 def _neigh():
@@ -36,8 +38,9 @@ def test_suggested_hostname_is_included_for_registration():
         neighbors=_neigh(),
         inventory_ips={"zero2": "10.42.0.52"},
         statuses={"10.42.0.52": ChildStatus(ip="10.42.0.52", hostname="pizero2w")},
+        hub="tpc12345",
     )
-    assert view["suggested_hostname"] == "pizero2w-2"
+    assert view["suggested_hostname"] == "tpc12345-002"
 
 
 def test_duplicate_sta_no_is_reported():
@@ -113,3 +116,33 @@ def test_steps_without_hostname_are_unaffected():
     res = run_step({"step": "unknown-step", "ip": "10.42.0.9"})
     assert res["ok"] is False
     assert "不明な工程" in res["message"]
+
+
+def test_index_html_has_handoff_section_and_never_mentions_psk():
+    html = (Path(__file__).resolve().parents[1] / "static" / "index.html").read_text(
+        encoding="utf-8"
+    )
+    assert "他のハブから引き継ぐ" in html
+    assert "/api/migrate/list" in html
+    assert "/api/migrate/take" in html
+    assert "WIFI_AP_PSK" not in html
+    assert "/api/adopt" in html
+    assert "子をこのハブへ付ける" in html
+    assert "名前と局番号を残して取り込む" in html
+    assert "子SDをこのハブ用にする" in html
+    assert ".innerHTML" not in html
+    assert "innerHTML =" not in html
+
+
+def test_enrich_candidates_marks_ssh_ok():
+    view = {"candidates": [{"mac": "aa:bb:cc:dd:ee:ff", "ip": "10.42.0.9"}]}
+    enrich_candidates(view, prober=lambda ip: "zero2" if ip == "10.42.0.9" else "")
+    assert view["candidates"][0]["ssh_ok"] is True
+    assert view["candidates"][0]["hostname"] == "zero2"
+
+
+def test_enrich_candidates_without_key_is_not_ssh_ok():
+    view = {"candidates": [{"mac": "aa:bb:cc:dd:ee:ff", "ip": "10.42.0.9"}]}
+    enrich_candidates(view, prober=lambda ip: "")
+    assert view["candidates"][0]["ssh_ok"] is False
+    assert "hostname" not in view["candidates"][0]

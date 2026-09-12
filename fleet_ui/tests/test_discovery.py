@@ -5,6 +5,7 @@
 """
 from fleet_ui.discovery import (
     classify,
+    current_ap_dev,
     learned_macs,
     load_known_macs,
     parse_neigh,
@@ -226,3 +227,13 @@ def test_load_known_macs_ignores_corrupt_file(tmp_path):
     p = tmp_path / "known_macs.json"
     p.write_text("not json", encoding="utf-8")
     assert load_known_macs(path=p) == {}
+
+
+def test_current_ap_dev_reads_env(monkeypatch):
+    monkeypatch.setenv("AP_DEV", "wlan0")
+    assert current_ap_dev() == "wlan0"
+
+
+def test_current_ap_dev_rejects_injection(monkeypatch):
+    monkeypatch.setenv("AP_DEV", "wlan0; rm")
+    assert current_ap_dev() == "wlan1"

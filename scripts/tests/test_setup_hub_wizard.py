@@ -105,6 +105,32 @@ def test_ap_ssid_matching_origin_is_rejected(tmp_path):
     assert "presence-hub" in proc.stderr
 
 
+def test_ap_ssid_matching_origin_is_allowed_when_replacing(tmp_path):
+    origin = tmp_path / "origin.env"
+    origin.write_text(ORIGIN, encoding="utf-8")
+    proc = run_bash(
+        f'{SITE}; {SOURCE}; wizard_validate_ap_ssid presence-hub "{origin}" 1',
+        env=_env(),
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+
+
+def test_render_same_ap_ssid_writes_allow_flag(tmp_path):
+    tmpl = tmp_path / "site.env.template"
+    tmpl.write_text(TEMPLATE, encoding="utf-8")
+    origin = tmp_path / "origin.env"
+    origin.write_text(ORIGIN, encoding="utf-8")
+    out = run_bash(
+        f'{SITE}; {SOURCE}; wizard_render_site_env "{tmpl}" "{origin}" '
+        f'presence-hub-2 172.22.13.18 presence-hub 1',
+        env=_env(),
+    ).stdout
+    assert "AP_SSID=presence-hub" in out
+    assert "ORIGIN_ALLOW_SAME_AP=1" in out
+    assert "ORIGIN_REPLACE=1" in out
+
+
 def test_short_ap_password_is_rejected():
     proc = run_bash(
         f'{SOURCE}; wizard_validate_ap_psk short',
@@ -150,6 +176,93 @@ def test_render_inherits_oracle_and_factory_ssid_and_shifts_sta_no(tmp_path):
     assert "PARENT_STA_NO3=997" in body
 
 
+def test_render_uses_wizard_factory_and_oracle_overrides(tmp_path):
+    tmpl = tmp_path / "site.env.template"
+    tmpl.write_text(TEMPLATE, encoding="utf-8")
+    origin = tmp_path / "origin.env"
+    origin.write_text(ORIGIN, encoding="utf-8")
+    out = run_bash(
+        f'{SITE}; {SOURCE}; '
+        f'export WIZ_FACTORY_SSID=OTHER-SSID WIZ_FACTORY_GW=10.1.1.1 '
+        f'WIZ_FACTORY_DNS=8.8.8.8 WIZ_ORACLE_HOST=10.0.0.9 '
+        f'WIZ_ORACLE_PORT=1522 WIZ_ORACLE_SERVICE=OTHER '
+        f'WIZ_ORACLE_USER=ZHH002 WIZ_ORACLE_TABLE=HF9; '
+        f'wizard_render_site_env "{tmpl}" "{origin}" '
+        f'presence-hub-2 172.22.13.18 sibling-hub',
+        env=_env(),
+    ).stdout
+    assert "FACTORY_SSID=OTHER-SSID" in out
+    assert "FACTORY_GW=10.1.1.1" in out
+    assert "FACTORY_DNS=8.8.8.8" in out
+    assert "ORACLE_HOST=10.0.0.9" in out
+    assert "ORACLE_PORT=1522" in out
+    assert "ORACLE_SERVICE=OTHER" in out
+    assert "ORACLE_USER=ZHH002" in out
+    assert "ORACLE_TABLE=HF9" in out
+
+
+def test_factory_ip_matching_origin_is_allowed_when_replacing(tmp_path):
+    origin = tmp_path / "origin.env"
+    origin.write_text(ORIGIN, encoding="utf-8")
+    proc = run_bash(
+        f'{SITE}; {SOURCE}; wizard_validate_factory_ip 172.22.13.17 "{origin}" 1',
+        env=_env(),
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+
+
+def test_ask_empty_reply_keeps_default():
+    proc = run_bash(
+        f'{SOURCE}; printf "\\n" | wizard_ask "工場の SSID" HIME-H-REAP',
+        env=_env(),
+    )
+    assert proc.stdout.strip() == "HIME-H-REAP"
+
+
+def test_coexist_prompts_keep_hostname_factory_ip_and_ap_ssid_separate():
+    from pathlib import Path
+    text = Path("scripts/setup-hub-wizard.sh").read_text(encoding="utf-8")
+    assert 'wizard_ask "このハブのホスト名"' in text
+    assert 'wizard_ask "このハブの工場固定IP"' in text
+    assert 'wizard_ask "子Pi用ハブAPの Wi-Fi名"' in text
+    # ホスト名そのものを AP 名にすると ① と ⑥ が同じ値に見える
+    assert 'wizard_ask "ドングルの AP 名" "${hostname}"' not in text
+    assert "wizard_default_ap_ssid" in text
+    assert "wizard_sibling_name" in text
+
+
+def test_sibling_name_appends_dash_two():
+    proc = run_bash(
+        f'{SOURCE}; wizard_sibling_name raspberrypi5 raspberrypi5-2',
+        env=_env(),
+    )
+    assert proc.stdout.strip() == "raspberrypi5-2"
+    proc = run_bash(
+        f'{SOURCE}; wizard_sibling_name presence-hub presence-hub-2',
+        env=_env(),
+    )
+    assert proc.stdout.strip() == "presence-hub-2"
+
+
+def test_default_ap_ssid_is_hostname_dash_hub():
+    proc = run_bash(
+        f'{SOURCE}; wizard_default_ap_ssid tpc12345',
+        env=_env(),
+    )
+    assert proc.stdout.strip() == "tpc12345-hub"
+    proc = run_bash(
+        f'{SOURCE}; wizard_default_ap_ssid raspberrypi5-2',
+        env=_env(),
+    )
+    assert proc.stdout.strip() == "raspberrypi5-2-hub"
+    proc = run_bash(
+        f'{SOURCE}; wizard_default_ap_ssid "" presence-hub',
+        env=_env(),
+    )
+    assert proc.stdout.strip() == "presence-hub"
+
+
 def test_render_appends_prefix_when_user_omits_it(tmp_path):
     tmpl = tmp_path / "site.env.template"
     tmpl.write_text(TEMPLATE, encoding="utf-8")
@@ -177,6 +290,18 @@ def test_merge_secrets_sets_typed_keys_and_keeps_factory_psk(tmp_path):
     assert "WIFI_AP_PSK=ap-secret9" in body
     assert "WIFI_PSK_HIMEREAP=factory" in body
     assert "WIFI_PSK_HOME=home" in body
+
+
+def test_write_ap_join_env_from_wizard_helpers(tmp_path):
+    dest = tmp_path / ".kit" / "ap-join.env"
+    dest.parent.mkdir()
+    run_bash(
+        f'{SITE}; {SOURCE}; write_ap_join_env "{dest}" sibling-hub ap-secret9',
+        env=_env(),
+    )
+    body = dest.read_text(encoding="utf-8")
+    assert "AP_SSID=sibling-hub" in body
+    assert "WIFI_AP_PSK=ap-secret9" in body
 
 
 def test_already_configured_when_marker_exists(tmp_path):

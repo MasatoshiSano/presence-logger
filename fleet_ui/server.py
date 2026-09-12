@@ -14,7 +14,7 @@ import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from fleet_ui import provision
+from fleet_ui import migrate, provision
 from fleet_ui.collect import ChildStatus, collect_status
 from fleet_ui.discovery import (
     classify,
@@ -24,7 +24,7 @@ from fleet_ui.discovery import (
     resolve_inventory_ips,
     save_known_macs,
 )
-from fleet_ui.hostname import suggest_hostname, validate_hostname
+from fleet_ui.hostname import read_hub_hostname, suggest_hostname, validate_hostname
 
 
 def _load_sta_no_report():
@@ -66,6 +66,7 @@ def build_fleet_view(
     inventory_ips: dict[str, str | None],
     statuses: dict[str, ChildStatus],
     known_macs: dict[str, str] | None = None,
+    hub: str = "",
 ) -> dict:
     """画面へ渡すJSONを組み立てる純関数。
 
@@ -115,10 +116,26 @@ def build_fleet_view(
         "duplicates": [
             {"sta_no": list(t), "where": labels} for t, labels in dups.items()
         ],
-        "suggested_hostname": suggest_hostname([n for n in known_names if n]),
+        "suggested_hostname": suggest_hostname([n for n in known_names if n], hub=hub),
         "steps": [{"id": i, "label": lbl} for i, lbl in provision.STEPS],
         "_newly_trusted_macs": learned_macs(rows, known_macs),
     }
+
+
+def enrich_candidates(view: dict, *, prober=None) -> dict:
+    """未登録端末に、このハブの鍵で SSH できるかを足す。
+
+    できるならホスト名と局番号を残して取り込める。できないなら子SDへの
+    書き込みか、旧親経由の引き継ぎが先。
+    """
+    probe = prober or provision.probe_hostname
+    for c in view.get("candidates") or []:
+        ip = c.get("ip") or ""
+        host = probe(ip) if ip else ""
+        c["ssh_ok"] = bool(host)
+        if host:
+            c["hostname"] = host
+    return view
 
 
 def _gather() -> dict:
@@ -127,14 +144,18 @@ def _gather() -> dict:
     neighbors = read_neighbors()
     statuses = {ip: collect_status(ip) for ip in inv.values() if ip}
     known = load_known_macs()
+    hub = read_hub_hostname(Path(__file__).resolve().parents[1] / "site.env")
     view = build_fleet_view(
-        neighbors=neighbors, inventory_ips=inv, statuses=statuses, known_macs=known
+        neighbors=neighbors, inventory_ips=inv, statuses=statuses, known_macs=known,
+        hub=hub,
     )
     # TOFU: 今回新たに信頼した組があれば永続化する。フロントには内部実装の
     # 詳細を渡さないため、送信前に取り除く。
     newly = view.pop("_newly_trusted_macs", {})
     if newly:
         save_known_macs({**known, **newly})
+    view["migrate"] = migrate.migrate_status()
+    enrich_candidates(view)
     return view
 
 
@@ -197,6 +218,16 @@ def run_step(req: dict) -> dict:
     return {"ok": r.ok, "message": r.message, "output": r.output}
 
 
+def run_adopt(req: dict) -> dict:
+    """AP 上の既存の子を、名前と局番号を変えずに取り込む。"""
+    ip = req.get("ip") or ""
+    inv = resolve_inventory_ips(_read_inventory())
+    if ip in {v for v in inv.values() if v}:
+        return {"ok": False, "message": "この端末は既にインベントリに登録されています"}
+    r = provision.adopt_keeping_identity(ip, existing=_read_inventory())
+    return {"ok": r.ok, "message": r.message, "output": r.output}
+
+
 class Handler(BaseHTTPRequestHandler):
     def _json(self, obj, code=200):
         body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
@@ -242,10 +273,22 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError:
             self._json({"ok": False, "message": "リクエストを解析できません"}, 400)
             return
-        if self.path != "/api/step":
-            self._json({"error": "not found"}, 404)
+        if self.path == "/api/step":
+            self._json(run_step(req))
             return
-        self._json(run_step(req))
+        if self.path == "/api/migrate/list":
+            self._json(migrate.list_children_payload(req.get("old_host") or ""))
+            return
+        if self.path == "/api/migrate/take":
+            self._json(migrate.take_payload(
+                req.get("old_host") or "",
+                req.get("entry") or "",
+            ))
+            return
+        if self.path == "/api/adopt":
+            self._json(run_adopt(req))
+            return
+        self._json({"ok": False, "error": "not found"}, 404)
 
     def log_message(self, fmt, *args):
         print(f"[fleet-ui] {fmt % args}")

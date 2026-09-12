@@ -175,6 +175,10 @@ site_env_reject_origin() {
     local origin="${1:-$(site_env_origin_path)}"
     [ -f "$origin" ] || return 0
     site_env_load_origin "$origin" || return 1
+    # 親機を置き換える／別工場では、コピー元と同じホスト名・IP・AP名を許す。
+    if [ "${ORIGIN_REPLACE:-}" = "1" ]; then
+        return 0
+    fi
     local errors=0
     if [ -n "${ORIGIN_HOSTNAME:-}" ] && [ "${HUB_HOSTNAME:-}" = "$ORIGIN_HOSTNAME" ]; then
         echo "HUB_HOSTNAME が親機と同じです: $HUB_HOSTNAME" >&2
@@ -188,9 +192,12 @@ site_env_reject_origin() {
         errors=$((errors + 1))
     fi
     if [ -n "${ORIGIN_AP_SSID:-}" ] && [ "${AP_SSID:-}" = "$ORIGIN_AP_SSID" ]; then
-        echo "AP_SSID が親機と同じです: $AP_SSID" >&2
-        echo "  子Pi がどちらのハブに付くか不定になります。別の AP 名にしてください" >&2
-        errors=$((errors + 1))
+        if [ "${ORIGIN_ALLOW_SAME_AP:-}" != "1" ]; then
+            echo "AP_SSID が親機と同じです: $AP_SSID" >&2
+            echo "  子Pi がどちらのハブに付くか不定になります。別の AP 名にしてください" >&2
+            echo "  親機を置き換える／別工場なら site.env に ORIGIN_ALLOW_SAME_AP=1" >&2
+            errors=$((errors + 1))
+        fi
     fi
     [ "$errors" -eq 0 ]
 }
@@ -199,4 +206,25 @@ site_env_require() {
     site_env_load "${1:-}" || exit 1
     site_env_validate || exit 1
     site_env_reject_origin || exit 1
+}
+
+# フリート管理が pi で読める AP 参加情報。/etc の secrets.env は root:docker 0600
+# なので、子の引き継ぎでは使えない。PSK はここにだけ置き、画面へは出さない。
+write_ap_join_env() {
+    local dest="${1:?}"
+    local ssid="${2:-${AP_SSID:-}}"
+    local psk="${3:-${WIFI_AP_PSK:-}}"
+    local owner="${4:-${SUDO_USER:-${USER:-pi}}}"
+    if [ -z "$ssid" ] || [ -z "$psk" ]; then
+        echo "AP_SSID または WIFI_AP_PSK が空のため ap-join.env を書けません" >&2
+        return 1
+    fi
+    mkdir -p "$(dirname "$dest")"
+    local old_umask
+    old_umask="$(umask)"
+    umask 077
+    printf 'AP_SSID=%s\nWIFI_AP_PSK=%s\n' "$ssid" "$psk" > "$dest"
+    umask "$old_umask"
+    chown "$owner:$owner" "$dest" 2>/dev/null || true
+    chmod 600 "$dest"
 }

@@ -15,7 +15,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from fleet_ui.discovery import parse_neigh, run_cmd
+from fleet_ui.discovery import current_ap_dev, parse_neigh, run_cmd
+from fleet_ui.hostname import validate_hostname
 
 # ホスト名として安全な形。sed/printf へ素で埋め込むため、ここを緩めてはいけない。
 _SAFE_HOSTNAME_RE = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?\Z")
@@ -131,7 +132,7 @@ def wait_for_return(
     mac = mac.lower()
     waited = 0
     while waited < timeout_s:
-        for n in parse_neigh(runner(["ip", "-4", "neigh", "show", "dev", "wlan1"])):
+        for n in parse_neigh(runner(["ip", "-4", "neigh", "show", "dev", current_ap_dev()])):
             if n.mac == mac:
                 return StepResult(ok=True, message=f"復帰を確認しました ({n.ip})", output=n.ip)
         sleeper(5)
@@ -190,3 +191,121 @@ def add_to_inventory(entry: str, *, path: Path = INVENTORY) -> StepResult:
         return f"{entry} を追加しました"
 
     return _guarded(_do, "インベントリを更新しました")
+
+
+def probe_hostname(
+    ip: str, *, runner: Callable[[list[str]], str] = run_cmd
+) -> str:
+    """このハブの鍵で SSH できるか。できなければ空文字。
+
+    未登録のクローンは known_hosts に居ないので accept-new にする。
+    """
+    if not ip or any(c in ip for c in " ;|&$()`<>\"'\\"):
+        return ""
+    return runner([
+        "ssh",
+        "-o", "ConnectTimeout=3",
+        "-o", "BatchMode=yes",
+        "-o", "StrictHostKeyChecking=accept-new",
+        f"pi@{ip}",
+        "hostname",
+    ]).strip()
+
+
+def adopt_keeping_identity(
+    ip: str,
+    *,
+    existing: list[str],
+    runner: Callable[[list[str]], str] = run_cmd,
+    known_hosts: Path | None = None,
+    inventory_path: Path | None = None,
+) -> StepResult:
+    """AP に既に居る子を、ホスト名と局番号を変えずに取り込む。
+
+    新機登録ウィザードはクローン増設向け（STA_NO を空にする / 改名）。
+    既存の子のSDを別ハブへ持ってきたときはそれを流してはいけない。
+    """
+    hostname = probe_hostname(ip, runner=runner)
+    if not hostname:
+        return StepResult(
+            ok=False,
+            message=(
+                "このハブの鍵では SSH できません。"
+                "旧親が工場網にいるなら「他のハブから引き継ぐ」。"
+                "旧親が無い・別工場なら、クローンした子SDを"
+                "「子SDをこのハブ用にする」で書いてから起動してください。"
+            ),
+        )
+    err = validate_hostname(hostname, existing)
+    if err:
+        return StepResult(ok=False, message=err)
+
+    inv_name = hostname if hostname.endswith(".local") else f"{hostname}.local"
+    kh = register_host_key(inv_name, runner=runner, known_hosts=known_hosts)
+    if not kh.ok:
+        return kh
+    added = add_to_inventory(inv_name, path=inventory_path or INVENTORY)
+    if not added.ok:
+        return added
+    return StepResult(
+        ok=True,
+        message=f"{hostname} をこのハブへ取り込みました（ホスト名と局番号はそのまま）",
+        output=kh.output,
+    )
+
+
+def register_new_child(
+    ip: str,
+    mac: str,
+    new_hostname: str,
+    *,
+    existing: list[str],
+    runner: Callable[[list[str]], str] = run_cmd,
+    wait_fn: Callable[..., StepResult] = wait_for_return,
+    known_hosts: Path | None = None,
+    inventory_path: Path | None = None,
+) -> StepResult:
+    """クローン増設向けの6工程。STA_NO を空にし、ホスト名を変える。
+
+    既存の子を別ハブへ移すときは adopt_keeping_identity を使う。
+    """
+    if not ip or any(c in ip for c in " ;|&$()`<>\"'\\"):
+        return StepResult(ok=False, message="子の IP が不正です")
+    mac = (mac or "").strip().lower()
+    if not re.fullmatch(r"(?:[0-9a-f]{2}:){5}[0-9a-f]{2}", mac):
+        return StepResult(ok=False, message="子の MAC が不正です")
+    err = validate_hostname(new_hostname, existing)
+    if err:
+        return StepResult(ok=False, message=err)
+
+    r = stop_publisher(ip, runner=runner)
+    if not r.ok:
+        return r
+    r = blank_sta_no(ip, runner=runner)
+    if not r.ok:
+        return r
+    r = rename_and_reboot(ip, new_hostname, runner=runner)
+    if not r.ok:
+        return r
+    waited = wait_fn(mac, runner=runner)
+    if not waited.ok:
+        return waited
+    new_ip = (waited.output or "").strip() or ip
+    r = restart_mdns([new_ip], runner=runner)
+    if not r.ok:
+        return r
+    inv_name = f"{new_hostname}.local"
+    kh = register_host_key(inv_name, runner=runner, known_hosts=known_hosts)
+    if not kh.ok:
+        return kh
+    added = add_to_inventory(inv_name, path=inventory_path or INVENTORY)
+    if not added.ok:
+        return added
+    return StepResult(
+        ok=True,
+        message=(
+            f"{new_hostname} を登録しました。"
+            "局番号は空です。子の画面で付けてください。"
+        ),
+        output=new_ip,
+    )

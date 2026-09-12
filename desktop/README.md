@@ -19,7 +19,7 @@ GUIランチャーとスクリプト一式。Raspberry Pi のデスクトップ�
 | `launchers/記録モニタ.desktop` | HHC001 への書込をリアルタイム表示 | 不要 |
 | `launchers/直近30件.desktop` | DBを直接SELECTし直近30件を最新順表示 | 不要 |
 | `launchers/パイプライン監視.desktop` | 子Pi→MQTT→Oracle の流れを1画面で追う | 不要 |
-| `launchers/フリート管理.desktop` | 子Pi の一覧・登録（localhost:8090） | 不要 |
+| `launchers/子をこのハブへ付ける.desktop` | 既存の子の引っ越し / 新しい子の登録（会話形式） | 一部 |
 | `launchers/ハブ初期設定.desktop` | USB 展開後の会話形式セットアップ | 要（中で sudo） |
 | `presence-tools/connect-hime-h-reap.sh` | 接続＋時刻同期＋detector起動の実体 | 要 |
 | `presence-tools/disconnect-hime-h-reap.sh` | detector停止＋切断の実体 | 要 |

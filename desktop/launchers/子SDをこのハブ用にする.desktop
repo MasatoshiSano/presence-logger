@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=子SDをこのハブ用にする
+Name[ja]=子SDをこのハブ用にする
+Comment=クローンした子PiのSDに、このハブの公開鍵とAPを書く
+Exec=lxterminal -t "子SDをこのハブ用にする" -e bash __REPO_DIR__/scripts/prepare-child-sd.sh
+Icon=media-flash
+Terminal=false
+Categories=Settings;

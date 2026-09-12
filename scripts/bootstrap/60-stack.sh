@@ -94,11 +94,8 @@ main() {
     HUB_MODE="$HUB_MODE" REPO_DIR="$REPO_DIR" \
         bash "$REPO_DIR/desktop/presence-tools/setup-autostart.sh" || return 1
 
-    echo "==> フリート監視を常駐化"
-    stack_enable_fleet_ui || return 1
-
+    echo "==> 子の付け替えはターミナルの「子をこのハブへ付ける」を使う"
     docker ps --format '    {{.Names}}  {{.Status}}' 2>/dev/null || true
-    ss -ltn | grep 8090 || true
 }
 
 [[ "${BASH_SOURCE[0]}" == "$0" ]] && main "$@"
