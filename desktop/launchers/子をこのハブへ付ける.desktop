@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=子をこのハブへ付ける
+Name[ja]=子をこのハブへ付ける
+Comment=順番に答えて、既存の子を名前と局番号そのままで付ける
+Exec=lxterminal -t "子をこのハブへ付ける" -e bash __REPO_DIR__/scripts/setup-children-wizard.sh
+Icon=network-transmit-receive
+Terminal=false
+Categories=Settings;

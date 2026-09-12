@@ -126,6 +126,7 @@ def test_index_html_has_handoff_section_and_never_mentions_psk():
     assert "/api/migrate/take" in html
     assert "WIFI_AP_PSK" not in html
     assert "/api/adopt" in html
+    assert "子をこのハブへ付ける" in html
     assert "名前と局番号を残して取り込む" in html
     assert "子SDをこのハブ用にする" in html
     assert ".innerHTML" not in html

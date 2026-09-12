@@ -126,7 +126,7 @@ main() {
         sudo bash "$PREPARE_REPO_DIR/scripts/prepare-child-sd.sh" "$root" || return 1
         echo
         echo "SD を外して子Pi に挿し、電源を入れてください。"
-        echo "このハブの AP に現れたら、フリート管理で「名前と局番号を残して取り込む」。"
+        echo "起動したらデスクトップの「子をこのハブへ付ける」を開き、3 を選んでください。"
         echo "登録ウィザード（局番号を空にする）は使わないでください。"
         read -r -p "Enterで閉じる " _
         return 0
