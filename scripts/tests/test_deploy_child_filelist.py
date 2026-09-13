@@ -5,7 +5,7 @@
 """
 import os
 
-from scripts.tests.shellhelp import run_bash
+from scripts.tests.shellhelp import REPO_ROOT, run_bash
 
 DEVICE_OWNED = [
     "id_names_config.json", "threshold_config.json", "recognition_config.json",
@@ -15,7 +15,9 @@ DEVICE_OWNED = [
 
 def _dry_run(fake_bin, args: str) -> str:
     fake_bin("rsync", 'printf "%s\\n" "$@" >> "$FAKE_LOG"')
-    run_bash(f"scripts/deploy-child.sh --dry-run {args}", env=dict(os.environ))
+    env = dict(os.environ)
+    env["REPO_DIR"] = str(REPO_ROOT)
+    run_bash(f"scripts/deploy-child.sh --dry-run {args}", env=env)
     return fake_bin.log.read_text(encoding="utf-8")
 
 
@@ -29,6 +31,7 @@ def test_default_distributes_code_files(fake_bin):
     out = _dry_run(fake_bin, "")
     assert "Picamera.py" in out
     assert "web_server.py" in out
+    assert "child-csv-to-mqtt.py" in out
 
 
 def test_default_does_not_distribute_shared_config(fake_bin):

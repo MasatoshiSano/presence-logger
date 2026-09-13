@@ -358,12 +358,11 @@ def main() -> int:    # pragma: no cover
             log_dir = "/var/log/presence-logger"
             free = disk_reclaim.free_bytes(log_dir)
             keep_sent = disk_reclaim.keep_sent_for_free(free)
-            confirmed = set(record_inbox.sent_event_ids()) | set(inbox.sent_event_ids())
-            mqtt_dropped = mqtt_file.drop_records(confirmed) if confirmed else 0
             dropped_ids = record_inbox.delete_sent(keep_newest=keep_sent)
             dropped_ids.extend(inbox.delete_sent(keep_newest=keep_sent))
+            mqtt_dropped = mqtt_file.drop_records(set(dropped_ids)) if dropped_ids else 0
             rotated: list[str] = []
-            if free < disk_reclaim.WARN_FREE_BYTES:
+            if free is not None and free < disk_reclaim.WARN_FREE_BYTES:
                 rotated = disk_reclaim.unlink_rotated_logs(log_dir)
             max_rows = int(bridge_cfg["buffer"]["max_rows"])
             inbox_evicted = inbox.ring_evict(max_rows=max_rows)

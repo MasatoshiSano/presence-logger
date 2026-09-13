@@ -19,18 +19,24 @@ KEEP_SENT_CRITICAL = 0
 _ROTATED_LOG = re.compile(r"^(bridge|detector|child-mqtt)\.log\.[1-9]\d*$")
 
 
-def free_bytes(path: str | Path) -> int:
-    """Return free bytes on the filesystem containing `path`. 0 on error."""
+def free_bytes(path: str | Path) -> int | None:
+    """Return free bytes on the filesystem containing `path`, or None on error.
+
+    None must not be treated as 0: that would look like a full disk and wipe
+    Oracle-confirmed inbox rows / ACK-resend history.
+    """
     try:
         target = Path(path)
         if not target.exists():
             target = target.parent
         return shutil.disk_usage(target).free
     except OSError:
-        return 0
+        return None
 
 
-def keep_sent_for_free(free: int) -> int:
+def keep_sent_for_free(free: int | None) -> int:
+    if free is None:
+        return KEEP_SENT_NORMAL
     if free >= WARN_FREE_BYTES:
         return KEEP_SENT_NORMAL
     if free >= CRITICAL_FREE_BYTES:

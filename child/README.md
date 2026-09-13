@@ -10,10 +10,10 @@
 |---|---|---|
 | `Picamera.py` | IMX500 カメラ推論本体（picamera.service） | `~/Picamera.py` |
 | `web_server.py` | 設定/監視用 HTTP UI（web_server.service, :8080） | `~/web_server.py` |
-| `child-csv-to-mqtt.py` | CSV → MQTT(`10.42.0.1:1883` topic `presence/record`) | `~/child-csv-to-mqtt.py` |
+| `child-csv-to-mqtt.py` | CSV → MQTT(`10.42.0.1:1883` topic `presence/record`) + 15秒 heartbeat | `~/child-csv-to-mqtt.py` |
 | `index.html` | web_server の画面 | `~/index.html` |
 | `*_config.json` (8) | 各種設定（crop/threshold/recognition/…） | `~/*.json` |
-| `systemd/*.service` | picamera / web_server の unit | `/etc/systemd/system/` |
+| `systemd/*.service` | picamera / web_server / child-csv-to-mqtt の unit | `/etc/systemd/system/` |
 | `docs/` | 要求仕様書 等（配布しない参照資料） | — |
 
 ## 配布しない = runtime 状態（子でのみ生成・保持）
@@ -30,5 +30,5 @@ scripts/deploy-child.sh               # code + config を配布
 scripts/deploy-child.sh --code-only   # コードのみ（config は子の現状維持）
 ```
 
-配布 → `picamera`/`web_server` 再起動 → ヘルスチェック（サービス active + 安定 +
+配布 → `picamera` / `web_server` / `child-csv-to-mqtt` を enable+再起動 → ヘルスチェック（サービス active + 安定 +
 web_server :8080 応答）→ 失敗なら自動ロールバック（`~/.deploy-backups/<ts>`）。

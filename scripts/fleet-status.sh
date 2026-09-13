@@ -62,7 +62,7 @@ trap 'rm -rf "$TMP"' EXIT
 UNREACHABLE=0
 
 log "フリート状態 (${#HOSTS[@]}台)"
-printf '  %-16s %-8s %-10s %-12s %s\n' HOST PICAMERA WEB MODEL READY
+printf '  %-16s %-8s %-10s %-8s %-12s %s\n' HOST PICAMERA WEB MQTT MODEL READY
 for h in "${HOSTS[@]}"; do
   # 子ごとに IP を空へ戻す。child_resolve_ap_ip はグローバルへ書き込み、
   # 「解決済み」と「利用者指定」を区別できないため、戻さないと2台目以降が
@@ -78,6 +78,7 @@ for h in "${HOSTS[@]}"; do
 
   pica="$(rc 'systemctl is-active picamera.service' 2>/dev/null || echo unknown)"
   web="$(rc 'systemctl is-active web_server.service' 2>/dev/null || echo unknown)"
+  mqtt="$(rc 'systemctl is-active child-csv-to-mqtt.service' 2>/dev/null || echo unknown)"
   url="http://$CHILD_AP_IP:$CHILD_WEB_PORT"
   # model_type と status は両方 /model_status に入っている。1回の取得で足りる。
   # /current_model からは読まないこと: 実機 zero2 では network/labels しか返らず
@@ -87,8 +88,8 @@ for h in "${HOSTS[@]}"; do
            | sed 's/.*"\([^"]*\)"$/\1/' || true)"
   ready="$(printf '%s' "$st" | grep -o '"status"[[:space:]]*:[[:space:]]*"[^"]*"' \
            | sed 's/.*"\([^"]*\)"$/\1/' || true)"
-  printf '  %-16s %-8s %-10s %-12s %s\n' \
-    "$h" "$pica" "$web" "${model:-?}" "${ready:-?}"
+  printf '  %-16s %-8s %-10s %-8s %-12s %s\n' \
+    "$h" "$pica" "$web" "$mqtt" "${model:-?}" "${ready:-?}"
 
   # STA_NO 割当を回収（取得できなければ空扱い）
   rc 'cat ~/id_names_config.json' 2>/dev/null > "$TMP/$h.json" || printf '{}' > "$TMP/$h.json"

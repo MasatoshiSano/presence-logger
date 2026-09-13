@@ -47,3 +47,7 @@ def test_legacy_child_config_files_is_removed():
     """旧名が残っていると、取り残された参照が黙って機体固有設定を配布し得る。"""
     proc = run_bash(f'set -u; {SOURCE}; echo "$CHILD_CONFIG_FILES"', check=False)
     assert proc.returncode != 0
+
+
+def test_child_units_include_heartbeat_daemon():
+    assert _array("CHILD_UNITS") == ["picamera", "web_server", "child-csv-to-mqtt"]
