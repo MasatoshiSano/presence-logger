@@ -44,7 +44,7 @@ CHILD_DEVICE_OWNED_FILES=(
 
 # バックアップ対象。配布しないファイルも退避しておく(復旧手段は維持する)。
 CHILD_ALL_CONFIG_FILES=("${CHILD_SHARED_CONFIG_FILES[@]}" "${CHILD_DEVICE_OWNED_FILES[@]}")
-CHILD_UNITS=(picamera web_server)
+CHILD_UNITS=(picamera web_server child-csv-to-mqtt)
 
 # ---- ログ -------------------------------------------------------------------
 _c() { printf '\033[%sm' "$1"; }   # color helper
@@ -113,6 +113,7 @@ child_restart_units() {
   # 「起動しない不良リリースが載ったまま子が壊れて残る」状態になる。
   # 戻り値で失敗を伝え、分岐は呼び出し側に任せる。
   for u in "${units[@]}"; do
+    rsudo "systemctl enable $u.service" || { warn "enable $u 失敗"; return 1; }
     rsudo "systemctl restart $u.service" || { warn "restart $u 失敗"; return 1; }
   done
   return 0

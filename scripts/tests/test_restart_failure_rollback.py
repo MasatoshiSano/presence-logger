@@ -10,7 +10,7 @@ deploy-child.sh のロールバック処理へ到達しなかった。実機で�
 """
 import os
 
-from scripts.tests.shellhelp import run_bash
+from scripts.tests.shellhelp import REPO_ROOT, run_bash
 
 SOURCE = "source scripts/lib/deploy-common.sh"
 
@@ -64,6 +64,7 @@ def test_deploy_child_attempts_rollback_when_restart_fails(fake_bin, tmp_path):
     env = dict(os.environ)
     env["HEALTH_STABLE_WAIT"] = "0"
     env["MODEL_READY_WAIT"] = "0"
+    env["REPO_DIR"] = str(REPO_ROOT)
     proc = run_bash("scripts/deploy-child.sh", env=env, check=False)
     out = proc.stdout + proc.stderr
     assert proc.returncode != 0, out
@@ -85,6 +86,7 @@ exit 0
     fake_bin("curl", 'echo "{\\"status\\": \\"ready\\"}"')
     env = dict(os.environ)
     env["HEALTH_STABLE_WAIT"] = "0"
+    env["REPO_DIR"] = str(REPO_ROOT)
     proc = run_bash("scripts/deploy-child.sh", env=env, check=False)
     out = proc.stdout + proc.stderr
     assert proc.returncode == 0, out

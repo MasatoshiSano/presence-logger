@@ -13,6 +13,7 @@ from services.bridge.src.disk_reclaim import (
 
 
 def test_keep_sent_never_stops_logging_just_drops_confirmed():
+    assert keep_sent_for_free(None) == KEEP_SENT_NORMAL
     assert keep_sent_for_free(WARN_FREE_BYTES) == KEEP_SENT_NORMAL
     assert keep_sent_for_free(WARN_FREE_BYTES - 1) == KEEP_SENT_WARN
     assert keep_sent_for_free(CRITICAL_FREE_BYTES) == KEEP_SENT_WARN
