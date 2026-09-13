@@ -1,6 +1,10 @@
 import json
 
-from services.bridge.src.mqtt_file_log import MqttFileLog, resolve_mqtt_log_path
+from services.bridge.src.mqtt_file_log import (
+    MqttFileLog,
+    filter_out_confirmed_records,
+    resolve_mqtt_log_path,
+)
 
 
 def test_write_appends_json_line(tmp_path):
@@ -64,3 +68,39 @@ def test_rotates_when_over_max_bytes(tmp_path):
     assert path.exists()
     rotated = path.with_name("child-mqtt.log.1")
     assert rotated.exists()
+
+
+def test_filter_out_confirmed_records_keeps_heartbeat():
+    hb = json.dumps({"kind": "heartbeat", "device_id": "cam01", "payload": {"uptime_s": 15}})
+    rec = json.dumps({
+        "kind": "record",
+        "device_id": "cam01",
+        "payload": {"event_id": "abc", "mk_date": "20260913083000"},
+    })
+    other = json.dumps({
+        "kind": "record",
+        "device_id": "cam01",
+        "payload": {"event_id": "keep-me"},
+    })
+    kept, dropped = filter_out_confirmed_records([hb, rec, other], {"abc"})
+    assert dropped == 1
+    kinds = [json.loads(line)["kind"] for line in kept]
+    assert kinds == ["heartbeat", "record"]
+    assert json.loads(kept[1])["payload"]["event_id"] == "keep-me"
+
+
+def test_drop_records_removes_confirmed_and_keeps_writing(tmp_path):
+    path = tmp_path / "child-mqtt.log"
+    log = MqttFileLog(str(path), max_bytes=10_000, backup_count=1)
+    log.write("heartbeat", "cam01", '{"uptime_s": 15}')
+    log.write(
+        "record",
+        "cam01",
+        json.dumps({"event_id": "abc", "mk_date": "20260913083000", "device_id": "cam01"}),
+    )
+    assert log.drop_records({"abc"}) == 1
+    rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    assert [r["kind"] for r in rows] == ["heartbeat"]
+    log.write("heartbeat", "cam01", '{"uptime_s": 30}')
+    rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    assert [r["kind"] for r in rows] == ["heartbeat", "heartbeat"]

@@ -320,6 +320,7 @@ dev イメージは `services/<name>/src` と `tests/` を **read-only bind moun
 両プロセス（detector / bridge）とも **JSON Lines** で書き出す。1 行 = 1 イベントの整形済み JSON。
 ファイルは **10 MB × 5 世代**ローテーション（プロセスあたり最大 60 MB、detector+bridge で 120 MB）。
 `child-mqtt.log` は **別スキーマ**（`ts` / `kind` / `device_id` / `payload`、10 MB × 5）。`scripts/tail-logs.sh` と下記の `*.log` 一括レシピの対象外。
+Oracle が受理した record（inbox の `status=sent`）はローカルに残す必要がないので、bridge が定期的に消す。heartbeat / 未送信 (`received`) は残し、MQTT ログの追記は止めない。空きが 1GiB を切ったら回転済み `*.log.N` も消す（今のログファイルは残す）。
 
 #### 共通フィールド（全行に必ず含まれる）
 

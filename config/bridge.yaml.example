@@ -53,6 +53,7 @@ logging:
 # heartbeat_timeout_seconds. mqtt_log_path に heartbeat/status/record を
 # JSON 1行ずつ残す（10MB×5本でローテ）。キー省略時はこのパス。空文字または
 # null なら書かない。相対パスは拒否して bridge.log に warning を出す。
+# Oracle 受理済み (inbox status=sent) の record 行は定期削除する。ログ追記は止めない。
 liveness:
   status_topic_prefix: "presence/status/"
   heartbeat_topic_prefix: "presence/heartbeat/"

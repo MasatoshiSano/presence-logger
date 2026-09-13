@@ -153,6 +153,30 @@ class InboxRepository:
         with self._conn() as c:
             return c.execute("SELECT COUNT(*) FROM inbox").fetchone()[0]
 
+    def sent_event_ids(self) -> list[str]:
+        with self._conn() as c:
+            return [
+                r[0] for r in c.execute(
+                    "SELECT event_id FROM inbox WHERE status='sent'"
+                )
+            ]
+
+    def delete_sent(self, *, keep_newest: int) -> list[str]:
+        """Drop oldest Oracle-confirmed rows. Never touches `received`."""
+        keep = max(0, int(keep_newest))
+        with self._conn() as c:
+            rows = c.execute(
+                "SELECT event_id FROM inbox WHERE status='sent' "
+                "ORDER BY COALESCE(sent_at_iso, received_at_iso) DESC"
+            ).fetchall()
+            drop = [r[0] for r in rows[keep:]]
+            if drop:
+                c.executemany(
+                    "DELETE FROM inbox WHERE event_id=?",
+                    [(i,) for i in drop],
+                )
+            return drop
+
     def ring_evict(self, *, max_rows: int) -> int:
         deleted = 0
         with self._conn() as c:

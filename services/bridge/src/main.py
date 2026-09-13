@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from services.bridge.src import config as cfg_mod
+from services.bridge.src import disk_reclaim
 from services.bridge.src.circuit_breaker import CircuitBreaker
 from services.bridge.src.inbox import InboxEvent, InboxRepository
 from services.bridge.src.liveness import LivenessTracker, device_id_from_topic
@@ -354,6 +355,21 @@ def main() -> int:    # pragma: no cover
             Path(HEALTH_FILE).touch()
             last_health = now
         if now - last_stats >= bridge_cfg["logging"]["buffer_stats_interval_seconds"]:
+            log_dir = "/var/log/presence-logger"
+            free = disk_reclaim.free_bytes(log_dir)
+            keep_sent = disk_reclaim.keep_sent_for_free(free)
+            confirmed = set(record_inbox.sent_event_ids()) | set(inbox.sent_event_ids())
+            mqtt_dropped = mqtt_file.drop_records(confirmed) if confirmed else 0
+            dropped_ids = record_inbox.delete_sent(keep_newest=keep_sent)
+            dropped_ids.extend(inbox.delete_sent(keep_newest=keep_sent))
+            rotated: list[str] = []
+            if free < disk_reclaim.WARN_FREE_BYTES:
+                rotated = disk_reclaim.unlink_rotated_logs(log_dir)
+            max_rows = int(bridge_cfg["buffer"]["max_rows"])
+            inbox_evicted = inbox.ring_evict(max_rows=max_rows)
+            rec_evicted = record_inbox.ring_evict(
+                max_rows=int(record_cfg.get("max_rows", max_rows))
+            )
             _log.info(
                 "periodic",
                 extra={
@@ -362,8 +378,23 @@ def main() -> int:    # pragma: no cover
                     "ntp_synced": time_watcher.is_synced,
                     "inbox_count": inbox.count(),
                     "record_inbox_count": record_inbox.count(),
+                    "free_bytes": free,
                 },
             )
+            if dropped_ids or mqtt_dropped or rotated or inbox_evicted or rec_evicted:
+                _log.info(
+                    "oracle_confirmed_reclaimed",
+                    extra={
+                        "event": "oracle_confirmed_reclaimed",
+                        "keep_sent": keep_sent,
+                        "sent_deleted": len(dropped_ids),
+                        "mqtt_records_dropped": mqtt_dropped,
+                        "rotated_unlinked": rotated,
+                        "inbox_evicted": inbox_evicted,
+                        "record_inbox_evicted": rec_evicted,
+                        "free_bytes": free,
+                    },
+                )
             last_stats = now
         if now - last_liveness >= liveness_report_interval:
             devices = liveness.snapshot(now=now)
