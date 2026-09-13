@@ -46,3 +46,7 @@ buffer:
 logging:
   level: "INFO"
   buffer_stats_interval_seconds: 60
+
+# Child MQTT archive (heartbeat/status/record). Empty string disables.
+liveness:
+  mqtt_log_path: "/var/log/presence-logger/child-mqtt.log"

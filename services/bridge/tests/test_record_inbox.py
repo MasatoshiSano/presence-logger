@@ -80,6 +80,23 @@ def test_mark_failed_stops_it_being_due(tmp_path):
     assert r.count() == 1  # 残る(消えない)。ただし二度と送信対象にならない
 
 
+def test_delete_sent_keeps_received_and_newest(tmp_path):
+    r = _repo(tmp_path)
+    r.insert_received(_evt(event_id="open"))
+    for i, eid in enumerate(["old", "mid", "new"]):
+        r.insert_received(_evt(event_id=eid, received_at_iso=f"2026-06-10T17:3{i}:00+09:00"))
+        r.mark_sent(
+            eid,
+            mk_date_committed="20260610173000",
+            sent_at_iso=f"2026-06-10T18:0{i}:00+09:00",
+        )
+    dropped = r.delete_sent(keep_newest=1)
+    assert set(dropped) == {"old", "mid"}
+    remaining = {e.event_id for e in r.iter_received_due(now_iso="2026-06-10T19:00:00+09:00")}
+    assert remaining == {"open"}
+    assert r.count() == 2  # received + newest sent
+
+
 def test_migration_adds_failed_status_to_pre_existing_db(tmp_path):
     """failed列が無い旧スキーマのDB(本番相当)に対しても init() が安全に移行できる。"""
     import sqlite3

@@ -306,6 +306,8 @@ dev イメージは `services/<name>/src` と `tests/` を **read-only bind moun
 |---|---|---|
 | detector ログ | `/var/log/presence-logger/detector.log` | カメラ・推論・FSM 遷移・MQTT publish・ACK 受信（JSON Lines、10 MB × 5 ローテーション） |
 | bridge ログ | `/var/log/presence-logger/bridge.log` | MQTT 受信・SSID 解決・Oracle MERGE・ACK 送信・SNTP 状態（同上） |
+| child MQTT ログ | `/var/log/presence-logger/child-mqtt.log` | 子Pi の heartbeat / status / record（JSON Lines、10 MB × 5）。パイプライン監視を閉じていても残る |
+| パイプライン監視 MQTT | `~/projects/presence-logger/logs/pipeline-mqtt.log` | 監視TUI起動中の `presence/#`（`PIPELINE_MQTT_LOG` で変更可） |
 | mosquitto ログ | `docker compose logs mosquitto`（永続化なし） | broker 接続・切断 |
 | detector バッファ | `/var/lib/presence-logger/detector_buf.db` | 未 ACK イベント（永続化、再起動後リカバリ用） |
 | bridge inbox | `/var/lib/presence-logger/bridge_buf.db` | 受信済み・未送信イベント |
@@ -316,7 +318,9 @@ dev イメージは `services/<name>/src` と `tests/` を **read-only bind moun
 ### ログ仕様（共通フォーマット）
 
 両プロセス（detector / bridge）とも **JSON Lines** で書き出す。1 行 = 1 イベントの整形済み JSON。
-ファイルは **10 MB × 5 世代**ローテーション（プロセスあたり最大 60 MB、全体 120 MB 上限）。
+ファイルは **10 MB × 5 世代**ローテーション（プロセスあたり最大 60 MB、detector+bridge で 120 MB）。
+`child-mqtt.log` は **別スキーマ**（`ts` / `kind` / `device_id` / `payload`、10 MB × 5）。`scripts/tail-logs.sh` と下記の `*.log` 一括レシピの対象外。
+Oracle が受理した record（inbox の `status=sent`）はローカルに残す必要がないので、bridge が定期的に消す。heartbeat / 未送信 (`received`) は残し、MQTT ログの追記は止めない。空きが 1GiB を切ったら回転済み `*.log.N` も消す（今のログファイルは残す）。
 
 #### 共通フィールド（全行に必ず含まれる）
 
@@ -392,7 +396,10 @@ dev イメージは `services/<name>/src` と `tests/` を **read-only bind moun
 ```bash
 # 特定の event_id の「一生」を時系列で追う（detector → bridge → ACK）
 EID="e6ed87d4-1a92-4aa6-bbb2-129dc66c327b"
-sudo cat /var/log/presence-logger/*.log | jq -c "select(.event_id == \"$EID\")" | jq -s 'sort_by(.ts)'
+sudo cat /var/log/presence-logger/bridge.log /var/log/presence-logger/detector.log | jq -c "select(.event_id == \"$EID\")" | jq -s 'sort_by(.ts)'
+
+# 子Pi の heartbeat / status / record（監視TUIを閉じても残る）
+sudo tail -n 200 /var/log/presence-logger/child-mqtt.log | jq -c '{ts, kind, device_id, payload}'
 
 # 直近 5 分の ENTER / EXIT 確定だけ抽出
 sudo tail -n 5000 /var/log/presence-logger/detector.log | jq -c 'select(.event == "transition")'
@@ -404,7 +411,7 @@ sudo cat /var/log/presence-logger/bridge.log | jq -c 'select(.event == "merge_co
 sudo cat /var/log/presence-logger/bridge.log | jq -c 'select(.event | startswith("circuit_"))'
 
 # ERROR / CRITICAL だけ抽出
-sudo cat /var/log/presence-logger/*.log | jq -c 'select(.level | IN("ERROR","CRITICAL","FATAL"))'
+sudo cat /var/log/presence-logger/bridge.log /var/log/presence-logger/detector.log | jq -c 'select(.level | IN("ERROR","CRITICAL","FATAL"))'
 
 # 60 秒統計の inbox_count 推移を CSV 化（ダッシュボード投入用）
 sudo cat /var/log/presence-logger/bridge.log | jq -r 'select(.event == "periodic") | [.ts, .inbox_count, .ntp_synced, .current_ssid] | @csv'
@@ -426,7 +433,7 @@ sudo cat /var/log/presence-logger/detector.log | jq -r 'select(.event == "ack_re
 bash scripts/tail-logs.sh
 
 # 特定 event_id の一生を時系列で追う
-sudo grep '<event_id>' /var/log/presence-logger/*.log | jq -s 'sort_by(.ts)'
+sudo grep '<event_id>' /var/log/presence-logger/bridge.log /var/log/presence-logger/detector.log | jq -s 'sort_by(.ts)'
 
 # bridge inbox の状態
 sudo sqlite3 /var/lib/presence-logger/bridge_buf.db 'SELECT status, COUNT(*) FROM inbox GROUP BY status;'

@@ -9,10 +9,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from services.bridge.src import config as cfg_mod
+from services.bridge.src import disk_reclaim
 from services.bridge.src.circuit_breaker import CircuitBreaker
 from services.bridge.src.inbox import InboxEvent, InboxRepository
 from services.bridge.src.liveness import LivenessTracker, device_id_from_topic
 from services.bridge.src.logging_setup import setup_logging
+from services.bridge.src.mqtt_file_log import MqttFileLog, resolve_mqtt_log_path
 from services.bridge.src.mqtt_listener import BridgeMqttClient, EventPayload
 from services.bridge.src.network_watcher import NetworkWatcher
 from services.bridge.src.oracle_client import (
@@ -202,26 +204,42 @@ def main() -> int:    # pragma: no cover
     hb_timeout = liv_cfg.get("heartbeat_timeout_seconds", 60)
     liveness_report_interval = liv_cfg.get("report_interval_seconds", 30)
     liveness = LivenessTracker(heartbeat_timeout_seconds=hb_timeout)
+    mqtt_file = MqttFileLog(resolve_mqtt_log_path(liv_cfg))
+    if mqtt_file.enabled:
+        _log.info(
+            "mqtt_file_log_enabled",
+            extra={"event": "mqtt_file_log_enabled", "path": str(mqtt_file.path)},
+        )
+    elif mqtt_file.path:
+        _log.warning(
+            "mqtt_file_log_disabled",
+            extra={
+                "event": "mqtt_file_log_disabled",
+                "path": str(mqtt_file.path),
+                "error": {"message": mqtt_file.error or "unknown"},
+            },
+        )
 
     def _on_status(topic: str, payload: bytes) -> None:
+        text = payload.decode("utf-8", errors="replace").strip()
         dev = device_id_from_topic(topic, status_prefix)
         if dev:
-            liveness.record_status(
-                dev, payload.decode("utf-8", errors="replace").strip(),
-                now=time.monotonic(),
-            )
+            liveness.record_status(dev, text, now=time.monotonic())
+            mqtt_file.write("status", dev, text)
 
     def _on_heartbeat(topic: str, payload: bytes) -> None:
         dev = device_id_from_topic(topic, hb_prefix)
         if not dev:
             return
+        text = payload.decode("utf-8", errors="replace")
         try:
-            data = json.loads(payload.decode("utf-8"))
+            data = json.loads(text)
             if not isinstance(data, dict):
                 data = {}
-        except (UnicodeDecodeError, json.JSONDecodeError):
+        except json.JSONDecodeError:
             data = {}
         liveness.record_heartbeat(dev, data, now=time.monotonic())
+        mqtt_file.write("heartbeat", dev, text)
 
     mqtt.subscribe_text(status_prefix + "#", _on_status)
     mqtt.subscribe_text(hb_prefix + "#", _on_heartbeat)
@@ -231,9 +249,11 @@ def main() -> int:    # pragma: no cover
     record_ack_topic = record_cfg.get("topic_ack", "presence/record/ack")
 
     def _on_record(topic: str, payload: bytes) -> None:
+        raw_text = payload.decode("utf-8", errors="replace")
         try:
             rec = parse_record_payload(payload)
         except ValueError as e:
+            mqtt_file.write("record", "", raw_text)
             _log.warning(
                 "record_parse_failed",
                 extra={
@@ -250,7 +270,7 @@ def main() -> int:    # pragma: no cover
             sta_no3=rec.sta_no3,
             t1_status=rec.t1_status,
             device_id=rec.device_id,
-            raw_payload=payload.decode("utf-8", errors="replace"),
+            raw_payload=raw_text,
             status="received",
             received_at_iso=datetime.now(UTC).isoformat(),
             sent_at_iso=None,
@@ -264,6 +284,7 @@ def main() -> int:    # pragma: no cover
             extra={"event": "record_received", "event_id": rec.event_id,
                    "device_id": rec.device_id},
         )
+        mqtt_file.write("record", rec.device_id or "", raw_text)
 
     mqtt.subscribe_text(record_topic, _on_record)
 
@@ -334,6 +355,21 @@ def main() -> int:    # pragma: no cover
             Path(HEALTH_FILE).touch()
             last_health = now
         if now - last_stats >= bridge_cfg["logging"]["buffer_stats_interval_seconds"]:
+            log_dir = "/var/log/presence-logger"
+            free = disk_reclaim.free_bytes(log_dir)
+            keep_sent = disk_reclaim.keep_sent_for_free(free)
+            confirmed = set(record_inbox.sent_event_ids()) | set(inbox.sent_event_ids())
+            mqtt_dropped = mqtt_file.drop_records(confirmed) if confirmed else 0
+            dropped_ids = record_inbox.delete_sent(keep_newest=keep_sent)
+            dropped_ids.extend(inbox.delete_sent(keep_newest=keep_sent))
+            rotated: list[str] = []
+            if free < disk_reclaim.WARN_FREE_BYTES:
+                rotated = disk_reclaim.unlink_rotated_logs(log_dir)
+            max_rows = int(bridge_cfg["buffer"]["max_rows"])
+            inbox_evicted = inbox.ring_evict(max_rows=max_rows)
+            rec_evicted = record_inbox.ring_evict(
+                max_rows=int(record_cfg.get("max_rows", max_rows))
+            )
             _log.info(
                 "periodic",
                 extra={
@@ -342,8 +378,23 @@ def main() -> int:    # pragma: no cover
                     "ntp_synced": time_watcher.is_synced,
                     "inbox_count": inbox.count(),
                     "record_inbox_count": record_inbox.count(),
+                    "free_bytes": free,
                 },
             )
+            if dropped_ids or mqtt_dropped or rotated or inbox_evicted or rec_evicted:
+                _log.info(
+                    "oracle_confirmed_reclaimed",
+                    extra={
+                        "event": "oracle_confirmed_reclaimed",
+                        "keep_sent": keep_sent,
+                        "sent_deleted": len(dropped_ids),
+                        "mqtt_records_dropped": mqtt_dropped,
+                        "rotated_unlinked": rotated,
+                        "inbox_evicted": inbox_evicted,
+                        "record_inbox_evicted": rec_evicted,
+                        "free_bytes": free,
+                    },
+                )
             last_stats = now
         if now - last_liveness >= liveness_report_interval:
             devices = liveness.snapshot(now=now)

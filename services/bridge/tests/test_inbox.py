@@ -123,3 +123,22 @@ def test_ring_evict_drops_sent_before_received(tmp_path: Path):
     assert deleted == 2
     remaining = {r.event_id for r in repo.all_rows()}
     assert remaining == {"e2", "e3"}
+
+
+def test_delete_sent_keeps_received(tmp_path: Path):
+    repo = InboxRepository(tmp_path / "x.db")
+    repo.init()
+    base = datetime(2026, 4, 27, 12, 0, 0, tzinfo=UTC)
+    for i, eid in enumerate(["old", "mid", "new", "open"]):
+        repo.insert_received(_evt(eid, received_at=base + timedelta(seconds=i)))
+        if eid != "open":
+            repo.mark_sent(
+                eid,
+                mk_date_committed="x",
+                profile_at_send="p",
+                sent_at_iso=(base + timedelta(minutes=i)).isoformat(),
+            )
+    dropped = repo.delete_sent(keep_newest=1)
+    assert set(dropped) == {"old", "mid"}
+    remaining = {r.event_id for r in repo.all_rows()}
+    assert remaining == {"new", "open"}
