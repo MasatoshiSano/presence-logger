@@ -11,6 +11,15 @@ from datetime import datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
+DEFAULT_MQTT_LOG_PATH = "/var/log/presence-logger/child-mqtt.log"
+
+
+def resolve_mqtt_log_path(liv_cfg: dict) -> str:
+    """Missing key → default path. Explicit empty/null → disable."""
+    if "mqtt_log_path" not in liv_cfg:
+        return DEFAULT_MQTT_LOG_PATH
+    return str(liv_cfg.get("mqtt_log_path") or "")
+
 
 class MqttFileLog:
     def __init__(
@@ -21,8 +30,13 @@ class MqttFileLog:
         backup_count: int = 5,
     ):
         self.path = Path(path) if path else None
+        self.enabled = False
+        self.error: str | None = None
         self._log: logging.Logger | None = None
         if not self.path:
+            return
+        if not self.path.is_absolute():
+            self.error = "mqtt_log_path must be an absolute path"
             return
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -39,18 +53,18 @@ class MqttFileLog:
                 handler.setFormatter(logging.Formatter("%(message)s"))
                 logger.addHandler(handler)
             self._log = logger
-        except OSError:
+            self.enabled = True
+        except OSError as e:
+            self.error = str(e)
             self._log = None
 
     def write(self, kind: str, device_id: str, payload: str) -> None:
         if self._log is None:
             return
-        ts = datetime.now().astimezone().isoformat(timespec="seconds")
-        body: object
+        ts = datetime.now().astimezone().isoformat(timespec="milliseconds")
         text = (payload or "").strip()
         try:
-            parsed = json.loads(text) if text else ""
-            body = parsed
+            body: object = json.loads(text) if text else ""
         except (json.JSONDecodeError, UnicodeDecodeError):
             body = text
         line = json.dumps(

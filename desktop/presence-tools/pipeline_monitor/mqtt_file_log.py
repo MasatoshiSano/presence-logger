@@ -1,4 +1,4 @@
-"""②MQTT生ログをディスクへ残す（監視を閉じても追えるように）。"""
+"""監視TUI起動中の MQTT 生ログをディスクへ残す（閉じたあとは追記しない）。"""
 from __future__ import annotations
 
 import json
@@ -17,8 +17,13 @@ class MqttFileLog:
         backup_count: int = 5,
     ):
         self.path = Path(path) if path else None
+        self.enabled = False
+        self.error: str | None = None
         self._log: logging.Logger | None = None
         if not self.path:
+            return
+        if not self.path.is_absolute():
+            self.error = "mqtt_log_path must be an absolute path"
             return
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -35,18 +40,18 @@ class MqttFileLog:
                 handler.setFormatter(logging.Formatter("%(message)s"))
                 logger.addHandler(handler)
             self._log = logger
-        except OSError:
+            self.enabled = True
+        except OSError as e:
+            self.error = str(e)
             self._log = None
 
     def write(self, kind: str, device_id: str, payload: str) -> None:
         if self._log is None:
             return
-        ts = datetime.now().astimezone().isoformat(timespec="seconds")
-        body: object
+        ts = datetime.now().astimezone().isoformat(timespec="milliseconds")
         text = (payload or "").strip()
         try:
-            parsed = json.loads(text) if text else ""
-            body = parsed
+            body: object = json.loads(text) if text else ""
         except (json.JSONDecodeError, UnicodeDecodeError):
             body = text
         line = json.dumps(

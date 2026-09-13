@@ -13,7 +13,7 @@ from services.bridge.src.circuit_breaker import CircuitBreaker
 from services.bridge.src.inbox import InboxEvent, InboxRepository
 from services.bridge.src.liveness import LivenessTracker, device_id_from_topic
 from services.bridge.src.logging_setup import setup_logging
-from services.bridge.src.mqtt_file_log import MqttFileLog
+from services.bridge.src.mqtt_file_log import MqttFileLog, resolve_mqtt_log_path
 from services.bridge.src.mqtt_listener import BridgeMqttClient, EventPayload
 from services.bridge.src.network_watcher import NetworkWatcher
 from services.bridge.src.oracle_client import (
@@ -203,9 +203,21 @@ def main() -> int:    # pragma: no cover
     hb_timeout = liv_cfg.get("heartbeat_timeout_seconds", 60)
     liveness_report_interval = liv_cfg.get("report_interval_seconds", 30)
     liveness = LivenessTracker(heartbeat_timeout_seconds=hb_timeout)
-    mqtt_file = MqttFileLog(
-        liv_cfg.get("mqtt_log_path", "/var/log/presence-logger/child-mqtt.log")
-    )
+    mqtt_file = MqttFileLog(resolve_mqtt_log_path(liv_cfg))
+    if mqtt_file.enabled:
+        _log.info(
+            "mqtt_file_log_enabled",
+            extra={"event": "mqtt_file_log_enabled", "path": str(mqtt_file.path)},
+        )
+    elif mqtt_file.path:
+        _log.warning(
+            "mqtt_file_log_disabled",
+            extra={
+                "event": "mqtt_file_log_disabled",
+                "path": str(mqtt_file.path),
+                "error": {"message": mqtt_file.error or "unknown"},
+            },
+        )
 
     def _on_status(topic: str, payload: bytes) -> None:
         text = payload.decode("utf-8", errors="replace").strip()
@@ -218,14 +230,15 @@ def main() -> int:    # pragma: no cover
         dev = device_id_from_topic(topic, hb_prefix)
         if not dev:
             return
+        text = payload.decode("utf-8", errors="replace")
         try:
-            data = json.loads(payload.decode("utf-8"))
+            data = json.loads(text)
             if not isinstance(data, dict):
                 data = {}
-        except (UnicodeDecodeError, json.JSONDecodeError):
+        except json.JSONDecodeError:
             data = {}
         liveness.record_heartbeat(dev, data, now=time.monotonic())
-        mqtt_file.write("heartbeat", dev, payload.decode("utf-8", errors="replace"))
+        mqtt_file.write("heartbeat", dev, text)
 
     mqtt.subscribe_text(status_prefix + "#", _on_status)
     mqtt.subscribe_text(hb_prefix + "#", _on_heartbeat)
@@ -235,9 +248,11 @@ def main() -> int:    # pragma: no cover
     record_ack_topic = record_cfg.get("topic_ack", "presence/record/ack")
 
     def _on_record(topic: str, payload: bytes) -> None:
+        raw_text = payload.decode("utf-8", errors="replace")
         try:
             rec = parse_record_payload(payload)
         except ValueError as e:
+            mqtt_file.write("record", "", raw_text)
             _log.warning(
                 "record_parse_failed",
                 extra={
@@ -254,7 +269,7 @@ def main() -> int:    # pragma: no cover
             sta_no3=rec.sta_no3,
             t1_status=rec.t1_status,
             device_id=rec.device_id,
-            raw_payload=payload.decode("utf-8", errors="replace"),
+            raw_payload=raw_text,
             status="received",
             received_at_iso=datetime.now(UTC).isoformat(),
             sent_at_iso=None,
@@ -268,11 +283,7 @@ def main() -> int:    # pragma: no cover
             extra={"event": "record_received", "event_id": rec.event_id,
                    "device_id": rec.device_id},
         )
-        mqtt_file.write(
-            "record",
-            rec.device_id,
-            payload.decode("utf-8", errors="replace"),
-        )
+        mqtt_file.write("record", rec.device_id or "", raw_text)
 
     mqtt.subscribe_text(record_topic, _on_record)
 

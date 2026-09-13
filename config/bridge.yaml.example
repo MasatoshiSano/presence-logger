@@ -51,7 +51,8 @@ logging:
 # "liveness" snapshot every report_interval_seconds and a "device_down" warning
 # for any device that is offline or whose heartbeat is older than
 # heartbeat_timeout_seconds. mqtt_log_path に heartbeat/status/record を
-# JSON 1行ずつ残す（10MB×5本でローテ）。空なら書かない。
+# JSON 1行ずつ残す（10MB×5本でローテ）。キー省略時はこのパス。空文字または
+# null なら書かない。相対パスは拒否して bridge.log に warning を出す。
 liveness:
   status_topic_prefix: "presence/status/"
   heartbeat_topic_prefix: "presence/heartbeat/"
