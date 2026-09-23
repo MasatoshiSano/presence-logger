@@ -26,8 +26,9 @@ class RecordSenderDeps:
     breaker: CircuitBreaker
     network: NetworkWatcher
     oracle: Any           # execute_merge_for_profile(...)
-    mqtt: Any             # publish_ack(...)
+    mqtt: Any             # publish_ack(...), publish_nack(...)
     topic_ack: str | None
+    topic_nack: str | None = None
     backoff_policy: BackoffPolicy = field(
         default_factory=lambda: BackoffPolicy(initial=5.0, multiplier=3.0, cap=600.0)
     )
@@ -63,12 +64,23 @@ class RecordSender:
         run_once). A duplicate of an already-committed row only gets a fresh
         ACK when its content still matches what was committed — content drift
         under the same event_id is rejected, never re-acked. A duplicate of a
-        'received' (still pending) or 'failed' (given up) row is a no-op: the
-        existing row already owns that event_id's outcome.
+        'received' (still pending) row is a no-op: the existing row already
+        owns that event_id's outcome. A duplicate of a 'failed' (given up)
+        row re-publishes the nack — the child resending it is exactly the
+        signal that it never received (or was offline for) the original one.
         """
         existing = self._d.record_inbox.get(rec.event_id)
         if existing is None:
             self._d.record_inbox.insert_received(rec)
+            return
+        if existing.status == "failed":
+            if self._d.topic_nack and self._content_matches(existing, rec):
+                self._d.mqtt.publish_nack(
+                    self._d.topic_nack,
+                    event_id=existing.event_id,
+                    reason=existing.last_error or "unretryable",
+                    failed_at_iso=existing.failed_at_iso or "",
+                )
             return
         if existing.status != "sent":
             return
@@ -134,10 +146,18 @@ class RecordSender:
                 },
             )
         elif result.ora_code in self._d.unretryable_ora_codes:
+            failed_at_iso = now.isoformat()
+            last_error = f"ORA-{result.ora_code}: {result.error_message} (諦め)"
             self._d.record_inbox.mark_failed(
-                rec.event_id, failed_at_iso=now.isoformat(),
-                last_error=f"ORA-{result.ora_code}: {result.error_message} (諦め)",
+                rec.event_id, failed_at_iso=failed_at_iso, last_error=last_error,
             )
+            if self._d.topic_nack:
+                self._d.mqtt.publish_nack(
+                    self._d.topic_nack,
+                    event_id=rec.event_id,
+                    reason=last_error,
+                    failed_at_iso=failed_at_iso,
+                )
             _log.warning(
                 "record_giveup",
                 extra={

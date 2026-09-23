@@ -127,3 +127,29 @@ def test_publish_ack_serializes_payload_with_qos2():
             "schema_version": 1,
         }
         assert kwargs.get("qos") == 2
+
+
+def test_publish_nack_serializes_payload_with_qos2():
+    # Permanent-failure notification is a distinct wire message from the
+    # success ACK above — separate method, separate schema — so a child that
+    # doesn't understand it yet can simply not subscribe to it.
+    with patch("services.bridge.src.mqtt_listener.paho.Client") as paho_cls:
+        client = paho_cls.return_value
+        c = BridgeMqttClient(client_id="bridge-test")
+        c.connect_and_loop(host="m", port=1883)
+        c.publish_nack(
+            "presence/record/nack",
+            event_id="abc",
+            reason="ORA-00001: unique constraint violated",
+            failed_at_iso="2026-09-24T12:00:00.123+09:00",
+        )
+        client.publish.assert_called_once()
+        args, kwargs = client.publish.call_args
+        body = json.loads(args[1])
+        assert body == {
+            "event_id": "abc",
+            "reason": "ORA-00001: unique constraint violated",
+            "failed_at_iso": "2026-09-24T12:00:00.123+09:00",
+            "schema_version": 1,
+        }
+        assert kwargs.get("qos") == 2

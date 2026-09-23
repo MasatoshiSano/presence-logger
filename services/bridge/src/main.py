@@ -247,6 +247,7 @@ def main() -> int:    # pragma: no cover
     # --- child-Pi records (presence/record): fully-formed Oracle rows ---
     record_topic = record_cfg.get("topic", "presence/record")
     record_ack_topic = record_cfg.get("topic_ack", "presence/record/ack")
+    record_nack_topic = record_cfg.get("topic_nack", "presence/record/nack")
 
     def _on_record(topic: str, payload: bytes) -> None:
         raw_text = payload.decode("utf-8", errors="replace")
@@ -313,6 +314,7 @@ def main() -> int:    # pragma: no cover
         oracle=oracle_adapter,
         mqtt=mqtt,
         topic_ack=record_ack_topic,
+        topic_nack=record_nack_topic,
         backoff_policy=BackoffPolicy(
             initial=bridge_cfg["retry"]["initial_delay_seconds"],
             multiplier=bridge_cfg["retry"]["multiplier"],

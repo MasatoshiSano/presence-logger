@@ -145,6 +145,24 @@ class BridgeMqttClient:
         })
         self._client.publish(topic, body, qos=2)
 
+    def publish_nack(self, topic: str, *, event_id: str, reason: str,
+                     failed_at_iso: str) -> None:
+        """Tell a waiting child this event_id will never be ACKed.
+
+        A distinct method/topic from publish_ack (not a status field on the
+        same message) so an older child that never learned about nacks can
+        simply not subscribe to this topic and keep its current behaviour.
+        """
+        if self._client is None:
+            raise RuntimeError("mqtt client not connected")
+        body = json.dumps({
+            "event_id": event_id,
+            "reason": reason,
+            "failed_at_iso": failed_at_iso,
+            "schema_version": 1,
+        })
+        self._client.publish(topic, body, qos=2)
+
     def disconnect(self) -> None:
         if self._client is not None:
             self._client.loop_stop()
