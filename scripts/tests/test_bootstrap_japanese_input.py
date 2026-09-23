@@ -16,7 +16,8 @@ def test_package_list_covers_every_frontend():
     # 日本語入力できないという分かりにくい壊れ方をする
     out = run_bash(f'{SOURCE}; ime_packages', env=dict(os.environ)).stdout.split()
     for pkg in ("fcitx5", "fcitx5-mozc", "fcitx5-frontend-gtk3", "fcitx5-frontend-gtk4",
-                "fcitx5-frontend-qt5", "fcitx5-frontend-qt6", "fonts-noto-cjk"):
+                "fcitx5-frontend-qt5", "fcitx5-frontend-qt6", "fcitx5-config-qt",
+                "mozc-utils-gui", "fonts-noto-cjk"):
         assert pkg in out, f"{pkg} が不足"
 
 
@@ -47,3 +48,60 @@ def test_profile_does_not_reference_fcitx4():
     # 現行機の ~/.xinputrc(run_im fcitx)を写さないこと
     out = run_bash(f'{SOURCE}; ime_render_fcitx5_profile', env=dict(os.environ)).stdout
     assert "run_im" not in out
+
+
+def test_keyboard_layout_appends_when_line_absent(tmp_path):
+    """XKBLAYOUT行がない場合、追加される"""
+    kb = tmp_path / "keyboard"
+    kb.write_text('XKBMODEL="pc105"\nBACKSPACE="guess"\n', encoding="utf-8")
+    run_bash(f'{SOURCE}; ime_set_keyboard_layout "{kb}"', env=dict(os.environ))
+    content = kb.read_text(encoding="utf-8")
+    assert 'XKBLAYOUT="jp"' in content
+    assert content.count("XKBLAYOUT") == 1
+    assert 'XKBMODEL="pc105"' in content
+    assert 'BACKSPACE="guess"' in content
+
+
+def test_append_is_idempotent(tmp_path):
+    """XKBLAYOUT行がない状態で2回実行しても、1行だけ存在する"""
+    kb = tmp_path / "keyboard"
+    kb.write_text('XKBMODEL="pc105"\nBACKSPACE="guess"\n', encoding="utf-8")
+    run_bash(f'{SOURCE}; ime_set_keyboard_layout "{kb}"', env=dict(os.environ))
+    run_bash(f'{SOURCE}; ime_set_keyboard_layout "{kb}"', env=dict(os.environ))
+    content = kb.read_text(encoding="utf-8")
+    assert content.count("XKBLAYOUT") == 1
+    assert content.count('XKBLAYOUT="jp"') == 1
+
+
+def test_keyboard_model_appends_when_line_absent(tmp_path):
+    """XKBMODEL行がない場合、pc105 が追加され他行は残る"""
+    kb = tmp_path / "keyboard"
+    kb.write_text('XKBLAYOUT="jp"\nBACKSPACE="guess"\n', encoding="utf-8")
+    run_bash(f'{SOURCE}; ime_set_keyboard_layout "{kb}"', env=dict(os.environ))
+    content = kb.read_text(encoding="utf-8")
+    assert 'XKBMODEL="pc105"' in content
+    assert content.count("XKBMODEL") == 1
+    assert 'XKBLAYOUT="jp"' in content
+    assert 'BACKSPACE="guess"' in content
+
+
+def test_keyboard_model_is_rewritten_to_pc105(tmp_path):
+    """既存の XKBMODEL を pc105 に置換し、XKBLAYOUT も jp にする"""
+    kb = tmp_path / "keyboard"
+    kb.write_text('XKBMODEL="pc104"\nXKBLAYOUT="gb"\nBACKSPACE="guess"\n', encoding="utf-8")
+    run_bash(f'{SOURCE}; ime_set_keyboard_layout "{kb}"', env=dict(os.environ))
+    content = kb.read_text(encoding="utf-8")
+    assert 'XKBMODEL="pc105"' in content
+    assert content.count("XKBMODEL") == 1
+    assert 'XKBLAYOUT="jp"' in content
+    assert 'BACKSPACE="guess"' in content
+
+
+def test_keyboard_model_rewrite_is_idempotent(tmp_path):
+    """既に pc105 なら XKBMODEL は1行のまま"""
+    kb = tmp_path / "keyboard"
+    kb.write_text('XKBMODEL="pc105"\nXKBLAYOUT="jp"\n', encoding="utf-8")
+    run_bash(f'{SOURCE}; ime_set_keyboard_layout "{kb}"', env=dict(os.environ))
+    content = kb.read_text(encoding="utf-8")
+    assert content.count("XKBMODEL") == 1
+    assert content.count('XKBMODEL="pc105"') == 1

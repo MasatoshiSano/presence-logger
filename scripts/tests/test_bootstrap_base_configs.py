@@ -16,7 +16,10 @@ def test_base_packages_include_compose_plugin():
 
 def test_hostname_rewrite_does_not_break_hyphenated_child_names(tmp_path):
     hosts = tmp_path / "hosts"
-    hosts.write_text("127.0.0.1\tlocalhost\n127.0.1.1\traspberrypi\n10.0.0.2\tpizero2w-2\n", encoding="utf-8")
+    hosts.write_text(
+        "127.0.0.1\tlocalhost\n127.0.1.1\traspberrypi\n10.0.0.2\tpizero2w-2\n",
+        encoding="utf-8",
+    )
     hn = tmp_path / "hostname"
     hn.write_text("raspberrypi\n", encoding="utf-8")
     run_bash(
@@ -39,7 +42,7 @@ def test_profiles_yaml_has_no_station_block():
         "SNTP_SERVERS=133.141.247.101 ORACLE_CLIENT_MODE=jdbc ORACLE_AUTH_MODE=basic "
         "ORACLE_HOST=10.166.5.93 ORACLE_PORT=1521 ORACLE_SERVICE=HHC001 "
         "ORACLE_USER=ZHH001 ORACLE_TABLE=HF1RCM01 ORACLE_PASSWORD_VAR=ORACLE_PASSWORD_HHC "
-        "UPCMPFLG=1 UNKNOWN_SSID_POLICY=drop configs_render_profiles",
+        "UPCMPFLG=1 UNKNOWN_SSID_POLICY=drop configs_render_profiles_yaml",
         env=dict(os.environ),
     ).stdout
     assert "station:" not in out

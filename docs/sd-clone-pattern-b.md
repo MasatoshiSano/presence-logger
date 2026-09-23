@@ -64,6 +64,7 @@
 | 13 | `/etc/presence-logger/secrets.env` | **同一拠点ならそのままが正しい**（`WIFI_AP_PSK` が違うと子が繋げない）。別拠点なら全面差し替え | 用途次第 |
 | 14 | PARTUUID（`dc29b882-01` / `-02`） | `dd` クローンだと同一。別マシンで使う限り実害はないが、両方のカードを1台に挿すと曖昧になる | 低 |
 | 15 | デスクトップ資産（`WiFi切替` 等の `/home/pi` 前提パス） | ユーザー名が同じなら実害なし | 低 |
+| 16 | `~/projects/presence-logger/site.env` | **機体固有値が全部入っている**（ホスト名・固定IP・STA_NO・AP_SSID）。YAML / hostname だけ直してこれを残すと、次の `bootstrap-hub.sh 40` で**旧値に戻る** | **致命的** |
 
 ### #7 について — どこまで危険か
 
@@ -197,6 +198,33 @@ sudo rm -f $ROOT/home/pi/projects/presence-logger/fleet/known_macs.json
 ```bash
 # 作り直す場合のみ
 sudo rm -f $ROOT/home/pi/.ssh/id_ed25519 $ROOT/home/pi/.ssh/id_ed25519.pub
+```
+
+### 3.10 `site.env`（#16）
+
+クローンでは `site.env` も複製される。§3.1〜3.6 で直したホスト名・固定IP・STA_NO と
+食い違うと、次に `bootstrap-hub.sh 40` を流した瞬間に旧値へ戻る。
+
+```bash
+sudo nano $ROOT/home/pi/projects/presence-logger/site.env
+```
+
+少なくとも次を新機用に書き換える（値の決め方は [NEW-HUB-SETUP.md §3.1](NEW-HUB-SETUP.md)）。
+パスワード類はここに書かない（`/etc/presence-logger/secrets.env` のみ）。
+
+| 変数 | クローン後にやること |
+|---|---|
+| `HUB_HOSTNAME` | §3.1 と同じ新しいホスト名 |
+| `FACTORY_IP` | §3.3 と同じ新機の固定IP |
+| `PARENT_STA_NO1-3` | §3.6 と同じ、他機・全子Piと重複しない値 |
+| `AP_SSID` / `AP_GW_IP` | 引っ越しなら現行機と同じ。増設なら別の値 |
+| `HUB_MODE` | ハブなら `1` のまま |
+
+起動後に検証する:
+
+```bash
+cd ~/projects/presence-logger
+bash -c 'source scripts/lib/site-env.sh; site_env_require && echo "✅ site.env は妥当です"'
 ```
 
 ---

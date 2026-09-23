@@ -8,35 +8,54 @@
 # PSK はこのファイルには書かない。実行時に root で secrets.env から読む。
 set -uo pipefail
 
-# root で実行（nmcli と secrets.env(0600) の読み取りに必要）。
-# pi で起動されたら sudo で同じ引数のまま再実行する（パスワードを聞かれる）。
-if [[ $EUID -ne 0 ]]; then
-    exec sudo bash "$0" "$@"
-fi
-
+# 定数（site.env で上書きされうる値は main で再設定する）
 HOLD=0
-[[ "${1:-}" == "--hold" ]] && HOLD=1   # デスクトップ起動時に最後で一時停止する
-
-PROFILE_NAME="${PROFILE_NAME:-HIME-H-REAP}"          # = profiles.yaml のキー = 実SSID
 PROFILES_YAML="${PROFILES_YAML:-/etc/presence-logger/profiles.yaml}"
 SECRETS_ENV="${SECRETS_ENV:-/etc/presence-logger/secrets.env}"
 CONN_NAME="${CONN_NAME:-HIME-H-REAP}"                # nmcli 接続名（liveの "-live" とは別）
 IFNAME="${IFNAME:-wlan0}"                             # 内蔵WiFi（許可済みMAC）に固定
-
-# dual-WiFi: 工場宛(Oracle/DNS/NTP)のサブネットだけ wlan0 経由にする。
-# デフォルト経路とインターネットDNSはドングル(wlan1)側に残すため、ここでは
-# 工場GWをデフォルトにせず、下記サブネットだけ個別ルートにする。
-# 別拠点ではその工場の Oracle/DNS/NTP が属するサブネットに差し替える。
-#   Oracle 10.166.5.93 -> 10.166.5.0/24 / 工場DNS 10.166.1.x -> 10.166.1.0/24
-#   工場NTP 133.141.247.101 -> /32（wlan0からのみ到達）
-FACTORY_SUBNETS="${FACTORY_SUBNETS:-10.166.5.0/24 10.166.1.0/24 133.141.247.101/32}"
+HUB_MODE="${HUB_MODE:-0}"
 
 say(){ printf '%s\n' "$*"; }
 finish(){ [[ "$HOLD" == 1 ]] && { echo; read -rp 'Enterキーで閉じる... ' _; }; exit "${1:-0}"; }
 
-# --- profiles.yaml + secrets.env から接続情報を取得（PSKは画面に出さない）---
-declare -A PCFG
-raw="$(python3 - "$PROFILES_YAML" "$PROFILE_NAME" "$SECRETS_ENV" <<'PY'
+detector_start() {
+    [ "$HUB_MODE" = "1" ] && { say "■ ハブ構成のため検知(detector)は起動しません"; return 0; }
+    say "    検知を開始します（detector 起動中...）"
+    docker start presence-detector >/dev/null 2>&1 \
+        || docker compose --project-directory /home/pi/projects/presence-logger up -d detector >/dev/null 2>&1 \
+        || say "    ⚠ detector の起動に失敗（docker を確認してください）"
+}
+
+main() {
+    # root で実行（nmcli と secrets.env(0600) の読み取りに必要）。
+    # pi で起動されたら sudo で同じ引数のまま再実行する（パスワードを聞かれる）。
+    if [[ $EUID -ne 0 ]]; then
+        exec sudo bash "$0" "$@"
+    fi
+
+    [[ "${1:-}" == "--hold" ]] && HOLD=1   # デスクトップ起動時に最後で一時停止する
+
+    # site.env があれば読む(HUB_MODE / HOME_SSID / PROFILE_NAME 等)。
+    # 無い機体でも従来どおり動くよう、失敗は無視する。
+    _SITE_ENV="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/site.env"
+    # shellcheck disable=SC1090
+    [ -f "$_SITE_ENV" ] && { set -a; source "$_SITE_ENV"; set +a; }
+    HUB_MODE="${HUB_MODE:-0}"
+
+    PROFILE_NAME="${PROFILE_NAME:-${FACTORY_SSID:-HIME-H-REAP}}"  # = profiles.yaml のキー = 実SSID
+
+    # dual-WiFi: 工場宛(Oracle/DNS/NTP)のサブネットだけ wlan0 経由にする。
+    # デフォルト経路とインターネットDNSはドングル(wlan1)側に残すため、ここでは
+    # 工場GWをデフォルトにせず、下記サブネットだけ個別ルートにする。
+    # 別拠点ではその工場の Oracle/DNS/NTP が属するサブネットに差し替える。
+    #   Oracle 10.166.5.93 -> 10.166.5.0/24 / 工場DNS 10.166.1.x -> 10.166.1.0/24
+    #   工場NTP 133.141.247.101 -> /32（wlan0からのみ到達）
+    FACTORY_SUBNETS="${FACTORY_SUBNETS:-10.166.5.0/24 10.166.1.0/24 133.141.247.101/32}"
+
+    # --- profiles.yaml + secrets.env から接続情報を取得（PSKは画面に出さない）---
+    declare -A PCFG
+    raw="$(python3 - "$PROFILES_YAML" "$PROFILE_NAME" "$SECRETS_ENV" <<'PY'
 import os, sys, yaml, re
 profiles_path, name, secrets_path = sys.argv[1], sys.argv[2], sys.argv[3]
 if os.path.isfile(secrets_path):
@@ -65,119 +84,129 @@ emit("ip", s.get("address", ""))
 emit("gw", s.get("gateway", ""))
 emit("dns", " ".join(s.get("dns") or []))
 PY
-)" || { say "FAIL: profiles.yaml を読めませんでした"; finish 1; }
-eval "$raw"
+    )" || { say "FAIL: profiles.yaml を読めませんでした"; finish 1; }
+    eval "$raw"
 
-[[ -n "${PCFG[psk]:-}" ]] || { say "FAIL: WIFI_PSK_HIMEREAP が secrets.env にありません"; finish 1; }
-[[ -n "${PCFG[ip]:-}"  ]] || { say "FAIL: 静的IPが profiles.yaml にありません"; finish 1; }
+    [[ -n "${PCFG[psk]:-}" ]] || { say "FAIL: WIFI_PSK_HIMEREAP が secrets.env にありません"; finish 1; }
+    [[ -n "${PCFG[ip]:-}"  ]] || { say "FAIL: 静的IPが profiles.yaml にありません"; finish 1; }
 
-# --- 失敗時に戻れるよう、今の接続を覚えておく ---
-PREV="$(nmcli -t -f NAME connection show --active 2>/dev/null | head -1)"
-say "現在の接続: ${PREV:-(なし)}"
-say "→ $PROFILE_NAME に切り替えます（繋ぎっぱなし）"
-say ""
+    # --- 失敗時に戻れるよう、今の接続を覚えておく ---
+    PREV="$(nmcli -t -f NAME connection show --active 2>/dev/null | head -1)"
+    say "現在の接続: ${PREV:-(なし)}"
+    say "→ $PROFILE_NAME に切り替えます（繋ぎっぱなし）"
+    say ""
 
-# --- 規制ドメインを JP に（隠しSSIDのチャンネル用。起動時は 00 に戻るため毎回設定）---
-iw reg set JP 2>/dev/null || true
+    # --- 規制ドメインを JP に（隠しSSIDのチャンネル用。起動時は 00 に戻るため毎回設定）---
+    iw reg set JP 2>/dev/null || true
 
-# --- 永続 nmcli プロファイルを作り直す（autoconnect no）---
-if nmcli -t -f NAME connection show | grep -Fxq "$CONN_NAME"; then
-    nmcli connection delete "$CONN_NAME" >/dev/null 2>&1 || true
-fi
-# dual-WiFi 用の個別ルート文字列を組み立てる（"<subnet> <gw>, ..."）。
-ROUTES=""
-for _net in $FACTORY_SUBNETS; do
-    ROUTES="${ROUTES:+$ROUTES, }$_net ${PCFG[gw]}"
-done
-
-nmcli connection add type wifi con-name "$CONN_NAME" ifname "$IFNAME" \
-    ssid "$PROFILE_NAME" \
-    802-11-wireless.hidden "${PCFG[hidden]}" \
-    802-11-wireless-security.key-mgmt wpa-psk \
-    802-11-wireless-security.psk "${PCFG[psk]}" \
-    ipv4.method manual \
-    ipv4.addresses "${PCFG[ip]}" \
-    ipv4.gateway "" \
-    ipv4.never-default yes \
-    ipv4.routes "$ROUTES" \
-    ipv4.dns "" \
-    ipv4.ignore-auto-dns yes \
-    ipv6.method disabled \
-    connection.autoconnect no >/dev/null \
-    || { say "FAIL: nmcli 接続の作成に失敗"; finish 1; }
-
-# --- 接続（隠しSSID＋5GHzはスキャン/associationが遅いので長めに待つ）---
-say "接続中...（隠しSSID/5GHz のため最大45秒）"
-nmcli --wait 45 connection up "$CONN_NAME" >/dev/null 2>&1 || true
-
-# up がタイムアウトを返しても直後に association 完了することがあるため、実状態を
-# 最大20秒ポーリングする。dual-WiFi では複数SSIDが同時にactiveなので「先頭の
-# アクティブSSID」では誤判定する → この接続(CONN_NAME)自身がactiveかで判定する。
-connected="no"
-for _i in $(seq 1 20); do
-    if nmcli -t -f NAME connection show --active 2>/dev/null | grep -Fxq "$CONN_NAME"; then
-        connected="yes"; break
+    # --- 永続 nmcli プロファイルを作り直す（autoconnect no）---
+    if nmcli -t -f NAME connection show | grep -Fxq "$CONN_NAME"; then
+        nmcli connection delete "$CONN_NAME" >/dev/null 2>&1 || true
     fi
-    sleep 1
-done
+    # dual-WiFi 用の個別ルート文字列を組み立てる（"<subnet> <gw>, ..."）。
+    ROUTES=""
+    for _net in $FACTORY_SUBNETS; do
+        ROUTES="${ROUTES:+$ROUTES, }$_net ${PCFG[gw]}"
+    done
 
-if [[ "$connected" == "yes" ]]; then
-        # まず時刻同期（工場NTP 133.141.247.101 へ即時同期させ、最大15秒待つ）
-        say "    時刻同期中（NTP 133.141.247.101）..."
-        systemctl restart systemd-timesyncd 2>/dev/null || true
-        synced="no"
-        for _i in $(seq 1 15); do
-            [[ "$(timedatectl show -p NTPSynchronized --value 2>/dev/null)" == "yes" ]] && { synced="yes"; break; }
-            sleep 1
-        done
-        if [[ "$synced" == "yes" ]]; then
-            say "    ✅ 時刻同期 完了（$(date '+%Y-%m-%d %H:%M:%S')）"
-        else
-            say "    ⚠ 時刻同期はまだ（背後で継続。記録は後で自動補正されます）"
+    nmcli connection add type wifi con-name "$CONN_NAME" ifname "$IFNAME" \
+        ssid "$PROFILE_NAME" \
+        802-11-wireless.hidden "${PCFG[hidden]}" \
+        802-11-wireless-security.key-mgmt wpa-psk \
+        802-11-wireless-security.psk "${PCFG[psk]}" \
+        ipv4.method manual \
+        ipv4.addresses "${PCFG[ip]}" \
+        ipv4.gateway "" \
+        ipv4.never-default yes \
+        ipv4.routes "$ROUTES" \
+        ipv4.dns "" \
+        ipv4.ignore-auto-dns yes \
+        ipv6.method disabled \
+        connection.autoconnect no >/dev/null \
+        || { say "FAIL: nmcli 接続の作成に失敗"; finish 1; }
+
+    # --- 接続（隠しSSID＋5GHzはスキャン/associationが遅いので長めに待つ）---
+    say "接続中...（隠しSSID/5GHz のため最大45秒）"
+    nmcli --wait 45 connection up "$CONN_NAME" >/dev/null 2>&1 || true
+
+    # up がタイムアウトを返しても直後に association 完了することがあるため、実状態を
+    # 最大20秒ポーリングする。dual-WiFi では複数SSIDが同時にactiveなので「先頭の
+    # アクティブSSID」では誤判定する → この接続(CONN_NAME)自身がactiveかで判定する。
+    connected="no"
+    for _i in $(seq 1 20); do
+        if nmcli -t -f NAME connection show --active 2>/dev/null | grep -Fxq "$CONN_NAME"; then
+            connected="yes"; break
         fi
-        # 子ラズパイ用の独自WiFi(AP)を起動し、子PiのMQTT書き込みを受けられるようにする
-        PROJ="/home/pi/projects/presence-logger"
-        say "    子Pi用 AP(presence-hub) を起動中..."
-        if nmcli connection up presence-hub-ap >/dev/null 2>&1; then
-            say "    ✅ AP presence-hub 起動（子Pi=10.42.0.x / このPi=10.42.0.1）"
-            # AP(10.42.0.1)が上がってから、子Pi向けに mosquitto を公開（hub override）
-            if docker compose --project-directory "$PROJ" \
-                    -f "$PROJ/docker-compose.yml" -f "$PROJ/docker-compose.hub.yml" \
-                    up -d mosquitto >/dev/null 2>&1; then
-                say "    ✅ MQTT を子Piへ公開（10.42.0.1:1883）→ 子Pi書き込みは bridge が HHC001 へ送信"
+        sleep 1
+    done
+
+    if [[ "$connected" == "yes" ]]; then
+            # まず時刻同期（工場NTP 133.141.247.101 へ即時同期させ、最大15秒待つ）
+            say "    時刻同期中（NTP 133.141.247.101）..."
+            systemctl restart systemd-timesyncd 2>/dev/null || true
+            synced="no"
+            for _i in $(seq 1 15); do
+                [[ "$(timedatectl show -p NTPSynchronized --value 2>/dev/null)" == "yes" ]] && { synced="yes"; break; }
+                sleep 1
+            done
+            if [[ "$synced" == "yes" ]]; then
+                say "    ✅ 時刻同期 完了（$(date '+%Y-%m-%d %H:%M:%S')）"
             else
-                say "    ⚠ mosquitto の子Pi公開に失敗（docker を確認）"
+                say "    ⚠ 時刻同期はまだ（背後で継続。記録は後で自動補正されます）"
             fi
-        else
-            say "    ⚠ AP presence-hub を起動できません（先に setup-dongle-ap.sh を実行）"
-        fi
-        # 次に検知を開始（detector コンテナ起動 = カメラ取得＋ENTER/EXIT判定）
-        say "    検知を開始します（detector 起動中...）"
-        docker start presence-detector >/dev/null 2>&1 \
-            || docker compose --project-directory /home/pi/projects/presence-logger up -d detector >/dev/null 2>&1 \
-            || say "    ⚠ detector の起動に失敗（docker を確認してください）"
-        say ""
-        say "===================================================="
-        say " ✅ HIME-H-REAP 接続＋AP起動＋時刻同期＋検知を開始しました"
-        say "    工場 : $PROFILE_NAME (wlan0)    IP : ${PCFG[ip]}"
-        say "    子Pi : presence-hub (wlan1)     IP : 10.42.0.1"
-        say "===================================================="
-        say ""
-        say " ・このPiの detector がカメラ判定 → bridge が HHC001 に記録。"
-        say " ・子ラズパイは presence-hub に接続し MQTT(10.42.0.1)へ書き込み"
-        say "   → bridge が HHC001 へ送信します。"
-        say " （カメラ起動に数秒・最初のMERGEまで最大5秒）"
-        say " 通信が一時的に切れても検知は継続し、復旧後にまとめて記録されます。"
-        say ""
-        say " ◆ 記録確認:  Desktop の「記録モニタ」"
-        say " ◆ 停止:      Desktop の「HIME-H-REAP を切断」（工場・AP・検知を停止）"
-        finish 0
-fi
+            # 子ラズパイ用の独自WiFi(AP)を起動し、子PiのMQTT書き込みを受けられるようにする
+            PROJ="/home/pi/projects/presence-logger"
+            say "    子Pi用 AP(presence-hub) を起動中..."
+            if nmcli connection up presence-hub-ap >/dev/null 2>&1; then
+                say "    ✅ AP presence-hub 起動（子Pi=10.42.0.x / このPi=10.42.0.1）"
+                # AP(10.42.0.1)が上がってから、子Pi向けに mosquitto を公開（hub override）
+                if docker compose --project-directory "$PROJ" \
+                        -f "$PROJ/docker-compose.yml" -f "$PROJ/docker-compose.hub.yml" \
+                        up -d mosquitto >/dev/null 2>&1; then
+                    say "    ✅ MQTT を子Piへ公開（10.42.0.1:1883）→ 子Pi書き込みは bridge が HHC001 へ送信"
+                else
+                    say "    ⚠ mosquitto の子Pi公開に失敗（docker を確認）"
+                fi
+            else
+                say "    ⚠ AP presence-hub を起動できません（先に setup-dongle-ap.sh を実行）"
+            fi
+            # 次に検知を開始（detector コンテナ起動 = カメラ取得＋ENTER/EXIT判定）
+            # ハブ(HUB_MODE=1)では detector_start が起動をスキップする。
+            detector_start
+            say ""
+            say "===================================================="
+            if [ "$HUB_MODE" = "1" ]; then
+                say " ✅ HIME-H-REAP 接続＋AP起動＋時刻同期を開始しました"
+            else
+                say " ✅ HIME-H-REAP 接続＋AP起動＋時刻同期＋検知を開始しました"
+            fi
+            say "    工場 : $PROFILE_NAME (wlan0)    IP : ${PCFG[ip]}"
+            say "    子Pi : presence-hub (wlan1)     IP : 10.42.0.1"
+            say "===================================================="
+            say ""
+            if [ "$HUB_MODE" = "1" ]; then
+                say " ・子ラズパイは presence-hub に接続し MQTT(10.42.0.1)へ書き込み"
+                say "   → bridge が HHC001 へ送信します。"
+            else
+                say " ・このPiの detector がカメラ判定 → bridge が HHC001 に記録。"
+                say " ・子ラズパイは presence-hub に接続し MQTT(10.42.0.1)へ書き込み"
+                say "   → bridge が HHC001 へ送信します。"
+                say " （カメラ起動に数秒・最初のMERGEまで最大5秒）"
+                say " 通信が一時的に切れても検知は継続し、復旧後にまとめて記録されます。"
+            fi
+            say ""
+            say " ◆ 記録確認:  Desktop の「記録モニタ」"
+            say " ◆ 停止:      Desktop の「HIME-H-REAP を切断」（工場・AP・検知を停止）"
+            finish 0
+    fi
 
-say ""
-say " ❌ HIME-H-REAP に繋がりませんでした（電波圏外の可能性）。"
-if [[ -n "$PREV" ]]; then
-    say "    元の接続「$PREV」に戻します..."
-    nmcli connection up "$PREV" >/dev/null 2>&1 || true
-fi
-finish 1
+    say ""
+    say " ❌ HIME-H-REAP に繋がりませんでした（電波圏外の可能性）。"
+    if [[ -n "$PREV" ]]; then
+        say "    元の接続「$PREV」に戻します..."
+        nmcli connection up "$PREV" >/dev/null 2>&1 || true
+    fi
+    finish 1
+}
+
+[[ "${BASH_SOURCE[0]}" == "$0" ]] && main "$@"

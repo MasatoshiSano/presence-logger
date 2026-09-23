@@ -21,9 +21,18 @@ EOF
 }
 
 ime_set_keyboard_layout() {
+    # XKBMODEL=pc105 / XKBLAYOUT=jp。既に正しければ skip、既存行は置換、無ければ追加
     local file="${1:-/etc/default/keyboard}"
-    grep -q '^XKBLAYOUT="jp"' "$file" && return 0
-    sed -i 's/^XKBLAYOUT=.*/XKBLAYOUT="jp"/' "$file"
+
+    if ! grep -q '^XKBMODEL="pc105"' "$file"; then
+        sed -i 's/^XKBMODEL=.*/XKBMODEL="pc105"/' "$file"
+        grep -q '^XKBMODEL="pc105"' "$file" || echo 'XKBMODEL="pc105"' >> "$file"
+    fi
+
+    if ! grep -q '^XKBLAYOUT="jp"' "$file"; then
+        sed -i 's/^XKBLAYOUT=.*/XKBLAYOUT="jp"/' "$file"
+        grep -q '^XKBLAYOUT="jp"' "$file" || echo 'XKBLAYOUT="jp"' >> "$file"
+    fi
 }
 
 ime_render_fcitx5_profile() {
@@ -56,17 +65,30 @@ main() {
     apt-get install -y $(ime_packages | tr '\n' ' ') || return 1
 
     echo "==> キーボード配列を jp に"
-    ime_set_keyboard_layout /etc/default/keyboard
-    setupcon 2>/dev/null || true
+    local kb_file=/etc/default/keyboard kb_before kb_after
+    kb_before="$(cat "$kb_file" 2>/dev/null || true)"
+    ime_set_keyboard_layout "$kb_file"
+    kb_after="$(cat "$kb_file" 2>/dev/null || true)"
+    if [[ "$kb_before" != "$kb_after" ]]; then
+        setupcon 2>/dev/null || true
+    fi
 
     echo "==> im-config で fcitx5 を選択"
-    su - "$user" -c "im-config -n fcitx5"
+    if ! su - "$user" -c "im-config -n fcitx5"; then
+        echo "エラー: im-config で fcitx5 を選択できませんでした" >&2
+        return 1
+    fi
 
     echo "==> fcitx5 profile を配置"
     install -d -o "$user" -g "$user" -m 700 "$home/.config/fcitx5"
     ime_render_fcitx5_profile > "$home/.config/fcitx5/profile"
     chown "$user:$user" "$home/.config/fcitx5/profile"
     chmod 600 "$home/.config/fcitx5/profile"
+
+    if ! grep -q '^XKBMODEL="pc105"' "$kb_file" || ! grep -q '^XKBLAYOUT="jp"' "$kb_file"; then
+        echo "エラー: キーボード配列を XKBMODEL=pc105 / XKBLAYOUT=jp に設定できませんでした" >&2
+        return 1
+    fi
 
     cat <<'EOF'
 
