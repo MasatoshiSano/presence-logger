@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>会話ウィザード操作票 ── 子を増やす / ハブを増やす</title>
+<style>
+  :root{
+    --bg:#ffffff; --panel:#f6f7f9; --line:#d9dde3; --line-soft:#e8ebef;
+    --ink:#1b1f26; --ink-2:#5b6370; --accent:#1f5fa8; --accent-bg:#eaf2fb;
+    --warn:#9a3412; --warn-bg:#fff4ed; --warn-line:#f0b79a;
+    --stop:#991b1b; --stop-bg:#fdf0f0; --stop-line:#e5a3a3;
+    --ok:#166534; --ok-bg:#eefaf1; --ok-line:#a8d8b9;
+    --emoji:"Noto Color Emoji","Apple Color Emoji","Segoe UI Emoji";
+    --sans:system-ui,"Noto Sans CJK JP","Hiragino Kaku Gothic ProN",sans-serif,var(--emoji);
+    --mono:"DejaVu Sans Mono",ui-monospace,Menlo,Consolas,monospace,var(--emoji);
+  }
+  @media (prefers-color-scheme:dark){
+    :root:not([data-theme="light"]){
+      --bg:#14171c; --panel:#1b1f26; --line:#2f353e; --line-soft:#252b33;
+      --ink:#e6e9ee; --ink-2:#9aa3b0; --accent:#7fb3e8; --accent-bg:#16202c;
+      --warn:#f0a875; --warn-bg:#241a12; --warn-line:#5d3d26;
+      --stop:#f08a8a; --stop-bg:#241414; --stop-line:#5e2a2a;
+      --ok:#7fce9d; --ok-bg:#122117; --ok-line:#2c4e39;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#14171c; --panel:#1b1f26; --line:#2f353e; --line-soft:#252b33;
+    --ink:#e6e9ee; --ink-2:#9aa3b0; --accent:#7fb3e8; --accent-bg:#16202c;
+    --warn:#f0a875; --warn-bg:#241a12; --warn-line:#5d3d26;
+    --stop:#f08a8a; --stop-bg:#241414; --stop-line:#5e2a2a;
+    --ok:#7fce9d; --ok-bg:#122117; --ok-line:#2c4e39;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1.75;
+       font-size:15px;padding:0 16px 64px}
+  .wrap{max-width:900px;margin:0 auto}
+  header{padding:34px 0 22px;border-bottom:2px solid var(--ink)}
+  h1{font-size:1.5rem;line-height:1.4;letter-spacing:.01em}
+  .subtitle{color:var(--ink-2);margin-top:8px;font-size:.94rem}
+  .stamp{display:inline-block;font-family:var(--mono);font-size:.76rem;color:var(--ink-2);
+         border:1px solid var(--line);border-radius:3px;padding:2px 7px;margin-top:12px}
+  nav{margin:22px 0 8px;display:flex;flex-wrap:wrap;gap:6px}
+  nav a{font-size:.85rem;text-decoration:none;color:var(--accent);background:var(--accent-bg);
+        border:1px solid var(--line);border-radius:4px;padding:4px 10px}
+  nav a:hover{border-color:var(--accent)}
+  h2{font-size:1.16rem;margin:40px 0 4px;padding-bottom:6px;border-bottom:1px solid var(--line);
+     scroll-margin-top:12px}
+  h2 .idx{font-family:var(--mono);color:var(--ink-2);font-weight:400;margin-right:8px}
+  h3{font-size:1rem;margin:24px 0 8px}
+  p{margin:10px 0}
+  .lead{color:var(--ink-2);margin-bottom:6px}
+  strong{font-weight:700}
+  code{font-family:var(--mono);font-size:.88em;background:var(--panel);
+       border:1px solid var(--line-soft);border-radius:3px;padding:1px 5px}
+  pre{font-family:var(--mono);font-size:.84rem;line-height:1.65;background:var(--panel);
+      border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:4px;
+      padding:12px 14px;overflow-x:auto;margin:12px 0;white-space:pre}
+  pre .c{color:var(--ink-2)}
+  pre .hl{color:var(--accent);font-weight:600}
+  table{border-collapse:collapse;width:100%;margin:12px 0;font-size:.9rem}
+  th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}
+  th{background:var(--panel);font-weight:600;white-space:nowrap}
+  td.q{white-space:nowrap;font-weight:600}
+  .note{border:1px solid var(--line);border-left:3px solid var(--accent);background:var(--accent-bg);
+        border-radius:4px;padding:11px 14px;margin:14px 0}
+  .note.warn{border-left-color:var(--warn-line);background:var(--warn-bg);color:var(--warn)}
+  .note.stop{border-left-color:var(--stop-line);background:var(--stop-bg);color:var(--stop)}
+  .note.ok{border-left-color:var(--ok-line);background:var(--ok-bg);color:var(--ok)}
+  .note .lbl{display:block;font-size:.76rem;font-weight:700;letter-spacing:.06em;margin-bottom:3px}
+  .note p{margin:4px 0}
+  .split{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:14px 0}
+  .box{border:1px solid var(--line);border-radius:5px;padding:13px 15px;background:var(--panel)}
+  .box h4{font-size:.95rem;margin-bottom:5px}
+  .box .tag{display:inline-block;font-family:var(--mono);font-size:.73rem;color:var(--ink-2);
+            border:1px solid var(--line);border-radius:3px;padding:1px 6px;margin-bottom:7px}
+  ol,ul{margin:10px 0 10px 22px}
+  li{margin:5px 0}
+  .flow{font-family:var(--mono);font-size:.82rem;color:var(--ink-2);margin:10px 0 0 2px}
+  footer{margin-top:52px;padding-top:16px;border-top:1px solid var(--line);
+         color:var(--ink-2);font-size:.85rem}
+  @media(max-width:640px){ .split{grid-template-columns:1fr} body{font-size:14px} }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>会話ウィザード操作票</h1>
+  <p class="subtitle">子ラズパイを増やす。新しい親ハブを作る。どの質問が来て、何と答えるか。</p>
+  <span class="stamp">presence-logger / main @ 8f05ed6 / 2026-09-23 実機確認</span>
+</header>
+
+<nav>
+  <a href="#s1">1. どちらを開くか</a>
+  <a href="#s2">2. 子を増やす</a>
+  <a href="#s3">3. ハブを作る</a>
+  <a href="#s4">4. 別の値にする項目</a>
+  <a href="#s5">5. 既知の不具合</a>
+</nav>
+
+<!-- ───────────── 1 ───────────── -->
+<h2 id="s1"><span class="idx">1</span>どちらを開くか</h2>
+<p class="lead">デスクトップのアイコンは目的で選びます。どの画面でも <code>0</code> で直前の質問に戻れます。</p>
+
+<table>
+  <tr><th>やりたいこと</th><th>開くアイコン</th><th>最初の選択</th></tr>
+  <tr><td>子を1台増やす</td><td>子をこのハブへ付ける</td><td class="q">2</td></tr>
+  <tr><td>別のハブから子を引っ越す</td><td>子をこのハブへ付ける</td><td class="q">1</td></tr>
+  <tr><td>クローンしたSDを子用に仕込む</td><td>子SDをこのハブ用にする</td><td>カードを挿すだけ</td></tr>
+  <tr><td>新しい親ハブを一から作る</td><td>ハブ用USBを作る → 新機で ハブ初期設定</td><td class="q">1</td></tr>
+</table>
+
+<!-- ───────────── 2 ───────────── -->
+<h2 id="s2"><span class="idx">2</span>子を増やす</h2>
+<p class="lead">2台つながっている状態で3台目を足す場合。「子をこのハブへ付ける」を開きます。</p>
+
+<pre><span class="c">このハブへ子Pi を付けます。
+間違えたら 0 で直前の質問に戻れます。
+</span>
+  <span class="hl">1)</span> すでに動いている子を移す（名前と局番号はそのまま）
+  <span class="hl">2)</span> 新しい子を増やす（クローンして改名する。局番号は空になる）</pre>
+
+<div class="split">
+  <div class="box">
+    <span class="tag">1 を選ぶ</span>
+    <h4>引っ越し</h4>
+    <p>ホスト名も局番号も<strong>そのまま引き継ぐ</strong>。現場で番号が割り当たっている子を別のハブへ移すとき。</p>
+  </div>
+  <div class="box">
+    <span class="tag">2 を選ぶ</span>
+    <h4>増設</h4>
+    <p>クローンSDは名前がぶつかるので<strong>ここで改名する</strong>。局番号は空になり、あとで子の画面から付ける。</p>
+  </div>
+</div>
+
+<div class="note warn">
+  <span class="lbl">なぜ改名が要るか</span>
+  <p>ホスト名はそのまま通信相手の識別子になります。同じ名前が2つあると<strong>2台が互いの接続を切り合い、どちらのデータも届かなくなります</strong>。クローンSDをそのまま起動してはいけない理由がこれです。</p>
+</div>
+
+<h3>2（増設）を選んだあと</h3>
+<ol>
+  <li><strong>子をハブの電波につなぐ</strong> — クローンSDなら先に「子SDをこのハブ用にする」で鍵とWi-Fiを書いておくと、挿して電源を入れるだけでつながります。</li>
+  <li><strong>未登録の端末をさがす</strong> — 自動です。「まだ見えません」と出たら子の電源と電波を確かめて選び直します。</li>
+  <li><strong>新しい名前を決める</strong> — Enter で既定値。既定は <code>&lt;ハブ名&gt;-001</code> のような3桁連番です。</li>
+  <li><strong>6工程が自動で走る</strong> — 送信停止 → 局番号を空に → 改名して再起動 → 名前解決 → 鍵登録 → 一覧に追加。</li>
+  <li><strong>局番号を付ける</strong> — 登録直後は空です。子の画面（ブラウザ）から入れて完了。</li>
+</ol>
+
+<h3>1（引っ越し）を選ぶと、さらに3択</h3>
+<pre><span class="c">既存の子はホスト名と局番号を残します。
+</span>
+  <span class="hl">1)</span> 旧親が同じ工場網でまだ動いている
+  <span class="hl">2)</span> 旧親はもう使わない / 別の工場網 / 子のSDをクローンした
+  <span class="hl">3)</span> 子はもうこのハブの AP に繋がっている</pre>
+
+<table>
+  <tr><th>選択</th><th>聞かれること / すること</th></tr>
+  <tr><td class="q">1</td><td>旧親のホスト名。旧親へ鍵を1回入れる案内（<code>ssh-copy-id</code>）が出るのでその通り打つ。あとは旧親から一覧を取ってまとめて移す。</td></tr>
+  <tr><td class="q">2</td><td>子のSDをUSBカードリーダに挿す。<strong>どこに挿さったかは聞かれません</strong>（自動で探します）。書き終えたらSDを子に戻して起動し、もう一度 1 → 3。</td></tr>
+  <tr><td class="q">3</td><td>いちばん簡単。電波に居る未登録の子を探してそのまま取り込む。</td></tr>
+</table>
+
+<!-- ───────────── 3 ───────────── -->
+<h2 id="s3"><span class="idx">3</span>ハブを作る</h2>
+<p class="lead">親機を動かしたまま2台目を作れます。USB 1本で運びます。</p>
+
+<div class="note stop">
+  <span class="lbl">先に読む — 現状このまま実行すると失敗します</span>
+  <p>素の Raspberry Pi OS（trixie）では <strong>bootstrap のフェーズ20 が必ず止まります</strong>。<code>raspberrypi-kernel-headers</code> が trixie に存在せず、<code>docker-compose-plugin</code> は Docker 社のリポジトリにしかないためです（親機は手で足してあります）。現場へ出す前にコード修正が要ります。詳細は<a href="#s5">5章</a>。</p>
+</div>
+
+<h3>USB に載るもの / 載らないもの</h3>
+<pre>presence-hub-kit/                       <span class="c">合計 286MB（実測）</span>
+├── payload/presence-logger/            <span class="c">リポジトリ一式</span>
+├── .kit/
+│   ├── origin.env                      <span class="c">コピー元の値 → 新機の既定値になる</span>
+│   ├── site.env.template               <span class="c">機体固有値は空にしてある</span>
+│   ├── secrets.env.template            <span class="c">工場WiFi の PSK だけ</span>
+│   ├── driver/8821au/                  <span class="c">ドングルのソース 22MB</span>
+│   └── docker-images/*.tar             <span class="c">mosquitto / oracle-jdbc / bridge 201MB</span>
+├── copy-to-this-pi.sh
+├── このUSBからコピー.desktop
+└── README.txt</pre>
+
+<div class="split">
+  <div class="box">
+    <span class="tag">載る</span>
+    <h4>持っていくもの</h4>
+    <p>リポジトリ、ドングルのドライバ源、コンテナ3本、工場Wi-Fiのパスワード、コピー元の設定値（新機の既定値になる）。</p>
+  </div>
+  <div class="box">
+    <span class="tag">載らない</span>
+    <h4>置いていくもの</h4>
+    <p>親の子一覧、Oracleパスワード、APパスワード、ホスト名・固定IP・AP名などの機体固有値、detectorイメージ、SQLiteバッファ。</p>
+  </div>
+</div>
+
+<div class="note warn">
+  <span class="lbl">取り扱い</span>
+  <p>出来たUSBには<strong>工場Wi-Fiのパスワードが入ります</strong>。鍵と同じ扱いにし、使い終わったら消してください。</p>
+</div>
+
+<h3>手順</h3>
+<ol>
+  <li><strong>【数日前】固定IPを申請</strong> — 新機の <code>wlan0</code> のMACを許可登録してもらいます。MACは新機で <code>cat /sys/class/net/wlan0/address</code>。ウィザードは登録の有無を確かめません。</li>
+  <li><strong>【親機】USBを作る</strong> — USBを挿して、デスクトップの <strong>ハブ用USBを作る</strong> をクリック。挿さっているUSBを自動で見つけ、確認してから書き出します。</li>
+  <li><strong>【新機】コピー</strong> — USBを挿し、<code>presence-hub-kit</code> の「このUSBからコピー」をダブルクリック。開かないときは <code>bash /media/pi/*/presence-hub-kit/copy-to-this-pi.sh</code>。</li>
+  <li><strong>【新機】ハブ初期設定</strong> — デスクトップに出たアイコンをクリック。この時点では電波もコンテナも起動しません（親機とぶつからないため）。</li>
+  <li><strong>【新機】再起動して子を迎える</strong> — 終わったら再起動し、2章の手順で子を足します。</li>
+</ol>
+
+<h3>聞かれること（全7項目）</h3>
+<table>
+  <tr><th>順</th><th>質問</th><th>答え方</th></tr>
+  <tr><td class="q">—</td><td>番号で選ぶ</td><td>親機と<strong>同時に動かすなら 1</strong>／親機をもう使わないなら 2</td></tr>
+  <tr><td class="q">①</td><td>このハブのホスト名</td><td>Enter で <code>&lt;親&gt;-2</code>。同居なら親と別名が必須</td></tr>
+  <tr><td class="q">②</td><td>工場の Wi-Fi 名</td><td>Enter（コピー元と同じでよい）</td></tr>
+  <tr><td class="q">③</td><td>このハブの工場固定IP</td><td><strong>手で入力</strong>。同居では既定値が出ません</td></tr>
+  <tr><td class="q">④</td><td>ゲートウェイ / DNS</td><td>Enter（コピー元と同じ）</td></tr>
+  <tr><td class="q">⑤</td><td>Oracle 5問（ホスト・ポート・サービス・ユーザ・テーブル）</td><td>Enter（コピー元と同じ）</td></tr>
+  <tr><td class="q">⑥</td><td>子Pi用ハブAPの Wi-Fi 名</td><td>Enter で <code>&lt;ホスト名&gt;-hub</code>。同居なら親と別名が必須</td></tr>
+  <tr><td class="q">⑦</td><td>APパスワード（8文字以上）/ Oracleパスワード</td><td><strong>手で入力</strong>。画面には出ません</td></tr>
+</table>
+<p class="flow">手で入れるのは ③ と ⑦ だけ。ほかは Enter で通せます。</p>
+
+<pre><span class="c">----- 確認 -----</span>
+  ① このハブのホスト名         : raspberrypi5-2
+  ② 工場の Wi-Fi 名            : HIME-H-REAP
+  ③ このハブの工場固定IP       : 172.22.13.18/24
+  ④ ゲートウェイ / DNS         : 172.22.13.1 / 10.166.1.70,10.166.1.17
+  ⑤ Oracle                     : ZHH001@10.166.5.93:1521/HHC001
+     テーブル                   : HF1RCM01
+  ⑥ 子Pi用ハブAPの Wi-Fi名     : raspberrypi5-2-hub
+  ⑦ 子Pi用APパスワード         : （入力済み）
+     Oracle パスワード          : （入力済み）
+<span class="c">---------------</span>
+y で進める / n で中止 / 0 で直前 / <span class="hl">1〜7 でその項目からやり直し</span></pre>
+
+<h3>物理的に必要なもの</h3>
+<table>
+  <tr><th>もの</th><th>条件</th></tr>
+  <tr><td>USBメモリ</td><td>1GB以上（キット実測286MB）</td></tr>
+  <tr><td>USB Wi-Fi ドングル</td><td>ELECOM WDC-433DU2H2-B（<code>056e:4010</code>）。内蔵Wi-Fiは工場網に使うため別途必要</td></tr>
+  <tr><td>Raspberry Pi 5 + SD</td><td>Raspberry Pi OS <strong>Desktop</strong>。アイコン操作があるため</td></tr>
+  <tr><td>固定IP</td><td>情シスへ事前申請。MAC登録も</td></tr>
+</table>
+
+<!-- ───────────── 4 ───────────── -->
+<h2 id="s4"><span class="idx">4</span>別の値にする項目</h2>
+<p class="lead">親機を動かしたまま2台目を作るとき、ここだけは必ず別にします。ウィザードは同じ値を弾きますが、理由を知っておくと迷いません。</p>
+
+<table>
+  <tr><th>項目</th><th>衝突すると</th><th>ウィザードの扱い</th></tr>
+  <tr><td class="q">ホスト名</td><td>2台が互いの接続を切り合い、どちらのデータも届かない</td><td>拒否。既定は <code>&lt;親&gt;-2</code></td></tr>
+  <tr><td class="q">工場の固定IP</td><td><strong>工場網全体が壊れる</strong>。自分たちだけの問題で済まない</td><td>拒否。既定値なし</td></tr>
+  <tr><td class="q">子Pi用AP名</td><td>子がどちらのハブに繋ぐか不定になる</td><td>拒否。既定は <code>&lt;ホスト名&gt;-hub</code></td></tr>
+  <tr><td class="q">STA_NO</td><td>将来カメラを付けたとき記録の局番が重なる</td><td>親の値+3 を自動。<strong>3台目以降は手で直す</strong></td></tr>
+</table>
+
+<div class="note ok">
+  <span class="lbl">同じでよいもの</span>
+  <p>工場のWi-Fi名・ゲートウェイ・DNS・Oracle の各項目は<strong>同じであるべき</strong>です。Enter で通してください。</p>
+</div>
+
+<div class="note warn">
+  <span class="lbl">例外</span>
+  <p>親と同じ名前・IP・AP名を使ってよいのは<strong>親機を止めて置き換えるとき</strong>だけです。その場合は最初の質問で 2 を選びます。両方動かしたまま同じ値にすると必ず事故ります。</p>
+</div>
+
+<!-- ───────────── 5 ───────────── -->
+<h2 id="s5"><span class="idx">5</span>既知の不具合</h2>
+<p class="lead">2026-09-23 にコードを行単位で突き合わせて見つかったもの。<strong>現場へ出す前に直すこと。</strong></p>
+
+<table>
+  <tr><th>#</th><th>重さ</th><th>内容</th></tr>
+  <tr><td class="q">B1</td><td><strong>止まる</strong></td><td>フェーズ20 が <code>raspberrypi-kernel-headers</code> を入れようとするが trixie に存在しない。aptは1つでも見つからないと何も入れずに失敗する。正しくは <code>linux-headers-rpi-2712</code></td></tr>
+  <tr><td class="q">B2</td><td><strong>止まる</strong></td><td><code>docker-compose-plugin</code> は Docker社のaptリポジトリにしかない。素のPiにはそのリポジトリが無い</td></tr>
+  <tr><td class="q">B3</td><td>効かない</td><td>ハブ初期設定の <code>p</code>（APパスワードだけやり直す）が<strong>実際のAPに反映されない</strong>。設定ファイルだけ新しくなる</td></tr>
+  <tr><td class="q">B4</td><td>危険</td><td>フェーズ50 が戻り先Wi-Fi（F66）の自動接続を切るため、<strong>再起動後に新機へ遠隔で入れなくなる</strong>恐れ</td></tr>
+  <tr><td class="q">B5</td><td>誤表示</td><td>2台目で「HIME-H-REAPに接続」が「APを起動できません」と誤警告する。AP自体は動いているので実害なし</td></tr>
+  <tr><td class="q">B6</td><td>読み残し</td><td><code>sudo</code> でpackするとドライバ源が見つからず、<strong>ドライバ無しのキットが「成功」で完成</strong>しうる。※「ハブ用USBを作る」アイコン経由なら対策済み</td></tr>
+</table>
+
+<div class="note">
+  <span class="lbl">このハブで足りないもの</span>
+  <p>子ウィザードのSD書き込み経路は <code>.kit/ap-join.env</code> を必要としますが、このハブには <code>.kit/</code> 自体がありません。<strong>不具合ではなく1号機だけの移行漏れ</strong>です（2台目以降はウィザードが自動で書きます）。デスクトップのアイコンもまだ配置されていません。</p>
+</div>
+
+<footer>
+  <p>根拠: <code>scripts/setup-children-wizard.sh</code> / <code>scripts/setup-hub-wizard.sh</code> / <code>scripts/pack-hub-usb.sh</code> / <code>scripts/bootstrap/</code> の実装と、2026-09-23 のこのハブでの実機確認。</p>
+</footer>
+
+</div>
+</body>
+</html>

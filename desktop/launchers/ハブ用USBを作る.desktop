@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=ハブ用USBを作る
+Name[ja]=ハブ用USBを作る
+Comment=挿した USB に、新しい親ハブを作るためのキット一式を書き出す（鍵と同じ扱いに）
+Exec=lxterminal -t "ハブ用USBを作る" -e bash -c "bash __REPO_DIR__/scripts/pack-hub-usb-gui.sh; echo; read -r -p 'Enterで閉じる '"
+Icon=media-removable
+Terminal=false
+Categories=System;
