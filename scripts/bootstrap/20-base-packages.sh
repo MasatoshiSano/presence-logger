@@ -13,6 +13,10 @@ REPO_DIR="$(cd "$HERE/../.." && pwd)"
 # shellcheck source=scripts/lib/site-env.sh
 source "$REPO_DIR/scripts/lib/site-env.sh"
 
+# apt-get install は1つでも名前が見つからないと何も入れずに失敗する。
+# ここには trixie(Debian 13)に実在する名前だけを置くこと。
+# raspberrypi-kernel-headers は bookworm までの名前で、trixie では
+# linux-headers-rpi-2712(Pi 5 用)になった。
 base_packages() {
     cat <<'EOF'
 docker.io
@@ -25,7 +29,7 @@ rsync
 dkms
 build-essential
 bc
-raspberrypi-kernel-headers
+linux-headers-rpi-2712
 EOF
 }
 
@@ -51,6 +55,20 @@ base_ensure_venv() {
     python3 -m venv --system-site-packages "$repo/.venv"
 }
 
+# linux-headers-rpi-2712 が連れてくるのはアーカイブ最新版のヘッダだけ。
+# 書いたばかりの SD は古いカーネルで動いているので、フェーズ30 の DKMS が
+# 要る「今のカーネル」のヘッダは別に頼む。旧版はアーカイブから消えることが
+# あるので本体の並びには混ぜない(混ぜると全部入らなくなる)。
+base_install_packages() {
+    # shellcheck disable=SC2046
+    apt-get install -y $(base_packages | tr '\n' ' ') || return 1
+    local running="linux-headers-$(uname -r)"
+    if ! apt-get install -y "$running"; then
+        echo "⚠ $running が入りませんでした。フェーズ30 のドライバ作成が失敗します。" >&2
+        echo "  apt full-upgrade → 再起動のあと、フェーズ20 から流し直してください。" >&2
+    fi
+}
+
 # docker.io を入れただけでは daemon が上がっていないことがある。フェーズ60 が
 # 「イメージは load 済みなのにコンテナが上がらない」で転ぶ前に、ここで弾く。
 base_enable_docker() {
@@ -68,8 +86,7 @@ main() {
 
     echo "==> パッケージを導入"
     apt-get update
-    # shellcheck disable=SC2046
-    apt-get install -y $(base_packages | tr '\n' ' ') || return 1
+    base_install_packages || return 1
     base_enable_docker || return 1
 
     echo "==> ホスト名を $HUB_HOSTNAME に"

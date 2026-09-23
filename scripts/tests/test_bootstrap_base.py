@@ -14,8 +14,49 @@ SOURCE = "source scripts/bootstrap/20-base-packages.sh"
 def test_package_list_has_the_non_obvious_ones():
     out = run_bash(f'{SOURCE}; base_packages', env=dict(os.environ)).stdout.split()
     for pkg in ("docker.io", "docker-compose-plugin", "python3-yaml",
-                "mosquitto-clients", "dkms", "raspberrypi-kernel-headers"):
+                "mosquitto-clients", "dkms", "linux-headers-rpi-2712"):
         assert pkg in out, f"{pkg} が不足"
+
+
+def test_package_list_has_no_name_missing_from_trixie():
+    """apt-get install は1つでも名前が見つからないと、何も入れずに失敗する。
+
+    raspberrypi-kernel-headers は bookworm までの名前で、trixie(Debian 13)には
+    無い。これが並びに1つ混じっているだけで、素の Pi OS ではフェーズ20 が
+    必ず落ち、docker も python3-yaml も入らない。Pi 5 のヘッダは
+    linux-headers-rpi-2712。
+    """
+    out = run_bash(f'{SOURCE}; base_packages', env=dict(os.environ)).stdout.split()
+    assert "raspberrypi-kernel-headers" not in out
+
+
+def test_headers_for_the_running_kernel_are_requested_separately(tmp_path, fake_bin):
+    """DKMS が要るのは「今動いているカーネル」のヘッダ。
+
+    linux-headers-rpi-2712 はアーカイブ最新版のヘッダしか連れてこない。
+    書いたばかりの SD は古いカーネルで動いているので、それだけでは
+    /lib/modules/$(uname -r)/build が無く、フェーズ30 の DKMS が落ちる。
+    ただし旧版がアーカイブから消えていることもあるので、本体の並びには
+    混ぜず(混ぜると全部入らない)、別の呼び出しにして失敗を本体に波及させない。
+    """
+    fake_bin("uname", 'echo 6.18.29+rpt-rpi-2712')
+    fake_bin("apt-get", 'printf "apt-get %s\\n" "$*" >> "$FAKE_LOG"; '
+                        '[[ "$*" == *6.18.29* ]] && exit 100; exit 0')
+    r = run_bash(f'{SOURCE}; base_install_packages', env=dict(os.environ), check=False)
+    assert r.returncode == 0, r.stderr
+    calls = fake_bin.log.read_text(encoding="utf-8").splitlines()
+    main_call = next(c for c in calls if "python3-yaml" in c)
+    assert "6.18.29" not in main_call
+    assert any("linux-headers-6.18.29+rpt-rpi-2712" in c for c in calls)
+    assert "6.18.29+rpt-rpi-2712" in r.stderr     # 入らなかったことは黙らない
+
+
+def test_base_package_failure_is_not_swallowed(fake_bin):
+    fake_bin("uname", 'echo 6.18.29+rpt-rpi-2712')
+    fake_bin("apt-get", 'printf "apt-get %s\\n" "$*" >> "$FAKE_LOG"; exit 100')
+    r = run_bash(f'{SOURCE}; base_install_packages', env=dict(os.environ), check=False)
+    assert "python3-yaml" in fake_bin.log.read_text(encoding="utf-8")
+    assert r.returncode != 0
 
 
 def test_hostname_files_are_rewritten(tmp_path):

@@ -86,7 +86,8 @@ sudo apt-get install -y \
     python3-yaml \
     mosquitto-clients \
     git rsync \
-    dkms build-essential bc raspberrypi-kernel-headers
+    dkms build-essential bc linux-headers-rpi-2712
+sudo apt-get install -y "linux-headers-$(uname -r)"   # DKMS は今動いているカーネルのヘッダが要る
 sudo usermod -aG docker "$USER"      # 反映には再ログイン or reboot が必要
 ```
 
@@ -491,7 +492,7 @@ print('未送信:', c.execute(\"select count(*) from record_inbox where status='
 **手動**（フェーズ失敗時）: [`wifi-dongle-dual-wifi.md`](wifi-dongle-dual-wifi.md) の §1 に従う。要点のみ:
 
 ```bash
-sudo apt-get install -y dkms build-essential git bc raspberrypi-kernel-headers
+sudo apt-get install -y dkms build-essential git bc linux-headers-rpi-2712 "linux-headers-$(uname -r)"
 git clone --depth=1 https://github.com/morrownr/8821au-20210708.git ~/8821au
 # os_dep/linux/usb_intf.c の RTL8821 セクションに1行追加:
 #   {USB_DEVICE(0x056E, 0x4010), .driver_info = RTL8821}, /* ELECOM WDC-433DU2H2-B */
