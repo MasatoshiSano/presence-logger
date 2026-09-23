@@ -182,6 +182,13 @@ class RecordInboxRepository:
             for row in cur.fetchall():
                 yield self._row(row)
 
+    def get(self, event_id: str) -> RecordInboxEvent | None:
+        with self._conn() as c:
+            row = c.execute(
+                "SELECT * FROM record_inbox WHERE event_id=?", (event_id,)
+            ).fetchone()
+            return self._row(row) if row else None
+
     def count(self) -> int:
         with self._conn() as c:
             return c.execute("SELECT COUNT(*) FROM record_inbox").fetchone()[0]

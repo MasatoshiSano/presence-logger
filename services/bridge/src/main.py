@@ -262,7 +262,7 @@ def main() -> int:    # pragma: no cover
                 },
             )
             return
-        record_inbox.insert_received(RecordInboxEvent(
+        record_sender.receive(RecordInboxEvent(
             event_id=rec.event_id,
             mk_date=rec.mk_date,
             sta_no1=rec.sta_no1,

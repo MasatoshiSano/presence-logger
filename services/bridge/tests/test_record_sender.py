@@ -122,3 +122,49 @@ def test_non_unretryable_ora_code_still_retries_normally(tmp_path):
     row = next(iter(d.record_inbox.iter_received_due(now_iso="2099-01-01T00:00:00+00:00")))
     assert row.status == "received"
     assert row.retry_count == 1
+
+
+def test_unknown_database_error_never_marks_sent_or_acks(tmp_path):
+    mqtt = _FakeMqtt()
+    d = _deps(tmp_path, ssid="HIME-H-REAP", mqtt=mqtt,
+              oracle=_FakeOracle(_Result(ora_code=None, error_message="unknown DB error")))
+    RecordSender(deps=d).run_once(now=NOW)
+    assert mqtt.acks == []
+    row = next(d.record_inbox.iter_received_due(now_iso="2099-01-01"))
+    assert row.retry_count == 1
+
+
+def test_committed_duplicate_reacks_only_matching_content(tmp_path):
+    from dataclasses import replace
+
+    mqtt = _FakeMqtt()
+    d = _deps(tmp_path, ssid="HIME-H-REAP", mqtt=mqtt,
+              oracle=_FakeOracle(_Result(ora_code=None)))
+    incoming = next(d.record_inbox.iter_received_due(now_iso=NOW.isoformat()))
+    sender = RecordSender(deps=d)
+    sender.receive(incoming)
+    assert mqtt.acks == []
+    sender.run_once(now=NOW)
+    mqtt.acks.clear()
+    sender.receive(incoming)
+    assert len(mqtt.acks) == 1
+    mqtt.acks.clear()
+    sender.receive(replace(incoming, t1_status=99))
+    assert mqtt.acks == []
+    d.record_inbox.delete_sent(keep_newest=0)
+    sender.receive(incoming)
+    assert mqtt.acks == []
+    sender.run_once(now=NOW)
+    assert len(mqtt.acks) == 1
+    assert len(d.oracle.calls) == 2
+
+
+def test_failed_duplicate_is_not_acked(tmp_path):
+    mqtt = _FakeMqtt()
+    d = _deps(tmp_path, ssid="HIME-H-REAP", mqtt=mqtt,
+              oracle=_FakeOracle(_Result(ora_code=1)), unretryable_ora_codes={1})
+    incoming = next(d.record_inbox.iter_received_due(now_iso=NOW.isoformat()))
+    sender = RecordSender(deps=d)
+    sender.run_once(now=NOW)
+    sender.receive(incoming)
+    assert mqtt.acks == []

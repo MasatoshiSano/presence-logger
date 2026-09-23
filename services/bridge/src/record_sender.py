@@ -56,6 +56,50 @@ class RecordSender:
         for rec in self._d.record_inbox.iter_received_due(now_iso=now.isoformat()):
             self._send_one(rec=rec, profile=profile, profile_name=profile_name, now=now)
 
+    def receive(self, rec: RecordInboxEvent) -> None:
+        """Handle a re-received record (child resending because it has no ACK yet).
+
+        A first-time event_id is buffered normally (received -> picked up by
+        run_once). A duplicate of an already-committed row only gets a fresh
+        ACK when its content still matches what was committed — content drift
+        under the same event_id is rejected, never re-acked. A duplicate of a
+        'received' (still pending) or 'failed' (given up) row is a no-op: the
+        existing row already owns that event_id's outcome.
+        """
+        existing = self._d.record_inbox.get(rec.event_id)
+        if existing is None:
+            self._d.record_inbox.insert_received(rec)
+            return
+        if existing.status != "sent":
+            return
+        if not self._content_matches(existing, rec):
+            _log.warning(
+                "record_duplicate_content_mismatch",
+                extra={
+                    "event": "record_duplicate_content_mismatch",
+                    "event_id": rec.event_id,
+                },
+            )
+            return
+        if self._d.topic_ack:
+            self._d.mqtt.publish_ack(
+                self._d.topic_ack,
+                event_id=existing.event_id,
+                mk_date_committed=existing.mk_date_committed,
+                committed_at_iso=existing.sent_at_iso,
+            )
+
+    @staticmethod
+    def _content_matches(stored: RecordInboxEvent, incoming: RecordInboxEvent) -> bool:
+        return (
+            stored.device_id == incoming.device_id
+            and stored.mk_date == incoming.mk_date
+            and stored.sta_no1 == incoming.sta_no1
+            and stored.sta_no2 == incoming.sta_no2
+            and stored.sta_no3 == incoming.sta_no3
+            and stored.t1_status == incoming.t1_status
+        )
+
     def _send_one(self, *, rec: RecordInboxEvent, profile: dict, profile_name: str,
                   now: datetime) -> None:
         result = self._d.oracle.execute_merge_for_profile(
@@ -66,7 +110,7 @@ class RecordSender:
             sta_no3=rec.sta_no3,
             t1_status=rec.t1_status,
         )
-        if result.ora_code is None:
+        if result.ora_code is None and result.error_message is None:
             self._d.record_inbox.mark_sent(
                 rec.event_id, mk_date_committed=rec.mk_date, sent_at_iso=now.isoformat()
             )
