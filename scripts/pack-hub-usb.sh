@@ -203,6 +203,42 @@ modules.order
 EOF
 }
 
+# ドライバソースの場所。sudo で走らせると Debian の sudo は HOME を /root に
+# 差し替えるので、${HOME}/8821au だけを見ると /home/pi/8821au を見失う。
+# 呼び出したユーザ(SUDO_USER)のホームも見る。見つからなければ何も出さない。
+pack_find_driver_src() {
+    local user_home="" d
+    if [ -n "${PACK_DRIVER_SRC-}" ]; then
+        printf '%s\n' "$PACK_DRIVER_SRC"
+        return 0
+    fi
+    if [ -n "${SUDO_USER:-}" ]; then
+        user_home="$(getent passwd "$SUDO_USER" | cut -d: -f6)"
+    fi
+    for d in /usr/local/src/8821au "${user_home:+$user_home/8821au}" "${HOME:+$HOME/8821au}"; do
+        [ -n "$d" ] && [ -d "$d" ] && { printf '%s\n' "$d"; return 0; }
+    done
+    return 0
+}
+
+# ドライバの無いキットは「成功」にしない。新機はフェーズ30 で GitHub から
+# clone できないとドングルが使えないのに、以前は黙って ✅ まで進んでいた。
+# 意図的に載せないとき(回線のある現場で作る等)だけ PACK_ALLOW_NO_DRIVER=1。
+pack_check_driver() {
+    local driver="${1:-}"
+    [ -n "$driver" ] && [ -d "$driver" ] && return 0
+    if [ "${PACK_ALLOW_NO_DRIVER:-}" = "1" ]; then
+        echo "⚠ ドングルのドライバソースをキットに載せていません（PACK_ALLOW_NO_DRIVER=1 のため続行）" >&2
+        echo "  新機のフェーズ30 は GitHub から clone します。インターネットが要ります。" >&2
+        return 0
+    fi
+    echo "ドングルのドライバソース(8821au)が見つかりません。" >&2
+    echo "  見た場所: /usr/local/src/8821au${SUDO_USER:+, ~$SUDO_USER/8821au}, ${HOME:-}/8821au" >&2
+    echo "  場所を指定する: sudo PACK_DRIVER_SRC=/home/pi/8821au bash $PACK_REPO_DIR/scripts/pack-hub-usb.sh <USBのマウント先>" >&2
+    echo "  載せずに作るなら: PACK_ALLOW_NO_DRIVER=1 を付ける" >&2
+    return 1
+}
+
 pack_copy_driver() {
     local src="${1:-}" dest="$2"
     [ -n "$src" ] && [ -d "$src" ] || return 0
@@ -273,20 +309,15 @@ pack_hub_kit() {
     local kit="$dest_root/presence-hub-kit"
     local site="${PACK_SITE_ENV:-$src/site.env}"
     local secrets="${PACK_SECRETS:-/etc/presence-logger/secrets.env}"
-    local driver="${PACK_DRIVER_SRC-}"
-    if [ -z "$driver" ]; then
-        if [ -d /usr/local/src/8821au ]; then
-            driver=/usr/local/src/8821au
-        elif [ -d "${HOME:-}/8821au" ]; then
-            driver="${HOME}/8821au"
-        fi
-    fi
+    local driver
+    driver="$(pack_find_driver_src)"
 
     if [ ! -f "$site" ]; then
         echo "親の site.env がありません: $site" >&2
         echo "  親機で site.env を用意してから pack してください" >&2
         return 1
     fi
+    pack_check_driver "$driver" || return 1
 
     mkdir -p "$kit/payload/presence-logger" "$kit/.kit"
     pack_copy_tree "$src" "$kit/payload/presence-logger"

@@ -16,6 +16,9 @@ SOURCE = "source scripts/pack-hub-usb.sh"
 
 def _env(extra=None):
     env = dict(os.environ)
+    # ドライバの有無は test_pack_hub_usb_driver.py で見る。ここの検証が
+    # 実行機の ~/8821au の有無で結果を変えないよう、無くても通す。
+    env.setdefault("PACK_ALLOW_NO_DRIVER", "1")
     if extra:
         env.update(extra)
     return env
