@@ -210,3 +210,16 @@ def test_setup_dongle_ap_keeps_legacy_default_when_run_by_hand(tmp_path, fake_bi
     """手で直接叩く旧来の使い方(UFI_CONN 未設定)は今までどおり。"""
     env_log = _run_setup_dongle_ap(tmp_path, fake_bin, {})
     assert "connection modify UFI_103134 connection.autoconnect no" in env_log
+
+
+def test_wizard_force_still_refuses_a_foreign_ap_with_the_same_ssid(tmp_path, fake_bin):
+    """AP_FORCE=1 は「自APを作り直す」ためのもの。同名の他ハブを黙認しない。
+
+    自APが落ちていて同じ SSID が見えるなら、それは別のハブ。ウィザードの p で
+    作ってしまうと、子がどちらに繋ぐか不定になる二重APができる。
+    明示の --force だけが、この確認を越えられる。
+    """
+    fake_bin("nmcli", 'if [[ " $* " == *" --active "* ]]; then :; '
+                      'else echo "presence-hub:70:WPA2"; fi')
+    assert _plan(tmp_path, extra_env={"AP_FORCE": "1"}) == "abort"
+    assert _plan(tmp_path, args="--force") == "build"

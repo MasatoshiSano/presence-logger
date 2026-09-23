@@ -51,16 +51,21 @@ ap_env_args() {
 # しかも自APが動いていればスキップしていたので、secrets だけ新しいパスワードに
 # なり、実際の AP は古いパスワードのままだった。強制時は動いていても作り直す
 # (setup-dongle-ap.sh はプロファイルを消して作り直すので新しい PSK が載る)。
+#
+# AP_FORCE=1 が越えるのは「自APが動いているからスキップ」だけ。自APが落ちていて
+# 同じ SSID が見えるなら、それは別のハブなので止める。同名APの確認まで越えるのは
+# 明示の --force だけ。
 ap_plan() {
-    local force=0
-    if [ "${1:-}" = "--force" ] || [ "${AP_FORCE:-}" = "1" ]; then
-        force=1
+    local rebuild=0 override_dup=0
+    if [ "${1:-}" = "--force" ]; then
+        rebuild=1
+        override_dup=1
+    elif [ "${AP_FORCE:-}" = "1" ]; then
+        rebuild=1
     fi
-    if [ "$force" = 1 ]; then
-        echo build
-    elif ap_own_connection_active; then
-        echo skip
-    elif ap_duplicate_ssid_present "$AP_SSID"; then
+    if ap_own_connection_active; then
+        if [ "$rebuild" = 1 ]; then echo build; else echo skip; fi
+    elif [ "$override_dup" != 1 ] && ap_duplicate_ssid_present "$AP_SSID"; then
         echo abort
     else
         echo build
