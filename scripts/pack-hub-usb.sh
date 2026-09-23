@@ -10,6 +10,9 @@ PACK_REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=scripts/lib/kit-copy.sh
 source "$PACK_REPO_DIR/scripts/lib/kit-copy.sh"
 
+# pack_hub_kit が実際に読んだ secrets のパス。エラー文の案内に使う。
+PACK_SECRETS_PATH="${PACK_SECRETS:-/etc/presence-logger/secrets.env}"
+
 pack_rsync_excludes() {
     cat <<'EOF'
 .venv
@@ -44,6 +47,69 @@ pack_strip_secrets() {
     else
         grep -vE "$re" || true
     fi
+}
+
+# secrets.env は root:docker の 600。手順書どおり pi で走らせると読めない。
+# ここを黙って素通りさせると、工場WiFi の PSK が載っていないキットが
+# 「✅」付きで現場へ出て、3工程あと(新機が工場網へ繋がろうとしたとき)に
+# 初めて失敗する。読めないときだけ sudo へ昇格して読み直す。
+#
+# 戻り値: 0=読めた(標準出力に中身) / 1=読めなかった / 2=ファイルが無い
+pack_read_secrets() {
+    local path="$1"
+    [ -e "$path" ] || return 2
+    if [ -r "$path" ] && cat "$path" 2>/dev/null; then
+        return 0
+    fi
+    echo "secrets.env は root しか読めません: $path" >&2
+    if [ "$(id -u)" -eq 0 ]; then
+        echo "  root なのに読めませんでした。ファイルの状態を確認してください" >&2
+        return 1
+    fi
+    if ! command -v sudo >/dev/null 2>&1; then
+        echo "  sudo がありません。root で実行し直してください" >&2
+        return 1
+    fi
+    # まず聞かずに試す。sudo が NOPASSWD かキャッシュ済みならここで通る。
+    sudo -n cat "$path" 2>/dev/null && return 0
+    # 端末が無い場所(テスト・cron・ランチャー経由)でパスワードを聞くと
+    # 応答できないまま固まる。聞けるときだけ聞く。
+    if [ ! -t 0 ] || [ ! -t 2 ]; then
+        echo "  端末が無いためパスワードを聞けません。次で実行し直してください:" >&2
+        echo "    sudo bash $PACK_REPO_DIR/scripts/pack-hub-usb.sh <USBのマウント先>" >&2
+        return 1
+    fi
+    echo "  管理者権限で読み直します（パスワードを聞かれます）" >&2
+    sudo -p "  [sudo] %p のパスワード: " cat "$path" && return 0
+    echo "  読めませんでした。sudo を通すか、root で実行し直してください:" >&2
+    echo "    sudo bash $PACK_REPO_DIR/scripts/pack-hub-usb.sh <USBのマウント先>" >&2
+    return 1
+}
+
+# 工場WiFi の PSK がテンプレに残っているかを見る。pack_strip_secrets は
+# Oracle と旧AP のパスワードだけを落とすので、ここに WIFI_PSK_* が
+# 1つも無いキットは「新機が工場網へ繋がれない」ことが確定している。
+#
+# 権限バグ(pack_read_secrets)とは別の関所。PSK が載らない経路は他にもある
+# (親の secrets.env にそもそも無い / キー名が違う別工場 / strip の正規表現が
+# 将来広がりすぎる)。原因ではなく結果を見るので、それら全部を受け止める。
+#
+# 既定は中止。現場へ着いてから「繋がらない」で気づくのが最悪なので、
+# USB を書いた人の目の前で止める。PSK を意図的に載せない運用
+# (別工場へ持っていく / 後から手で入れる)は PACK_ALLOW_NO_PSK=1 で明示する。
+pack_check_factory_psk() {
+    local tmpl="$1"
+    grep -qE '^WIFI_PSK_' "$tmpl" 2>/dev/null && return 0
+    if [ "${PACK_ALLOW_NO_PSK:-}" = "1" ]; then
+        echo "⚠ 工場WiFi の PSK がキットにありません（PACK_ALLOW_NO_PSK=1 のため続行）" >&2
+        echo "  新機では初期設定のあと、手で PSK を入れないと工場網へ繋がりません" >&2
+        return 0
+    fi
+    echo "工場WiFi の PSK がキットに載りません（WIFI_PSK_* が1つもない）" >&2
+    echo "  このまま渡すと、新機は工場網へ繋がれません。" >&2
+    echo "  親機の $PACK_SECRETS_PATH に WIFI_PSK_* があるか確認してください。" >&2
+    echo "  意図的に載せないなら: PACK_ALLOW_NO_PSK=1 bash $PACK_REPO_DIR/scripts/pack-hub-usb.sh <USBのマウント先>" >&2
+    return 1
 }
 
 pack_copy_tree() {
@@ -206,13 +272,28 @@ pack_hub_kit() {
     pack_write_empty_children "$kit/payload/presence-logger"
     pack_write_origin "$site" "$kit/.kit/origin.env"
     pack_blank_identity "$site" "$kit/.kit/site.env.template"
-    if [ -f "$secrets" ]; then
-        pack_strip_secrets "$secrets" > "$kit/.kit/secrets.env.template"
-    else
-        printf '# 親の secrets.env がありませんでした。工場WiFi の PSK は後で入れてください。\n' \
-            > "$kit/.kit/secrets.env.template"
-    fi
-    chmod 600 "$kit/.kit/secrets.env.template" "$kit/.kit/origin.env" "$kit/.kit/site.env.template"
+    local secrets_tmpl="$kit/.kit/secrets.env.template" secrets_raw secrets_rc
+    # エラー文で実際に見にいったパスを出すため、関数の外からも参照できるようにする。
+    PACK_SECRETS_PATH="$secrets"
+    secrets_raw="$(pack_read_secrets "$secrets")"
+    secrets_rc=$?
+    case "$secrets_rc" in
+        0)
+            printf '%s\n' "$secrets_raw" | pack_strip_secrets > "$secrets_tmpl"
+            ;;
+        2)
+            printf '# 親の secrets.env がありませんでした。工場WiFi の PSK は後で入れてください。\n' \
+                > "$secrets_tmpl"
+            ;;
+        *)
+            # 読めないまま続けると、中身が空のテンプレを載せた USB が
+            # 「✅」付きで出来上がる。ここで止めるのが唯一の防波堤。
+            echo "キットを作れませんでした（secrets.env を読めていません）" >&2
+            return 1
+            ;;
+    esac
+    chmod 600 "$secrets_tmpl" "$kit/.kit/origin.env" "$kit/.kit/site.env.template"
+    pack_check_factory_psk "$secrets_tmpl" || return 1
     pack_copy_driver "$driver" "$kit/.kit/driver/8821au"
     pack_write_readme "$kit/README.txt"
     pack_write_copy_desktop "$kit/このUSBからコピー.desktop"

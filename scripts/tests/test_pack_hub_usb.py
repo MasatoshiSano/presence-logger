@@ -7,6 +7,8 @@ import os
 import stat
 import textwrap
 
+import pytest
+
 from scripts.tests.shellhelp import REPO_ROOT, run_bash
 
 SOURCE = "source scripts/pack-hub-usb.sh"
@@ -184,6 +186,8 @@ def test_pack_copy_helper_is_runnable_with_bash_even_without_exec_bit(tmp_path):
             "PACK_SKIP_DOCKER": "1",
             "PACK_SITE_ENV": str(site),
             "PACK_SECRETS": str(tmp_path / "no-secrets"),
+            # PSK なしは既定で中止になる。ここで見たいのは実行ビットの話なので明示的に通す。
+            "PACK_ALLOW_NO_PSK": "1",
         }),
     )
     helper = dest / "presence-hub-kit" / "copy-to-this-pi.sh"
@@ -208,11 +212,20 @@ def test_pack_does_not_copy_repo_copy_hub_script_as_payload_secret(tmp_path):
         "PARENT_STA_NO1=1\nPARENT_STA_NO2=2\nPARENT_STA_NO3=3\n",
         encoding="utf-8",
     )
+    # PACK_SECRETS を固定しないと、実機の /etc/presence-logger/secrets.env を
+    # 読みにいく。あの実体は root:docker 600 なので、テストの結果が
+    # 「どのマシンで走らせたか」で変わってしまう。
+    host_secrets = tmp_path / "secrets.env"
+    host_secrets.write_text(
+        "ORACLE_PASSWORD_HHC=super-secret\nWIFI_PSK_HIMEREAP=factory-psk\n",
+        encoding="utf-8",
+    )
     run_bash(
         f'{SOURCE}; pack_hub_kit "{src}" "{dest}"',
         env=_env({
             "PACK_SKIP_DOCKER": "1",
             "PACK_SITE_ENV": str(site),
+            "PACK_SECRETS": str(host_secrets),
         }),
     )
     secrets = (dest / "presence-hub-kit" / ".kit" / "secrets.env.template").read_text(
@@ -221,3 +234,138 @@ def test_pack_does_not_copy_repo_copy_hub_script_as_payload_secret(tmp_path):
     assert "ORACLE_PASSWORD" not in secrets or "ORACLE_PASSWORD_HHC=" not in secrets
     # 実ファイルのパス確認用。REPO_ROOT はテスト実行場所
     assert REPO_ROOT.is_dir()
+
+
+# --- secrets.env が読めないとき (2026-09-23 実機検証で発見) ---------------
+#
+# 実機の /etc/presence-logger/secrets.env は root:docker の 600。手順書どおり
+# pi で pack すると grep が Permission denied を出すが、`|| true` に吸われて
+# 0バイトのテンプレを書いたまま「✅」で終わっていた。工場WiFi の PSK が
+# 載らないキットが現場へ出て、新機が工場網へ繋がろうとした段になって初めて
+# 失敗する。クラウドのテストは stdin 経由で呼んでいたため永久に緑だった。
+
+_as_root = os.geteuid() == 0
+skip_if_root = pytest.mark.skipif(
+    _as_root, reason="root は mode 000 も読めるので権限分岐を再現できない"
+)
+
+
+def _unreadable(tmp_path):
+    p = tmp_path / "secrets.env"
+    p.write_text(
+        "ORACLE_PASSWORD_HHC=super-secret\nWIFI_PSK_HIMEREAP=factory-psk\n",
+        encoding="utf-8",
+    )
+    p.chmod(0o000)
+    return p
+
+
+def test_pack_read_secrets_reports_missing_file(tmp_path):
+    proc = run_bash(
+        f'{SOURCE}; pack_read_secrets "{tmp_path}/none.env"',
+        env=_env(),
+        check=False,
+    )
+    assert proc.returncode == 2, "無いファイルと読めないファイルは区別する"
+
+
+def test_pack_read_secrets_reads_directly_when_permitted(tmp_path):
+    p = tmp_path / "secrets.env"
+    p.write_text("WIFI_PSK_HIMEREAP=factory-psk\n", encoding="utf-8")
+    proc = run_bash(f'{SOURCE}; pack_read_secrets "{p}"', env=_env(), check=True)
+    assert "WIFI_PSK_HIMEREAP=factory-psk" in proc.stdout
+
+
+@skip_if_root
+def test_pack_read_secrets_escalates_to_sudo_when_unreadable(tmp_path, fake_bin):
+    p = _unreadable(tmp_path)
+    # 本物の sudo を呼ばせない。偽 sudo は pi のままなので mode 000 を
+    # 読めない。root が読めたときの出力をそのまま返して代役にする。
+    fake_bin(
+        "sudo",
+        'printf "ORACLE_PASSWORD_HHC=super-secret\\nWIFI_PSK_HIMEREAP=factory-psk\\n"',
+    )
+    proc = run_bash(f'{SOURCE}; pack_read_secrets "{p}"', env=_env(), check=False)
+    assert proc.returncode == 0, proc.stderr
+    assert "WIFI_PSK_HIMEREAP=factory-psk" in proc.stdout
+
+
+@skip_if_root
+def test_pack_fails_instead_of_writing_empty_secrets_template(tmp_path, fake_bin):
+    """sudo も通らないなら、空テンプレの USB を作らずに止まること。"""
+    src = tmp_path / "src"
+    (src / "scripts").mkdir(parents=True)
+    dest = tmp_path / "usb"
+    site = tmp_path / "site.env"
+    site.write_text(
+        "HUB_HOSTNAME=parent\nFACTORY_IP=1.2.3.4/24\nAP_SSID=old\n"
+        "PARENT_STA_NO1=1\nPARENT_STA_NO2=2\nPARENT_STA_NO3=3\n",
+        encoding="utf-8",
+    )
+    p = _unreadable(tmp_path)
+    fake_bin("sudo", "exit 1")  # sudo が拒否される環境
+    proc = run_bash(
+        f'{SOURCE}; pack_hub_kit "{src}" "{dest}"',
+        env=_env({
+            "PACK_SKIP_DOCKER": "1",
+            "PACK_SITE_ENV": str(site),
+            "PACK_SECRETS": str(p),
+        }),
+        check=False,
+    )
+    assert proc.returncode != 0, "読めなかったのに成功で終わってはいけない"
+    assert "✅" not in proc.stdout, "失敗したのに成功マークを出してはいけない"
+    tmpl = dest / "presence-hub-kit" / ".kit" / "secrets.env.template"
+    assert not (tmpl.exists() and tmpl.stat().st_size == 0), \
+        "0バイトのテンプレを残すと、壊れたキットが現場へ出る"
+
+
+def _kit_inputs(tmp_path):
+    src = tmp_path / "src"
+    (src / "scripts").mkdir(parents=True)
+    site = tmp_path / "site.env"
+    site.write_text(
+        "HUB_HOSTNAME=parent\nFACTORY_IP=1.2.3.4/24\nAP_SSID=old\n"
+        "PARENT_STA_NO1=1\nPARENT_STA_NO2=2\nPARENT_STA_NO3=3\n",
+        encoding="utf-8",
+    )
+    return src, site
+
+
+def test_pack_stops_when_factory_psk_would_not_reach_the_new_hub(tmp_path):
+    """PSK の無いキットは、現場で「繋がらない」になるまで誰も気づけない。"""
+    src, site = _kit_inputs(tmp_path)
+    secrets = tmp_path / "secrets.env"
+    secrets.write_text("ORACLE_PASSWORD_HHC=only-oracle\n", encoding="utf-8")
+    dest = tmp_path / "usb"
+    proc = run_bash(
+        f'{SOURCE}; pack_hub_kit "{src}" "{dest}"',
+        env=_env({
+            "PACK_SKIP_DOCKER": "1",
+            "PACK_SITE_ENV": str(site),
+            "PACK_SECRETS": str(secrets),
+        }),
+        check=False,
+    )
+    assert proc.returncode != 0
+    assert "✅" not in proc.stdout
+
+
+def test_pack_allows_no_psk_when_explicitly_requested(tmp_path):
+    """別工場へ持っていくなど、PSK を載せない運用は明示的に通す。"""
+    src, site = _kit_inputs(tmp_path)
+    secrets = tmp_path / "secrets.env"
+    secrets.write_text("ORACLE_PASSWORD_HHC=only-oracle\n", encoding="utf-8")
+    dest = tmp_path / "usb"
+    proc = run_bash(
+        f'{SOURCE}; pack_hub_kit "{src}" "{dest}"',
+        env=_env({
+            "PACK_SKIP_DOCKER": "1",
+            "PACK_SITE_ENV": str(site),
+            "PACK_SECRETS": str(secrets),
+            "PACK_ALLOW_NO_PSK": "1",
+        }),
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "PACK_ALLOW_NO_PSK" in proc.stderr
