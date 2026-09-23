@@ -282,3 +282,43 @@ def test_register_new_child_rejects_duplicate_hostname(tmp_path):
     )
     assert not res.ok
     assert "既に使われています" in res.message
+
+
+def test_wait_for_return_rejects_the_stale_entry_left_by_the_reboot():
+    """再起動直後もARPには古い記録が残る。在ることを復帰と見なしてはいけない。
+
+    2026-09-23 の実機検証で踏んだ。工程3で再起動をかけた直後、まだ落ちて
+    いない子のARP記録を「復帰」と判定し、工程4(mDNS)と工程5(host key)が
+    起動前の相手に対して空振りした。それでも「登録しました」と表示された。
+    """
+    neigh = "10.42.0.51 lladdr 88:a2:9e:85:8e:4b STALE\n"
+    probes = []
+
+    def runner(cmd):
+        return neigh
+
+    def prober(ip):
+        # 再起動中は応答しない。3回目で起き上がる。
+        probes.append(ip)
+        return len(probes) >= 3
+
+    res = wait_for_return(
+        "88:a2:9e:85:8e:4b", timeout_s=60,
+        runner=runner, sleeper=lambda s: None, prober=prober,
+    )
+    assert res.ok, res.message
+    assert len(probes) >= 3, "応答を確かめずに復帰と判定している"
+    assert res.output == "10.42.0.51"
+
+
+def test_wait_for_return_fails_when_the_child_never_answers():
+    """ARPに残り続けても、応答しないなら復帰していない。"""
+    def runner(cmd):
+        return "10.42.0.51 lladdr 88:a2:9e:85:8e:4b STALE\n"
+
+    res = wait_for_return(
+        "88:a2:9e:85:8e:4b", timeout_s=20,
+        runner=runner, sleeper=lambda s: None, prober=lambda ip: False,
+    )
+    assert not res.ok
+    assert "復帰" in res.message

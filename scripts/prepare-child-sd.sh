@@ -75,6 +75,9 @@ uuid=$uuid
 type=wifi
 autoconnect=true
 autoconnect-priority=200
+# 0 = 無限に再試行する。既定の4回で諦めると、電波が正しく戻っても
+# 子は自力で復帰せず、物理的な電源再投入が要る(2026-09-23 に2台で発生)。
+autoconnect-retries=0
 
 [wifi]
 mode=infrastructure

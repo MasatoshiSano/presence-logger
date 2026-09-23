@@ -123,26 +123,50 @@ def rename_and_reboot(
     return _guarded(lambda: _ssh(ip, remote, runner), f"{new_hostname} へ変更し再起動しました")
 
 
+def _ssh_alive(ip: str, *, runner: Callable[[list[str]], str] = run_cmd) -> bool:
+    """この鍵で SSH が通るか。通れば相手は起動しきっている。"""
+    try:
+        runner([
+            "ssh", "-o", "ConnectTimeout=5", "-o", "BatchMode=yes",
+            "-o", "StrictHostKeyChecking=accept-new", f"pi@{ip}", "true",
+        ])
+    except Exception:
+        return False
+    return True
+
+
 def wait_for_return(
     mac: str,
     *,
     timeout_s: int = 180,
     runner: Callable[[list[str]], str] = run_cmd,
     sleeper: Callable[[float], None] = time.sleep,
+    prober: Callable[[str], bool] | None = None,
 ) -> StepResult:
     """工程3の後: MACで再出現を待つ。
 
     再起動でDHCPのIPが変わり得るため、IPやホスト名では追えない。MACだけが頼り。
+
+    ただし ARP に載っていることは復帰の証拠にならない。再起動を命じた直後も
+    古い記録はしばらく残るので、それを復帰と読むと、まだ落ちていない相手に
+    対して後続の工程が走り、何もせずに成功したように見える(2026-09-23 に実機で
+    再現)。MAC で引き当てたうえで、その相手が実際に応答することまで確かめる。
     """
     mac = mac.lower()
+    probe = prober or (lambda ip: _ssh_alive(ip, runner=runner))
     waited = 0
+    last_ip = ""
     while waited < timeout_s:
         for n in parse_neigh(runner(["ip", "-4", "neigh", "show", "dev", current_ap_dev()])):
             if n.mac == mac:
-                return StepResult(ok=True, message=f"復帰を確認しました ({n.ip})", output=n.ip)
+                last_ip = n.ip
+                if probe(n.ip):
+                    return StepResult(ok=True, message=f"復帰を確認しました ({n.ip})", output=n.ip)
+                break
         sleeper(5)
         waited += 5
-    return StepResult(ok=False, message=f"{timeout_s}秒待っても復帰しませんでした")
+    seen = f"（{last_ip} は見えていますが応答しません）" if last_ip else ""
+    return StepResult(ok=False, message=f"{timeout_s}秒待っても復帰しませんでした{seen}")
 
 
 def restart_mdns(ips: list[str], *, runner: Callable[[list[str]], str] = run_cmd) -> StepResult:

@@ -63,7 +63,10 @@ def test_prepare_writes_key_and_wifi_keeps_identity(tmp_path):
     )
     keys = (root / "home" / "pi" / ".ssh" / "authorized_keys").read_text(encoding="utf-8")
     assert "ssh-ed25519 AAAA newhub" in keys
-    wifi = (root / "etc" / "NetworkManager" / "system-connections" / "presence-hub-join.nmconnection")
+    wifi = (
+        root / "etc" / "NetworkManager" / "system-connections"
+        / "presence-hub-join.nmconnection"
+    )
     body = wifi.read_text(encoding="utf-8")
     assert 'ssid="sibling-hub"' in body
     assert 'psk="ap-secret9"' in body
@@ -129,3 +132,21 @@ def test_prepare_disables_old_wifi_autoconnect(tmp_path):
     body = old.read_text(encoding="utf-8")
     assert "autoconnect=false" in body
     assert "autoconnect=true" not in body
+
+
+def test_sd_wifi_profile_never_gives_up_reconnecting(tmp_path):
+    """NetworkManager の既定は4回で自動接続を諦める。子には無限再試行が要る。
+
+    2026-09-23 の AP パスワード切替で、既定のまま4回失敗した子2台が
+    自動接続を放棄し、電波が正しく戻っても再試行しなくなった。復旧には
+    物理的な電源再投入が必要だった。SD に書くプロファイルも同じ穴を持つ。
+    """
+    root = _child_root(tmp_path)
+    run_bash(
+        f'{SOURCE}; child_sd_write_wifi "{root}" sibling-hub "ap-secret9"',
+        env=_env(),
+    )
+    body = (
+        root / "etc" / "NetworkManager" / "system-connections" / "presence-hub-join.nmconnection"
+    ).read_text(encoding="utf-8")
+    assert "autoconnect-retries=0" in body, "4回で諦めると電源再投入が要る"
