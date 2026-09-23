@@ -40,13 +40,39 @@ ap_env_args() {
     printf 'AP_CONN=%s-ap\n' "$AP_SSID"
 }
 
+# 何をするかだけを決める: skip(自APが既に動いている) / abort(同じ SSID の
+# 他APが見える) / build(作る、または作り直す)。
+#
+# 強制は引数 --force と環境変数 AP_FORCE=1 のどちらでも受ける。ウィザードの
+# 「p: AP パスワードだけやり直す」は AP_FORCE=1 で呼ぶ。以前はこれを見ておらず、
+# しかも自APが動いていればスキップしていたので、secrets だけ新しいパスワードに
+# なり、実際の AP は古いパスワードのままだった。強制時は動いていても作り直す
+# (setup-dongle-ap.sh はプロファイルを消して作り直すので新しい PSK が載る)。
+ap_plan() {
+    local force=0
+    if [ "${1:-}" = "--force" ] || [ "${AP_FORCE:-}" = "1" ]; then
+        force=1
+    fi
+    if [ "$force" = 1 ]; then
+        echo build
+    elif ap_own_connection_active; then
+        echo skip
+    elif ap_duplicate_ssid_present "$AP_SSID"; then
+        echo abort
+    else
+        echo build
+    fi
+}
+
 main() {
     site_env_require
-    if ap_own_connection_active; then
+    local plan
+    plan="$(ap_plan "$@")"
+    if [ "$plan" = skip ]; then
         echo "${AP_SSID}-ap は既に起動しています。スキップします"
         return 0
     fi
-    if [ "${1:-}" != "--force" ] && ap_duplicate_ssid_present "$AP_SSID"; then
+    if [ "$plan" = abort ]; then
         cat >&2 <<EOF
 ⚠ 同じ SSID の AP が既に見えています: $AP_SSID
 

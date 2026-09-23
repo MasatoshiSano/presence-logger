@@ -109,3 +109,52 @@ def test_apply_explicit_address_fails_when_nmcli_fails(tmp_path, fake_bin):
         check=False,
     )
     assert proc.returncode == 1
+
+
+# 自APが上がっている nmcli。wifi list にも自分の SSID が載る。
+_OWN_AP_UP = (
+    'if [[ " $* " == *" --active "* ]]; then echo "presence-hub-ap"; '
+    'else echo "presence-hub:70:WPA2"; fi'
+)
+
+
+def _plan(tmp_path, args="", extra_env=None):
+    f = _site(tmp_path)
+    env = dict(os.environ)
+    env.pop("AP_FORCE", None)
+    env.update(extra_env or {})
+    return run_bash(f'{SOURCE}; site_env_load "{f}"; ap_plan {args}',
+                    env=env, check=False).stdout.strip()
+
+
+def test_running_ap_is_skipped_without_force(tmp_path, fake_bin):
+    fake_bin("nmcli", _OWN_AP_UP)
+    assert _plan(tmp_path) == "skip"
+
+
+def test_wizard_password_redo_rebuilds_the_running_ap(tmp_path, fake_bin):
+    """ウィザードの p は AP_FORCE=1 で 50-ap.sh を呼ぶ。
+
+    以前の 50-ap.sh は AP_FORCE を見ず、しかも AP が動いていれば
+    「スキップします」で終わっていた。/etc の secrets と .kit/ap-join.env は
+    新しいパスワードになるのに、実際の AP は古いパスワードのまま。
+    子は新しいパスワードで繋ぎに行って弾かれ続ける。
+    """
+    fake_bin("nmcli", _OWN_AP_UP)
+    assert _plan(tmp_path, extra_env={"AP_FORCE": "1"}) == "build"
+
+
+def test_force_flag_rebuilds_the_running_ap(tmp_path, fake_bin):
+    fake_bin("nmcli", _OWN_AP_UP)
+    assert _plan(tmp_path, args="--force") == "build"
+
+
+def test_foreign_same_ssid_still_aborts_without_force(tmp_path, fake_bin):
+    fake_bin("nmcli", 'if [[ " $* " == *" --active "* ]]; then :; '
+                      'else echo "presence-hub:70:WPA2"; fi')
+    assert _plan(tmp_path) == "abort"
+
+
+def test_nothing_up_and_nothing_seen_builds(tmp_path, fake_bin):
+    fake_bin("nmcli", ":")
+    assert _plan(tmp_path) == "build"
