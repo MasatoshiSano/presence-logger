@@ -31,12 +31,15 @@ ap_needs_explicit_address() {
     [ "${AP_GW_IP:-10.42.0.1}" != "10.42.0.1" ]
 }
 
+# UFI_CONN は空で渡す。setup-dongle-ap.sh は UFI_CONN の接続の autoconnect を
+# 切る(ドングルを子機にしていた旧構成向け)。以前は HOME_SSID を渡していたため、
+# F66 に繋いだ新機が再起動後に F66 へ戻らず、遠隔から触れなくなっていた。
 ap_env_args() {
     printf 'AP_IF=%s\n'      "$AP_IF"
     printf 'AP_SSID=%s\n'    "$AP_SSID"
     printf 'AP_BAND=%s\n'    "$AP_BAND"
     printf 'AP_CHANNEL=%s\n' "$AP_CHANNEL"
-    printf 'UFI_CONN=%s\n'   "$HOME_SSID"
+    printf 'UFI_CONN=\n'
     printf 'AP_CONN=%s-ap\n' "$AP_SSID"
 }
 
