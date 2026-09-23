@@ -68,6 +68,13 @@ Raspberry Pi 5 上で USB カメラの映像から人物の在/不在を検出�
 
 ## 本番インストール（Raspberry Pi 5）
 
+カメラ付きの親（detector + bridge）は次の `/opt/presence-logger` 手順。
+**子Pi専用ハブ**（カメラ無し、`HUB_MODE=1`）は `scripts/bootstrap-hub.sh` を使う。
+手順は [`docs/NEW-HUB-SETUP.md`](docs/NEW-HUB-SETUP.md)。既存子の引っ越しは
+[`docs/child-migration.md`](docs/child-migration.md)。
+
+### カメラ付き親（`/opt/presence-logger`）
+
 ```bash
 # 1. リポジトリを /opt/presence-logger にクローン
 sudo git clone https://github.com/MasatoshiSano/presence-logger.git /opt/presence-logger
@@ -103,6 +110,20 @@ sudo systemctl status presence-logger.service
 docker compose ps                                  # 3コンテナ全部 healthy か
 bash scripts/tail-logs.sh                          # JSON ログをライブ追跡
 ```
+
+### 子Pi専用ハブ（カメラ無し）
+
+`site.env` を埋めてからブートストラップする。detector は compose profile `camera`
+の後ろなので、ハブの素の `docker compose up -d` では起動しない。
+
+```bash
+cd ~/projects/presence-logger
+cp site.env.example site.env && chmod 600 site.env
+# site.env を新機の値に編集（秘密は書かない）
+sudo bash scripts/bootstrap-hub.sh
+```
+
+詳細・手動の復旧手順は [`docs/NEW-HUB-SETUP.md`](docs/NEW-HUB-SETUP.md)。
 
 > **`/etc/presence-logger/` の全ファイル仕様**（どのファイルがどの設定を
 > どんな形式・権限で持つか）は [`docs/etc-presence-logger.md`](docs/etc-presence-logger.md) を参照。

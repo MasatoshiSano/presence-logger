@@ -379,7 +379,7 @@
     <p class="lead reveal">投函してから台帳に載るまで、6ステップ。</p>
 
     <div class="steps stagger reveal">
-      <div class="step"><h4>子PiをAPに接続</h4><p>子ラズパイをハブの無線「presence-hub」に繋ぐ。下の接続情報を使う。自動で 10.42.0.x のIPがもらえる。</p><span class="cmd">sudo nmcli device wifi connect "presence-hub" password "presence-hub-2026"</span></div>
+      <div class="step"><h4>子PiをAPに接続</h4><p>子ラズパイをハブの無線「presence-hub」に繋ぐ。下の接続情報を使う。自動で 10.42.0.x のIPがもらえる。</p><span class="cmd">sudo nmcli device wifi connect "presence-hub" password "<APのパスワード>"</span></div>
       <div class="step"><h4>CSVを置く</h4><p>送りたい行を書いたCSVを子Piの outbox フォルダに置く。</p><span class="cmd">~/outbox/records.csv</span></div>
       <div class="step"><h4>発送係がJSONで投函</h4><p>child-csv-to-mqtt.py が各行をJSONにして MQTT の presence/record へ送信（QoS2）。送ったファイルは sent へ退避。</p><span class="cmd">MQTT_HOST=10.42.0.1 python3 child-csv-to-mqtt.py</span></div>
       <div class="step"><h4>ハブが受け取り控える</h4><p>ハブのmosquittoが受信→bridgeが「record_inbox」に保存。ここまでは工場網が無くてもOK（貯めておける）。</p><span class="cmd">log: record_received</span></div>
@@ -390,11 +390,11 @@
     <!-- presence-hub 接続情報 -->
     <div class="codecard reveal"><div class="ttl">🔑 presence-hub の接続情報（子Pi側で使う）</div><pre><span class="cm"># Wi-Fi（ハブのドングルAP）</span>
 SSID     : presence-hub        <span class="cm"># 2.4GHz・隠しではないので一覧に出る</span>
-パスワード : presence-hub-2026   <span class="cm"># WPA2。運用で変えたら↓も更新</span>
+パスワード : &lt;APのパスワード&gt;    <span class="cm"># WPA2。ハブの /etc/presence-logger/secrets.env の WIFI_AP_PSK</span>
 ハブ(GW) : 10.42.0.1           <span class="cm"># 子Piは 10.42.0.x が自動付与(DHCP)</span>
 
 <span class="cm"># ① 接続（子ラズパイで1回）</span>
-sudo nmcli device wifi connect "presence-hub" password "presence-hub-2026"
+sudo nmcli device wifi connect "presence-hub" password "<APのパスワード>"
 
 <span class="cm"># ② つながったか確認</span>
 ping 10.42.0.1            <span class="cm"># ハブに届けばOK</span>

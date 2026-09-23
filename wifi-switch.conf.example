@@ -1,0 +1,14 @@
+# wifi-switch.conf — デスクトップ「WiFi切替」に並べるランチャーの定義。
+#   cp wifi-switch.conf.example wifi-switch.conf && chmod 600 wifi-switch.conf
+# 機体固有・Git管理外。1行1ランチャー。'#' 以降はコメント。
+#
+# <警告> が warn の行は、切り替え前に「site.env の ADMIN_SSID から離れる」旨を
+# 表示して y/N を取る。
+# <PSKキー名> が '-' の行は nmcli プロファイルを作らない。presence-hub-ap は
+# フェーズ50 の setup-dongle-ap.sh が作るため、必ず '-' にすること。
+#
+# <NM接続名>       <ifname>  <表示名>       <警告>  <PSKキー名(secrets.env)>
+F660P-sDcS-A       wlan0     F66            -       WIFI_PSK_F66
+GallaxyS23FE       wlan0     GallaxyS23FE   warn    WIFI_PSK_GALAXY
+UFI_103134         wlan0     UFI_103134     warn    WIFI_PSK_UFI
+presence-hub-ap    wlan1     presence-hub   -       -

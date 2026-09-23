@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # 60-stack.sh — コンテナを起動し、再起動でも復活するようにする。
 #
+# 前提: 子AP が上がっていること。docker-compose.override.yml が mosquitto を
+# AP のゲートウェイIPにバインドするため、そのIPが存在しないと起動できない。
+#
 # USB キットのイメージ tar があれば docker load し、--no-build で上げる。
 # detector はハブでは起動しない。
 set -uo pipefail
@@ -16,6 +19,9 @@ stack_services() {
     [ "${HUB_MODE:-1}" = "1" ] || printf 'detector\n'
 }
 
+# キットのイメージがあるならビルドしない。detector の Dockerfile は
+# .gitignore 済みの .tflite を COPY するので、--build を無条件に打つと
+# カメラ無しのハブでも失敗する。
 stack_compose_up_args() {
     local kit="${1:-$REPO_DIR/.kit/docker-images}"
     local svcs
@@ -42,6 +48,8 @@ stack_write_env() {
     cat > "$dst" <<EOF
 # 自動生成: scripts/bootstrap/60-stack.sh
 AP_GW_IP=${AP_GW_IP}
+# ディレクトリ名が変わってもイメージ名がズレないよう固定する。
+# キットの tar は presence-logger-bridge:latest 等の名前で load される。
 COMPOSE_PROJECT_NAME=presence-logger
 EOF
 }

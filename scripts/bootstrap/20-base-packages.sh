@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
-# 20-base-packages.sh — docker・compose プラグイン・venv・ホスト名・SSH鍵。
+# 20-base-packages.sh — docker・python3-yaml・ビルド環境・venv・ホスト名・SSH鍵。
 #
-# docker グループへの追加はこの場で行う。残りのフェーズは root で docker を
-# 話すので、再ログインを待たずに先へ進む。
+# python3-yaml は「システムの python3」に要る。install.sh /
+# connect-hime-h-reap.sh / show-recent-records.sh / pipeline_monitor は
+# いずれも venv ではなくシステム側の python3 で yaml を読む。
+#
+# docker グループへの追加もこの場で行う。ただし残りのフェーズは root で
+# docker を話すので、反映のための再ログインを待たずに先へ進む。
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$HERE/../.." && pwd)"
 # shellcheck source=scripts/lib/site-env.sh
 source "$REPO_DIR/scripts/lib/site-env.sh"
-# shellcheck source=scripts/lib/docker-run.sh
-source "$REPO_DIR/scripts/lib/docker-run.sh"
 
 base_packages() {
     cat <<'EOF'
@@ -32,6 +34,7 @@ base_set_hostname() {
     printf '%s\n' "$name" > "$hn"
     # 旧ホスト名では置換しない。`\b` はハイフン手前でも単語境界になり、
     # pizero2w の置換が pizero2w-2 の行を壊す(DEPLOY.md に記録済み)。
+    # 127.0.1.1 行はローカルホスト名専用なので丸ごと差し替える。
     if grep -q '^127\.0\.1\.1[[:space:]]' "$hosts"; then
         sed -i "s/^127\.0\.1\.1[[:space:]].*/127.0.1.1\t$name/" "$hosts"
     else
@@ -42,9 +45,14 @@ base_set_hostname() {
 base_ensure_venv() {
     local repo="${1:-$REPO_DIR}"
     [ -x "$repo/.venv/bin/python" ] && return 0
+    # fleet-ui.service が .venv/bin/python を絶対パスで叩くため必須。
+    # fleet_ui 自体は標準ライブラリのみだが、システムの python3-yaml も
+    # 見えるようにしておく。
     python3 -m venv --system-site-packages "$repo/.venv"
 }
 
+# docker.io を入れただけでは daemon が上がっていないことがある。フェーズ60 が
+# 「イメージは load 済みなのにコンテナが上がらない」で転ぶ前に、ここで弾く。
 base_enable_docker() {
     systemctl enable --now docker 2>/dev/null || service docker start 2>/dev/null || true
     if ! docker compose version >/dev/null 2>&1; then
@@ -66,7 +74,9 @@ main() {
 
     echo "==> ホスト名を $HUB_HOSTNAME に"
     base_set_hostname "$HUB_HOSTNAME" /etc/hostname /etc/hosts
-    hostnamectl set-hostname "$HUB_HOSTNAME" 2>/dev/null || true
+    # ここを握り潰すと device_id と MQTT client_id が旧名のままになり、
+    # 親子が相互に切断し合う。黙って進めず落とす。
+    hostnamectl set-hostname "$HUB_HOSTNAME"
 
     echo "==> $user を docker グループへ"
     getent group docker >/dev/null || groupadd docker
@@ -84,12 +94,14 @@ main() {
     cat <<EOF
 
 --------------------------------------------------------------
- 公開鍵（子Pi の authorized_keys へ。新しく足す子用）:
+ ⚠ 子Pi へ入るための公開鍵です。**旧親がまだ子に到達できるうちに**
+   各子の ~/.ssh/authorized_keys へ入れてください。
+   子が新APへ移った後では、どちらの親からも入れられなくなります。
 
 $(cat "$home/.ssh/id_ed25519.pub" 2>/dev/null)
 
- docker はこのあとも root で操作するので、再ログインを待たずに進みます。
- デスクトップから pi ユーザーで docker を叩くのは再起動後です。
+ docker はこのあとも root で操作するので、残りのフェーズは再ログインを
+ 待たずに進みます。デスクトップから $user で docker を叩けるのは再起動後です。
 --------------------------------------------------------------
 EOF
 }

@@ -9,7 +9,11 @@
 > 設定する（下記「USB 対話セットアップ」）。`site.env` を手で書く必要はない。
 >
 > ブートストラップ本体は `scripts/bootstrap-hub.sh`。ウィザードがその入力を作ってから
-> 全フェーズを回す。各節の「手動」はフェーズが失敗したときの拠り所。
+> 全フェーズを回す。各節の「手動」はフェーズが失敗したときの拠り所として残してある
+> （顧客先でネットが無いときでも、この文書だけで復旧できる）。
+>
+> 機体固有値は `site.env` と `wifi-switch.conf` だけ。接続・切断・子AP・WiFi切替は
+> そこから読む。スクリプトに現行機の SSID を直書きしない。
 
 ---
 
@@ -20,11 +24,15 @@
 ### 親機で USB を書く
 
 ```bash
-bash scripts/pack-hub-usb.sh /media/pi/USBのマウント先
+sudo bash scripts/pack-hub-usb.sh /media/pi/USBのマウント先
 ```
 
+`/etc/presence-logger/secrets.env` は root しか読めないので `sudo` を付ける。
+付け忘れても、端末があればパスワードを聞いて続行する。聞けない場所で走らせた
+ときは、工場WiFi の PSK が載らないキットを作る前に中止する。
+
 キット `presence-hub-kit/` にはリポジトリ、ドングルドライバのソース、
-`mosquitto` / `oracle-jdbc` / `bridge` のイメージが入る。
+`mosquitto` / `oracle-jdbc` / `bridge` のイメージが入る（実測 約286MB）。
 **載せないもの**: 親の `fleet/children.conf`、Oracle パスワード、AP パスワード、
 detector イメージ、SQLite バッファ。工場WiFi の PSK は載るので、USB は鍵と同じ扱い。
 
@@ -110,20 +118,16 @@ sudo usermod -aG docker "$USER"      # 反映には再ログイン or reboot が
    mosquitto が起動できない**（`restart: unless-stopped` で延々と再試行する）。
 3. **`/etc/presence-logger/` を先に全部揃える。** 特に `upcmpflg.override`（§3.4 の罠）。
 
-### ハブでは `--build` を無条件に打たない
+### detector は compose profile `camera` の後ろ
 
-```bash
-# ✗ 失敗する（detector も一緒にビルドしようとする）
-docker compose up -d --build
-
-# ○ ハブで動かす 3 つだけを明示する
-docker compose up -d --build mosquitto oracle-jdbc bridge
-```
+`services/detector` は `profiles: ["camera"]` 付きなので、ハブの素の
+`docker compose up -d`（`--profile camera` なし）では**起動しない**。フェーズ60 は
+`mosquitto oracle-jdbc bridge` だけを明示して `up -d --build` する。カメラ付き親で
+detector を動かすときは `docker compose --profile camera up -d` が要る。
 
 `services/detector/Dockerfile` は `COPY models/efficientdet_lite0.tflite` を含むが、この
-`.tflite` は `.gitignore` されており **clone 直後には存在しない**。カメラ無しのハブでは
-detector 自体が不要なので、サービスを明示して除外する
-（設計書 §6 フェーズ60 の実装後は compose の `profiles:` で自動的に外れる）。
+`.tflite` は `.gitignore` されており clone 直後には存在しない。profile の後ろにいる
+おかげで、ハブの `up -d --build` がこの COPY で失敗することもない。
 
 ### スクリプトのフェーズと、この文書の節の対応
 
@@ -150,6 +154,9 @@ bash scripts/bootstrap-hub.sh --list          # 一覧
 
 **途中で失敗しても、そのフェーズから再開できる。** 全フェーズは冪等なので、範囲を指定して
 流し直しても壊れない。
+
+子Pi の引っ越し・増設は [`child-migration.md`](child-migration.md)。
+SD クローンで 2 台目を作る場合は [`sd-clone-pattern-b.md`](sd-clone-pattern-b.md)。
 
 ---
 
@@ -276,6 +283,9 @@ nano wifi-switch.conf
 
 ### 3.3 `secrets.env`（#3）— 最重要
 
+フェーズ40（`sudo bash scripts/bootstrap-hub.sh 40`）は空の `secrets.env`
+（`600 root:docker`）を作り、欠けているキー名だけ出す。**値は人が手入力する。**
+
 **現行機の画面に表示させ、新機で手入力する。** ファイルをネットワーク越しにコピーしたり、
 チャット・チケット・コミットに貼ったりしない。
 
@@ -308,9 +318,9 @@ sudo nano /etc/presence-logger/secrets.env
 
 ### 3.4 `/etc/presence-logger/` の YAML 群（#4〜#8）
 
-**自動（実装後）**: `sudo bash scripts/bootstrap-hub.sh 40`
+**自動**: `sudo bash scripts/bootstrap-hub.sh 40`
 
-**手動（現在）**:
+**手動**（フェーズ失敗時）:
 ```bash
 cd ~/projects/presence-logger
 sudo bash scripts/install.sh                      # ひな型を配置 + timesyncd 設定
@@ -348,9 +358,13 @@ ls -l /etc/presence-logger/
 
 ### 3.5 `.venv`（#10）
 
-フェーズ20 が `.venv` を作る。子の付け替えはデスクトップの
-「子をこのハブへ付ける」（システム `python3` + `fleet_ui` パッケージ）を使う。
-ブラウザの `fleet-ui.service` は起動しない。
+**自動**: `sudo bash scripts/bootstrap-hub.sh 20`（venv 作成を含む）
+
+子の付け替えはデスクトップの「子をこのハブへ付ける」（システム `python3` +
+`fleet_ui` パッケージ）を使う。ブラウザの `fleet-ui.service` は常駐化しない。
+手で動かす場合だけ、unit が
+`/home/pi/projects/presence-logger/.venv/bin/python` を**絶対パスで**起動する
+ことに注意する。
 
 `fleet_ui` の依存は**標準ライブラリだけ**（`json` / `subprocess` / `shlex` /
 `pathlib` 等）。システムの `python3-yaml` も見えるようにしておくと、後から
@@ -385,6 +399,9 @@ scripts/deploy-model.sh --list      # 版が見えることを確認
 `object_detection/20260422`。
 
 ### 3.7 SSH 鍵と子への到達設定（#12〜#14）
+
+**自動**: `sudo bash scripts/bootstrap-hub.sh 20` が鍵が無いときだけ生成する。
+公開鍵の子への配布は人が行う（[`child-migration.md`](child-migration.md)）。
 
 **現行機の鍵をコピーせず、新機で新しく作る**（鍵の複製は追跡性を失う）。ただし
 **順序が決定的に重要**である。
@@ -460,7 +477,7 @@ import sqlite3
 c=sqlite3.connect('/var/lib/presence-logger/bridge_record_buf.db')
 print('未送信:', c.execute(\"select count(*) from record_inbox where status='received'\").fetchone()[0])"
 
-# 2. 0 になってから新ハブへ切り替える（子の引っ越し手順へ）
+# 2. 0 になってから新ハブへ切り替える（[child-migration.md](child-migration.md)）
 ```
 
 新機側は空のディレクトリでよい（`scripts/install.sh` が作る）。
@@ -469,9 +486,9 @@ print('未送信:', c.execute(\"select count(*) from record_inbox where status='
 
 素の Raspberry Pi OS では `wlan1` が出てこない（`pegasus` が `056e:4010` に誤マッチする）。
 
-**自動（実装後）**: `sudo bash scripts/bootstrap-hub.sh 30`
+**自動**: `sudo bash scripts/bootstrap-hub.sh 30`
 
-**手動（現在）**: [`wifi-dongle-dual-wifi.md`](wifi-dongle-dual-wifi.md) の §1 に従う。要点のみ:
+**手動**（フェーズ失敗時）: [`wifi-dongle-dual-wifi.md`](wifi-dongle-dual-wifi.md) の §1 に従う。要点のみ:
 
 ```bash
 sudo apt-get install -y dkms build-essential git bc raspberrypi-kernel-headers
@@ -496,9 +513,9 @@ iw phy $(cat /sys/class/net/wlan1/phy80211/name) info | grep -- '\* AP'
 
 ### 3.10 日本語入力の設定（#18）
 
-**自動（実装後）**: `sudo bash scripts/bootstrap-hub.sh 10`
+**自動**: `sudo bash scripts/bootstrap-hub.sh 10`
 
-**手動（現在）**:
+**手動**（フェーズ失敗時）:
 ```bash
 sudo apt-get install -y fcitx5 fcitx5-mozc fcitx5-frontend-gtk3 fcitx5-frontend-gtk4 \
     fcitx5-frontend-qt5 fcitx5-frontend-qt6 fcitx5-config-qt mozc-utils-gui fonts-noto-cjk
@@ -556,10 +573,11 @@ fcitx5 が既に動いている状態で `profile` を書いた場合は、再�
 **現行機の `/etc/NetworkManager/system-connections/` を丸ごとコピーしない。** 全SSIDの PSK が
 平文で入っており、不要な古い接続も混ざるため。
 
-**自動（実装後）**: `sudo bash scripts/bootstrap-hub.sh 70` が `wifi-switch.conf` と
-`secrets.env` から必要な分だけ作る。
+**自動**: `sudo bash scripts/bootstrap-hub.sh 70` が `wifi-switch.conf` と
+`secrets.env` から必要な分だけ作る。`warn` 行のランチャーは
+`--warn-disconnect "$ADMIN_SSID"` を付ける（旧 `--away-from-f66` ではない）。
 
-**手動（現在）**: 接続ごとに 1 回だけ作る。
+**手動**（フェーズ失敗時）: 接続ごとに 1 回だけ作る。
 ```bash
 sudo nmcli connection add type wifi con-name "F660P-sDcS-A" ifname wlan0 \
     ssid "F660P-sDcS-A" \
@@ -573,8 +591,13 @@ sudo nmcli connection add type wifi con-name "F660P-sDcS-A" ifname wlan0 \
 
 ### 3.12 コンテナの起動と常駐化（欠かせない最後の工程）
 
+**自動**: `sudo bash scripts/bootstrap-hub.sh 60`
+
 §0.5 の順序（インターネット中にビルド → 子AP を上げる → `/etc/presence-logger/` を揃える）
-を満たしてから実行する。
+を満たしてから実行する。detector は compose profile `camera` の後ろなので、ハブの素の
+`up -d` では起動しない。
+
+**手動**（フェーズ失敗時）:
 
 ```bash
 cd ~/projects/presence-logger
@@ -586,13 +609,14 @@ docker ps --format '{{.Names}}  {{.Status}}'      # 3つが Up であること
 `WorkingDirectory=/opt/presence-logger` を指しているので、実ツリーへ向け直す drop-in が要る。
 
 ```bash
-sudo REPO_DIR=~/projects/presence-logger bash desktop/presence-tools/setup-autostart.sh
+sudo HUB_MODE=1 REPO_DIR=~/projects/presence-logger \
+    bash desktop/presence-tools/setup-autostart.sh
 systemctl is-enabled presence-logger.service       # enabled
 ```
 
-> `setup-autostart.sh` は drop-in に `ExecStartPost=-/usr/bin/docker stop presence-detector`
-> を書く。カメラ無しのハブに detector は存在しないが、行頭の `-` により失敗しても無視される
-> ので害はない（実装後は `HUB_MODE` で出し分ける）。
+> `HUB_MODE=1` のときは `setup-autostart.sh` は `ExecStartPost=docker stop presence-detector`
+> を**書かない**（ハブに detector は居ない）。カメラ付き親ではその行を書き、起動直後に
+> detector を止める（検知は「HIME-H-REAP に接続」で開始する設計）。
 
 フリート監視のブラウザ常駐（fleet-ui）は**置かない**。子の付け替えはデスクトップの
 「子をこのハブへ付ける」だけを使う。
@@ -602,22 +626,30 @@ systemctl is-enabled presence-logger.service       # enabled
 **この工程を飛ばすと、コンテナが動いていても現地で誰も操作できない。** §4 の完了確認は
 これらのアイコンが動くことを前提にしている。
 
-**自動（実装後）**: `sudo bash scripts/bootstrap-hub.sh 70`
+**自動**: `sudo bash scripts/bootstrap-hub.sh 70`
 
-**手動（現在）**:
+フェーズ70 が `desktop/launchers/` のテンプレート（`__TOOLS_DIR__` 等）から
+実ホームへ埋める。`/home/pi/` を手で直す必要はない。
+
+**手動**（フェーズ失敗時）:
 
 ```bash
 cd ~/projects/presence-logger
 DESK="$HOME/Desktop"
-mkdir -p "$DESK/presence-tools" "$DESK/WiFi切替"
+TOOLS="$DESK/presence-tools"
+mkdir -p "$TOOLS" "$DESK/WiFi切替"
 
 # 1. ツール本体
-cp -r desktop/presence-tools/. "$DESK/presence-tools/"
-chmod +x "$DESK/presence-tools"/*.sh "$DESK/presence-tools"/*.py
+cp -r desktop/presence-tools/. "$TOOLS/"
+cp desktop/wifi-switch/switch-wifi.sh "$DESK/WiFi切替/"
+chmod +x "$TOOLS"/*.sh "$DESK/WiFi切替/switch-wifi.sh"
 
-# 2. ランチャー（パスを自分の $HOME に置き換える）
+# 2. ランチャー（テンプレートの __TOOLS_DIR__ を自分の Desktop に置き換える）
+#    HOME_SSID は site.env の値（切断アイコンの戻り先）
+HOME_SSID="$(grep -E '^HOME_SSID=' site.env | cut -d= -f2-)"
 for f in desktop/launchers/*.desktop; do
-    sed "s|/home/pi/Desktop|$DESK|g" "$f" > "$DESK/$(basename "$f")"
+    sed -e "s|__TOOLS_DIR__|$TOOLS|g" -e "s|__HOME_SSID__|$HOME_SSID|g" \
+        "$f" > "$DESK/$(basename "$f")"
 done
 chmod +x "$DESK"/*.desktop
 ```
@@ -634,7 +666,7 @@ chmod +x "$DESK"/*.desktop
 | 直近30件の記録 | `show-recent-records.sh` | 不要 | JDBCサイドカー経由で Oracle を SELECT |
 | パイプライン監視 | `pipeline-monitor.sh` | 不要 | 子Pi→MQTT→inbox→Oracle を1画面で追う |
 | 子をこのハブへ付ける | `setup-children-wizard.sh` | 一部 | 既存の子の引っ越し / 新しい子の登録（会話形式） |
-| WiFi切替（`WiFi切替/` 内） | `switch-wifi.sh` | 要 | §3.11 で nmcli プロファイルを作った接続だけ |
+| WiFi切替（`WiFi切替/` 内） | `switch-wifi.sh` | 要 | §3.11 で nmcli プロファイルを作った接続だけ。`warn` 行は `--warn-disconnect <ADMIN_SSID>`（旧 `--away-from-f66` ではない） |
 
 **ハブ構成（カメラ無し）での注意 3 点**
 
@@ -663,9 +695,11 @@ ls ~/Desktop/*.desktop ~/Desktop/WiFi切替/*.desktop
 - **既存の子が1台でも到達不能だと、未登録の候補を出さない。** これは仕様である
   （稼働中の子がIPドリフトで「未登録の端末」に見えたとき、本番機を誤って再プロビジョニング
   しないための保護）。引っ越し中は **「子をこのハブへ付ける」→ 既存の子を移す** を使う。
-- **AP の装置名は環境変数 `AP_DEV`（既定 `wlan1`）。** 新機でドングルが `wlan0` として現れると**子が1台も
-  表示されない**。`ip -br link` で確認し、想定と違う場合は設計書 §7 の `AP_DEV`
-  環境変数化を先に実装する。
+- **AP の装置名は環境変数 `AP_DEV`（既定 `wlan1`）。** 新機でドングルが `wlan0` として
+  現れると**子が1台も表示されない**。`ip -br link` で確認すること。値は呼び出しのたびに
+  読む（`fleet_ui.discovery.current_ap_dev`）ので、`AP_DEV=wlan0` を渡せばその場で効く。
+  `site.env` の `AP_IF` とは**自動同期しない**ため、常駐させる場合は
+  `fleet_ui/systemd/fleet-ui.service` の `Environment=AP_DEV=...` を `AP_IF` に揃える。
 
 ---
 
