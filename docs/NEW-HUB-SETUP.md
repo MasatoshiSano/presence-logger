@@ -82,7 +82,7 @@ docker 本体と compose プラグインはフェーズ20 が入れる。docker 
 ```bash
 sudo apt-get update
 sudo apt-get install -y \
-    docker.io docker-compose-plugin \
+    docker.io docker-cli docker-compose \
     python3-yaml \
     mosquitto-clients \
     git rsync \

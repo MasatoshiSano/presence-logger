@@ -18,9 +18,8 @@ source "$REPO_DIR/scripts/lib/site-env.sh"
 # raspberrypi-kernel-headers は bookworm までの名前で、trixie では
 # linux-headers-rpi-2712(Pi 5 用)になった。
 base_packages() {
+    base_docker_packages
     cat <<'EOF'
-docker.io
-docker-compose-plugin
 python3-yaml
 python3-venv
 mosquitto-clients
@@ -31,6 +30,20 @@ build-essential
 bc
 linux-headers-rpi-2712
 EOF
+}
+
+# docker は Debian 自身の版を使う。docker-compose-plugin / docker-ce は
+# Docker 社の apt リポジトリ(download.docker.com)にしか無く、素の Pi OS には
+# そのリポジトリが無い。Debian の docker-compose は
+# /usr/libexec/docker/cli-plugins/ に入り `docker compose` として動く。
+#
+# docker.io は docker-ce と Conflicts。docker-ce が既に入った機械(今の親機)で
+# 頼むと、apt は docker-ce を外して入れ替える。動いているエンジンには触らない。
+base_docker_packages() {
+    if dpkg-query -W -f='${Status}' docker-ce 2>/dev/null | grep -q 'install ok installed'; then
+        return 0
+    fi
+    printf '%s\n' docker.io docker-cli docker-compose
 }
 
 base_set_hostname() {
@@ -74,7 +87,7 @@ base_install_packages() {
 base_enable_docker() {
     systemctl enable --now docker 2>/dev/null || service docker start 2>/dev/null || true
     if ! docker compose version >/dev/null 2>&1; then
-        echo "docker-compose-plugin を入れても docker compose が使えません" >&2
+        echo "docker を入れても docker compose が使えません" >&2
         return 1
     fi
 }

@@ -7,10 +7,13 @@ BASE = "source scripts/bootstrap/20-base-packages.sh"
 CFG = "source scripts/bootstrap/40-configs.sh"
 
 
-def test_base_packages_include_compose_plugin():
+def test_base_packages_include_compose_plugin(fake_bin):
+    fake_bin("dpkg-query", "exit 1")          # 素の Pi(docker-ce 無し)を装う
     out = run_bash(f"{BASE}; base_packages", env=dict(os.environ)).stdout.split()
     assert "docker.io" in out
-    assert "docker-compose-plugin" in out
+    # Debian の docker-compose は /usr/libexec/docker/cli-plugins に入り、
+    # `docker compose` として動く。docker-compose-plugin は Docker 社の名前。
+    assert "docker-compose" in out
     assert "python3-yaml" in out
 
 
