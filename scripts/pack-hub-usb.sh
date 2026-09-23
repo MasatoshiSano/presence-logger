@@ -182,10 +182,31 @@ pack_blank_identity() {
         "$src" > "$dest"
 }
 
+# 親機でビルドした成果物は載せない。新機はカーネルが違うことがあり、make は
+# ソースより新しい .o を見ると再コンパイルを省く。そうして出来た .ko は
+# vermagic 不一致で読み込めず、原因が「USB に古い成果物が入っていた」ことだとは
+# 分からない形で失敗する。容量も 55MB -> 15MB に落ちる。
+pack_driver_excludes() {
+    cat <<'EOF'
+.git
+*.o
+*.ko
+*.mod
+*.mod.c
+*.cmd
+.*.cmd
+*.a
+*.symvers
+Module.symvers
+modules.order
+.tmp_versions
+EOF
+}
+
 pack_copy_driver() {
     local src="${1:-}" dest="$2"
     [ -n "$src" ] && [ -d "$src" ] || return 0
-    kit_copy_dir "$src" "$dest"
+    pack_driver_excludes | kit_copy_tree_filtered "$src" "$dest"
 }
 
 pack_save_images() {

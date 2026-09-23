@@ -369,3 +369,41 @@ def test_pack_allows_no_psk_when_explicitly_requested(tmp_path):
     )
     assert proc.returncode == 0, proc.stderr
     assert "PACK_ALLOW_NO_PSK" in proc.stderr
+
+
+def test_driver_kit_carries_source_but_not_build_artifacts(tmp_path):
+    """親機のカーネル向けビルド成果物を新機へ持ち込まない。
+
+    make はソースより新しい .o を見ると再コンパイルを省くので、残留物が
+    あると新機のカーネル向けに組み直されず、vermagic 不一致の .ko が出来る。
+    """
+    src = tmp_path / "8821au"
+    (src / "os_dep" / "linux").mkdir(parents=True)
+    (src / ".git").mkdir()
+    (src / "os_dep" / "linux" / "usb_intf.c").write_text("src\n", encoding="utf-8")
+    (src / "Makefile").write_text("all:\n", encoding="utf-8")
+    (src / "install-driver.sh").write_text("#!/bin/sh\n", encoding="utf-8")
+    (src / "8821au.ko").write_text("stale module\n", encoding="utf-8")
+    (src / "8821au.mod.c").write_text("stale\n", encoding="utf-8")
+    (src / "Module.symvers").write_text("stale\n", encoding="utf-8")
+    (src / "modules.order").write_text("stale\n", encoding="utf-8")
+    (src / "os_dep" / "linux" / "usb_intf.o").write_text("stale obj\n", encoding="utf-8")
+    (src / "os_dep" / "linux" / ".usb_intf.o.cmd").write_text("stale cmd\n", encoding="utf-8")
+    (src / ".git" / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+
+    dest = tmp_path / "kit-driver"
+    run_bash(f'{SOURCE}; pack_copy_driver "{src}" "{dest}"', env=_env())
+
+    assert (dest / "os_dep" / "linux" / "usb_intf.c").is_file(), "ソースは載せる"
+    assert (dest / "Makefile").is_file()
+    assert (dest / "install-driver.sh").is_file()
+    for stale in (
+        "8821au.ko",
+        "8821au.mod.c",
+        "Module.symvers",
+        "modules.order",
+        "os_dep/linux/usb_intf.o",
+        "os_dep/linux/.usb_intf.o.cmd",
+        ".git/HEAD",
+    ):
+        assert not (dest / stale).exists(), f"{stale} を新機へ持ち込んではいけない"
