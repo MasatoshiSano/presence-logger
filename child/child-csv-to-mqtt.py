@@ -45,6 +45,7 @@ TOPIC = os.environ.get("TOPIC", "presence/record")
 DEVICE_ID = os.environ.get("DEVICE_ID") or os.uname().nodename
 WATCH_DIR = Path(os.environ.get("WATCH_DIR", "./outbox"))
 ARCHIVE_DIR = Path(os.environ.get("ARCHIVE_DIR", "./sent"))
+NACKED_DIR = Path(os.environ.get("NACKED_DIR", "./nacked"))
 ACK_DB = Path(os.environ.get("ACK_DB", "./ack.db"))
 POLL_SECONDS = float(os.environ.get("POLL_SECONDS", "5"))
 # 1巡(WATCH_DIR全体の処理)がACK待ちで無限に伸びないための上限。design参照。
@@ -88,17 +89,72 @@ def parse_line(line: str) -> dict | None:
     }
 
 
-def archive_file(source: Path, archive_dir: Path) -> Path:
-    """sourceをarchive_dirへ移す。同名ファイルが既にあれば上書きせず別名にする。"""
-    archive_dir.mkdir(parents=True, exist_ok=True)
+def _choose_target(source: Path, archive_dir: Path) -> Path:
+    """archive_dir内でsourceと衝突しない移動先を選ぶ(実際には移動しない)。"""
     target = archive_dir / source.name
     if target.exists():
         n = 1
         while (candidate := archive_dir / f"{source.stem}.{n}{source.suffix}").exists():
             n += 1
         target = candidate
+    return target
+
+
+def archive_file(source: Path, archive_dir: Path) -> Path:
+    """sourceをarchive_dirへ移す。同名ファイルが既にあれば上書きせず別名にする。"""
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    target = _choose_target(source, archive_dir)
     shutil.move(str(source), str(target))
     return target
+
+
+def _write_nack_sidecar(nacked_dir: Path, target_name: str, rows: list[dict]) -> None:
+    """nacked行(line_no・event_id・mk_date・reason・failed_at_iso)を1行1件で書く。
+    tmp+renameで、途中で落ちても次回の巡回で同じ名前に上書きされるようにする。
+    """
+    sidecar = nacked_dir / f"{target_name}.nack.jsonl"
+    tmp = sidecar.with_name(sidecar.name + ".tmp")
+    with tmp.open("w", encoding="utf-8") as output:
+        for row in rows:
+            output.write(json.dumps(row) + "\n")
+    tmp.replace(sidecar)
+
+
+def archive_to_destination(
+    path: Path, result, store, archive_dir: Path, nacked_dir: Path
+) -> Path | None:
+    """resultに応じてCSVの移動先を決めて移す。pendingが残るなら移動せずNone。
+
+    全行acked -> archive_dir(sent)。nackedが1件でもあれば nacked_dir へ移し、
+    移動先の名前を決めてから付帯ファイルを書き、最後にCSVを移動する
+    (途中で落ちてもCSVはoutboxに残り、次回同じ名前で上書きされる)。
+    """
+    if not result.complete:
+        return None
+    if result.nacked == 0:
+        return archive_file(path, archive_dir)
+    nacked_dir.mkdir(parents=True, exist_ok=True)
+    target = _choose_target(path, nacked_dir)
+    rows = []
+    for line_no, event_id in result.nacked_rows:
+        row = store.get(event_id)
+        rows.append({
+            "line_no": line_no,
+            "event_id": event_id,
+            "mk_date": row.mk_date if row else None,
+            "reason": row.nack_reason if row else None,
+            "failed_at_iso": row.nacked_at if row else None,
+        })
+    _write_nack_sidecar(nacked_dir, target.name, rows)
+    shutil.move(str(path), str(target))
+    return target
+
+
+def format_summary(name: str, result) -> str:
+    return (
+        f"  {name}: ack={result.acked} pending={result.pending} "
+        f"invalid={result.invalid} nacked={result.nacked} complete={result.complete}"
+    )
 
 
 def main() -> int:
@@ -124,15 +180,15 @@ def main() -> int:
             for path in sorted(WATCH_DIR.glob("*.csv")):
                 print(f"処理: {path.name}", flush=True)
                 result = deliver_file(path, transport, parse_line, max_seconds=CYCLE_SECONDS)
-                print(
-                    f"  {path.name}: ack={result.acked} pending={result.pending} "
-                    f"invalid={result.invalid} complete={result.complete}",
-                    flush=True,
-                )
-                if result.complete:
-                    archive_file(path, ARCHIVE_DIR)
-                else:
+                print(format_summary(path.name, result), flush=True)
+                target = archive_to_destination(path, result, store, ARCHIVE_DIR, NACKED_DIR)
+                if target is None:
                     print(f"  未完了→次回再試行: {path.name}", flush=True)
+                elif result.nacked:
+                    print(
+                        f"  {path.name}: nacked/ に移動（恒久失敗 {result.nacked} 行）",
+                        flush=True,
+                    )
             now = time.monotonic()
             if now - last_hb >= HEARTBEAT_SECONDS:
                 client.publish(
