@@ -215,7 +215,8 @@ pack_find_driver_src() {
     if [ -n "${SUDO_USER:-}" ]; then
         user_home="$(getent passwd "$SUDO_USER" | cut -d: -f6)"
     fi
-    for d in /usr/local/src/8821au "${user_home:+$user_home/8821au}" "${HOME:+$HOME/8821au}"; do
+    for d in "${PACK_SYSTEM_DRIVER_DIR:-/usr/local/src/8821au}" \
+        "${user_home:+$user_home/8821au}" "${HOME:+$HOME/8821au}"; do
         [ -n "$d" ] && [ -d "$d" ] && { printf '%s\n' "$d"; return 0; }
     done
     return 0
@@ -276,11 +277,14 @@ Oracle のパスワードと新しい AP のパスワードは載せていませ
 
 新機（Raspberry Pi OS Desktop が入った素の Pi）での手順:
 
-1. この USB を挿す
+1. この USB を挿す（下記の USB8G は実際の USB 名に置き換える）
+   別のアプリが既に入っている Pi なら、先に点検する（何も変更しません）:
+     bash /media/pi/USB8G/presence-hub-kit/preflight-new-hub.sh
+   最後の行に「進めてはいけません」があれば、ここで止めて相談してください
 2. ファイルマネージャで presence-hub-kit を開き、
    「このUSBからコピー」をダブルクリックする
    （開かないときはターミナルで）
-     bash /media/*/presence-hub-kit/copy-to-this-pi.sh
+     bash /media/pi/USB8G/presence-hub-kit/copy-to-this-pi.sh
 3. デスクトップに「ハブ初期設定」が現れるのでクリックする
 4. 工場の SSID・ゲートウェイ・Oracle なども順に答える（Enter でコピー元の値）
 5. 終わったら再起動し、デスクトップの「子をこのハブへ付ける」で子を追加する
@@ -350,7 +354,9 @@ pack_hub_kit() {
     pack_write_readme "$kit/README.txt"
     pack_write_copy_desktop "$kit/このUSBからコピー.desktop"
     cp "$PACK_REPO_DIR/scripts/copy-hub-from-usb.sh" "$kit/copy-to-this-pi.sh"
-    chmod 644 "$kit/このUSBからコピー.desktop" "$kit/copy-to-this-pi.sh" "$kit/README.txt"
+    cp "$PACK_REPO_DIR/scripts/preflight-new-hub.sh" "$kit/preflight-new-hub.sh"
+    chmod 644 "$kit/このUSBからコピー.desktop" "$kit/copy-to-this-pi.sh" "$kit/README.txt" \
+        "$kit/preflight-new-hub.sh"
 
     if [ "${PACK_SKIP_DOCKER:-}" = "1" ]; then
         echo "PACK_SKIP_DOCKER=1 のためイメージは載せていません"

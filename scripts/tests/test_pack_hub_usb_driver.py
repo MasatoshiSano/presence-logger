@@ -34,7 +34,12 @@ def _sudo_env(tmp_path, fake_bin, extra=None):
     env = dict(os.environ)
     env.pop("PACK_DRIVER_SRC", None)
     env.pop("PACK_ALLOW_NO_DRIVER", None)
-    env.update({"HOME": str(root_home), "SUDO_USER": "pi"})
+    env.update({
+        "HOME": str(root_home), "SUDO_USER": "pi",
+        # フェーズ30 を通った機械には /usr/local/src/8821au がある。
+        # 実行機の状態で結果を変えないよう、既定では無い場所を指す。
+        "PACK_SYSTEM_DRIVER_DIR": str(tmp_path / "no-system-driver"),
+    })
     env.update(extra or {})
     return env, pi_home
 
@@ -100,3 +105,13 @@ def test_kit_under_sudo_carries_the_driver(tmp_path, fake_bin):
     r = run_bash(f'{SOURCE}; pack_hub_kit "{src}" "{dest}"', env=env, check=False)
     assert r.returncode == 0, r.stderr
     assert (dest / "presence-hub-kit" / ".kit" / "driver" / "8821au" / "Makefile").is_file()
+
+
+def test_system_driver_dir_is_preferred_when_present(tmp_path, fake_bin):
+    """フェーズ30 は /usr/local/src/8821au に置く。ハブから pack するときはそれを使う。"""
+    env, pi_home = _sudo_env(tmp_path, fake_bin)
+    _driver_tree(pi_home)
+    system = _driver_tree(tmp_path / "usr-local-src")
+    env["PACK_SYSTEM_DRIVER_DIR"] = str(system)
+    out = run_bash(f"{SOURCE}; pack_find_driver_src", env=env, check=False).stdout.strip()
+    assert out == str(system)
