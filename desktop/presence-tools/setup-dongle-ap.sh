@@ -12,7 +12,9 @@ AP_CONN="${AP_CONN:-presence-hub-ap}"
 AP_SSID="${AP_SSID:-presence-hub}"
 AP_BAND="${AP_BAND:-bg}"                   # bg=2.4GHz（APはこちらが確実）
 AP_CHANNEL="${AP_CHANNEL:-6}"
-UFI_CONN="${UFI_CONN:-UFI_103134}"
+# 未設定なら旧構成(ドングルを子機にしていた頃)の既定。空を渡すと手順1を飛ばす
+# (ハブの bootstrap はこちら。HOME_SSID の自動接続を切ると遠隔操作を失う)。
+UFI_CONN="${UFI_CONN-UFI_103134}"
 # PSK はファイルに書かない。実行時に secrets.env(0600 root) から読む。
 # 上書きしたい場合のみ環境変数 AP_PSK を渡す。
 SECRETS_ENV="${SECRETS_ENV:-/etc/presence-logger/secrets.env}"
@@ -32,8 +34,12 @@ PHY=$(cat /sys/class/net/$AP_IF/phy80211/name)
 iw phy "$PHY" info | grep -q -- "* AP" || { echo "FAIL: $PHY は AP 非対応"; exit 1; }
 echo "  $AP_IF ($PHY) は AP 対応 OK"
 
-say "1) インターネット($UFI_CONN)が wlan1 を使わないよう自動接続オフ＆切断"
-nmcli connection modify "$UFI_CONN" connection.autoconnect no 2>/dev/null || true
+if [[ -n "$UFI_CONN" ]]; then
+    say "1) インターネット($UFI_CONN)が wlan1 を使わないよう自動接続オフ＆切断"
+    nmcli connection modify "$UFI_CONN" connection.autoconnect no 2>/dev/null || true
+else
+    say "1) $AP_IF を空ける(他の接続の自動接続は変えない)"
+fi
 nmcli device disconnect "$AP_IF" 2>/dev/null || true
 
 say "2) AP プロファイル作成（2.4GHz ch$AP_CHANNEL / WPA2 / shared=DHCP付き）"
@@ -72,8 +78,10 @@ echo "      SSID : $AP_SSID"
 echo "      PASS : (secrets.env の WIFI_AP_PSK)"
 echo "    子Piは 10.42.0.x が自動で振られ、このPiは 10.42.0.1。"
 echo "    例) 子Piから:  ping 10.42.0.1   /  ssh pi@10.42.0.1"
+if [[ -n "$UFI_CONN" ]]; then
 echo " 解除して元のインターネット(ドングル子機)に戻すには:"
 echo "      sudo nmcli connection down $AP_CONN"
 echo "      sudo nmcli connection modify $UFI_CONN connection.autoconnect yes"
 echo "      sudo nmcli connection up $UFI_CONN ifname $AP_IF"
+fi
 echo "------------------------------------------------------------"

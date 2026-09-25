@@ -11,11 +11,84 @@ from scripts.tests.shellhelp import run_bash
 SOURCE = "source scripts/bootstrap/20-base-packages.sh"
 
 
-def test_package_list_has_the_non_obvious_ones():
+def _no_docker_ce(fake_bin):
+    """素の Pi を装う。このテストを走らせる親機には docker-ce が入っている。"""
+    fake_bin("dpkg-query", 'exit 1')
+
+
+def _has_docker_ce(fake_bin):
+    fake_bin("dpkg-query",
+             '[ "${@: -1}" = docker-ce ] && { printf "install ok installed"; exit 0; }; exit 1')
+
+
+def test_package_list_has_the_non_obvious_ones(fake_bin):
+    _no_docker_ce(fake_bin)
     out = run_bash(f'{SOURCE}; base_packages', env=dict(os.environ)).stdout.split()
-    for pkg in ("docker.io", "docker-compose-plugin", "python3-yaml",
-                "mosquitto-clients", "dkms", "raspberrypi-kernel-headers"):
+    for pkg in ("docker.io", "docker-cli", "docker-compose", "python3-yaml",
+                "mosquitto-clients", "dkms", "linux-headers-rpi-2712"):
         assert pkg in out, f"{pkg} が不足"
+
+
+def test_package_list_has_no_name_missing_from_trixie(fake_bin):
+    """apt-get install は1つでも名前が見つからないと、何も入れずに失敗する。
+
+    raspberrypi-kernel-headers は bookworm までの名前で、trixie(Debian 13)には
+    無い。これが並びに1つ混じっているだけで、素の Pi OS ではフェーズ20 が
+    必ず落ち、docker も python3-yaml も入らない。Pi 5 のヘッダは
+    linux-headers-rpi-2712。
+    """
+    _no_docker_ce(fake_bin)
+    out = run_bash(f'{SOURCE}; base_packages', env=dict(os.environ)).stdout.split()
+    assert "raspberrypi-kernel-headers" not in out
+    # Docker 社の apt リポジトリにしか無い名前。素の Pi OS には無い。
+    for pkg in ("docker-compose-plugin", "docker-ce", "docker-ce-cli", "containerd.io"):
+        assert pkg not in out, f"{pkg} は素の Pi では見つからない"
+
+
+def test_docker_ce_already_installed_is_left_alone(fake_bin):
+    """docker.io は docker-ce と Conflicts。並びに入れると apt が docker-ce を外す。
+
+    親機は docker-ce で動いている([実測] apt-get -s install docker.io が
+    "4 to remove")。フェーズ20 を流し直しただけで、本番のコンテナが
+    載っているエンジンが入れ替わってしまう。docker-ce が既にあるなら
+    docker 一式は頼まない。
+    """
+    _has_docker_ce(fake_bin)
+    out = run_bash(f'{SOURCE}; base_packages', env=dict(os.environ)).stdout.split()
+    for pkg in ("docker.io", "docker-cli", "docker-compose"):
+        assert pkg not in out
+    assert "python3-yaml" in out
+
+
+def test_headers_for_the_running_kernel_are_requested_separately(tmp_path, fake_bin):
+    _no_docker_ce(fake_bin)
+    """DKMS が要るのは「今動いているカーネル」のヘッダ。
+
+    linux-headers-rpi-2712 はアーカイブ最新版のヘッダしか連れてこない。
+    書いたばかりの SD は古いカーネルで動いているので、それだけでは
+    /lib/modules/$(uname -r)/build が無く、フェーズ30 の DKMS が落ちる。
+    ただし旧版がアーカイブから消えていることもあるので、本体の並びには
+    混ぜず(混ぜると全部入らない)、別の呼び出しにして失敗を本体に波及させない。
+    """
+    fake_bin("uname", 'echo 6.18.29+rpt-rpi-2712')
+    fake_bin("apt-get", 'printf "apt-get %s\\n" "$*" >> "$FAKE_LOG"; '
+                        '[[ "$*" == *6.18.29* ]] && exit 100; exit 0')
+    r = run_bash(f'{SOURCE}; base_install_packages', env=dict(os.environ), check=False)
+    assert r.returncode == 0, r.stderr
+    calls = fake_bin.log.read_text(encoding="utf-8").splitlines()
+    main_call = next(c for c in calls if "python3-yaml" in c)
+    assert "6.18.29" not in main_call
+    assert any("linux-headers-6.18.29+rpt-rpi-2712" in c for c in calls)
+    assert "6.18.29+rpt-rpi-2712" in r.stderr     # 入らなかったことは黙らない
+
+
+def test_base_package_failure_is_not_swallowed(fake_bin):
+    _no_docker_ce(fake_bin)
+    fake_bin("uname", 'echo 6.18.29+rpt-rpi-2712')
+    fake_bin("apt-get", 'printf "apt-get %s\\n" "$*" >> "$FAKE_LOG"; exit 100')
+    r = run_bash(f'{SOURCE}; base_install_packages', env=dict(os.environ), check=False)
+    assert "python3-yaml" in fake_bin.log.read_text(encoding="utf-8")
+    assert r.returncode != 0
 
 
 def test_hostname_files_are_rewritten(tmp_path):

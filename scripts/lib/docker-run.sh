@@ -11,7 +11,7 @@ docker_compose() {
         return
     fi
     echo "docker compose プラグインが入っていません。" >&2
-    echo "  sudo apt-get install -y docker-compose-plugin" >&2
+    echo "  sudo apt-get install -y docker-compose   # Debian 版。docker compose として動く" >&2
     echo "  （bootstrap フェーズ20 が入れます。ここへ来たらフェーズ20 が失敗しています）" >&2
     return 1
 }

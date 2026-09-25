@@ -20,12 +20,20 @@ class FakeOracle:
 @dataclass
 class FakeMqtt:
     acks: list[dict[str, Any]] = field(default_factory=list)
+    nacks: list[dict[str, Any]] = field(default_factory=list)
 
     def publish_ack(self, topic: str, *, event_id: str, mk_date_committed: str,
                     committed_at_iso: str) -> None:
         self.acks.append({
             "topic": topic, "event_id": event_id,
             "mk_date_committed": mk_date_committed, "committed_at_iso": committed_at_iso,
+        })
+
+    def publish_nack(self, topic: str, *, event_id: str, reason: str,
+                     failed_at_iso: str) -> None:
+        self.nacks.append({
+            "topic": topic, "event_id": event_id,
+            "reason": reason, "failed_at_iso": failed_at_iso,
         })
 
 

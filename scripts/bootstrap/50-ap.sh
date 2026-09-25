@@ -31,22 +31,56 @@ ap_needs_explicit_address() {
     [ "${AP_GW_IP:-10.42.0.1}" != "10.42.0.1" ]
 }
 
+# UFI_CONN は空で渡す。setup-dongle-ap.sh は UFI_CONN の接続の autoconnect を
+# 切る(ドングルを子機にしていた旧構成向け)。以前は HOME_SSID を渡していたため、
+# F66 に繋いだ新機が再起動後に F66 へ戻らず、遠隔から触れなくなっていた。
 ap_env_args() {
     printf 'AP_IF=%s\n'      "$AP_IF"
     printf 'AP_SSID=%s\n'    "$AP_SSID"
     printf 'AP_BAND=%s\n'    "$AP_BAND"
     printf 'AP_CHANNEL=%s\n' "$AP_CHANNEL"
-    printf 'UFI_CONN=%s\n'   "$HOME_SSID"
+    printf 'UFI_CONN=\n'
     printf 'AP_CONN=%s-ap\n' "$AP_SSID"
+}
+
+# 何をするかだけを決める: skip(自APが既に動いている) / abort(同じ SSID の
+# 他APが見える) / build(作る、または作り直す)。
+#
+# 強制は引数 --force と環境変数 AP_FORCE=1 のどちらでも受ける。ウィザードの
+# 「p: AP パスワードだけやり直す」は AP_FORCE=1 で呼ぶ。以前はこれを見ておらず、
+# しかも自APが動いていればスキップしていたので、secrets だけ新しいパスワードに
+# なり、実際の AP は古いパスワードのままだった。強制時は動いていても作り直す
+# (setup-dongle-ap.sh はプロファイルを消して作り直すので新しい PSK が載る)。
+#
+# AP_FORCE=1 が越えるのは「自APが動いているからスキップ」だけ。自APが落ちていて
+# 同じ SSID が見えるなら、それは別のハブなので止める。同名APの確認まで越えるのは
+# 明示の --force だけ。
+ap_plan() {
+    local rebuild=0 override_dup=0
+    if [ "${1:-}" = "--force" ]; then
+        rebuild=1
+        override_dup=1
+    elif [ "${AP_FORCE:-}" = "1" ]; then
+        rebuild=1
+    fi
+    if ap_own_connection_active; then
+        if [ "$rebuild" = 1 ]; then echo build; else echo skip; fi
+    elif [ "$override_dup" != 1 ] && ap_duplicate_ssid_present "$AP_SSID"; then
+        echo abort
+    else
+        echo build
+    fi
 }
 
 main() {
     site_env_require
-    if ap_own_connection_active; then
+    local plan
+    plan="$(ap_plan "$@")"
+    if [ "$plan" = skip ]; then
         echo "${AP_SSID}-ap は既に起動しています。スキップします"
         return 0
     fi
-    if [ "${1:-}" != "--force" ] && ap_duplicate_ssid_present "$AP_SSID"; then
+    if [ "$plan" = abort ]; then
         cat >&2 <<EOF
 ⚠ 同じ SSID の AP が既に見えています: $AP_SSID
 

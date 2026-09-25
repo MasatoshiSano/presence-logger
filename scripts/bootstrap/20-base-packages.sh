@@ -13,10 +13,13 @@ REPO_DIR="$(cd "$HERE/../.." && pwd)"
 # shellcheck source=scripts/lib/site-env.sh
 source "$REPO_DIR/scripts/lib/site-env.sh"
 
+# apt-get install は1つでも名前が見つからないと何も入れずに失敗する。
+# ここには trixie(Debian 13)に実在する名前だけを置くこと。
+# raspberrypi-kernel-headers は bookworm までの名前で、trixie では
+# linux-headers-rpi-2712(Pi 5 用)になった。
 base_packages() {
+    base_docker_packages
     cat <<'EOF'
-docker.io
-docker-compose-plugin
 python3-yaml
 python3-venv
 mosquitto-clients
@@ -25,8 +28,22 @@ rsync
 dkms
 build-essential
 bc
-raspberrypi-kernel-headers
+linux-headers-rpi-2712
 EOF
+}
+
+# docker は Debian 自身の版を使う。docker-compose-plugin / docker-ce は
+# Docker 社の apt リポジトリ(download.docker.com)にしか無く、素の Pi OS には
+# そのリポジトリが無い。Debian の docker-compose は
+# /usr/libexec/docker/cli-plugins/ に入り `docker compose` として動く。
+#
+# docker.io は docker-ce と Conflicts。docker-ce が既に入った機械(今の親機)で
+# 頼むと、apt は docker-ce を外して入れ替える。動いているエンジンには触らない。
+base_docker_packages() {
+    if dpkg-query -W -f='${Status}' docker-ce 2>/dev/null | grep -q 'install ok installed'; then
+        return 0
+    fi
+    printf '%s\n' docker.io docker-cli docker-compose
 }
 
 base_set_hostname() {
@@ -51,12 +68,26 @@ base_ensure_venv() {
     python3 -m venv --system-site-packages "$repo/.venv"
 }
 
+# linux-headers-rpi-2712 が連れてくるのはアーカイブ最新版のヘッダだけ。
+# 書いたばかりの SD は古いカーネルで動いているので、フェーズ30 の DKMS が
+# 要る「今のカーネル」のヘッダは別に頼む。旧版はアーカイブから消えることが
+# あるので本体の並びには混ぜない(混ぜると全部入らなくなる)。
+base_install_packages() {
+    # shellcheck disable=SC2046
+    apt-get install -y $(base_packages | tr '\n' ' ') || return 1
+    local running="linux-headers-$(uname -r)"
+    if ! apt-get install -y "$running"; then
+        echo "⚠ $running が入りませんでした。フェーズ30 のドライバ作成が失敗します。" >&2
+        echo "  apt full-upgrade → 再起動のあと、フェーズ20 から流し直してください。" >&2
+    fi
+}
+
 # docker.io を入れただけでは daemon が上がっていないことがある。フェーズ60 が
 # 「イメージは load 済みなのにコンテナが上がらない」で転ぶ前に、ここで弾く。
 base_enable_docker() {
     systemctl enable --now docker 2>/dev/null || service docker start 2>/dev/null || true
     if ! docker compose version >/dev/null 2>&1; then
-        echo "docker-compose-plugin を入れても docker compose が使えません" >&2
+        echo "docker を入れても docker compose が使えません" >&2
         return 1
     fi
 }
@@ -68,8 +99,7 @@ main() {
 
     echo "==> パッケージを導入"
     apt-get update
-    # shellcheck disable=SC2046
-    apt-get install -y $(base_packages | tr '\n' ' ') || return 1
+    base_install_packages || return 1
     base_enable_docker || return 1
 
     echo "==> ホスト名を $HUB_HOSTNAME に"

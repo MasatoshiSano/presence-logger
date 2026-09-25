@@ -92,3 +92,31 @@ def test_watch_records_does_not_hardcode_detector_docker_logs():
     for line in body.splitlines():
         if "docker logs" in line:
             assert "presence-detector" not in line
+
+
+def test_connect_raises_this_hubs_own_ap(fake_bin):
+    """AP の接続名は <AP_SSID>-ap(フェーズ50 が作る名前)。
+
+    以前は presence-hub-ap 決め打ちで、2台目(例 raspberrypi5-2-hub-ap)では
+    「AP を起動できません」と出た。AP 自体は autoconnect で動いているので、
+    動いているものを「動かない」と言う誤表示になっていた。
+    """
+    fake_bin("nmcli", 'printf "nmcli %s\\n" "$*" >> "$FAKE_LOG"')
+    r = run_bash(
+        'source desktop/presence-tools/connect-hime-h-reap.sh; '
+        'AP_SSID=raspberrypi5-2-hub hub_ap_up',
+        env=dict(os.environ), check=False,
+    )
+    assert r.returncode == 0, r.stderr
+    log = fake_bin.log.read_text(encoding="utf-8")
+    assert "connection up raspberrypi5-2-hub-ap" in log
+    assert "presence-hub-ap" not in log
+
+
+def test_connect_ap_name_falls_back_for_hosts_without_site_env(fake_bin):
+    fake_bin("nmcli", 'printf "nmcli %s\\n" "$*" >> "$FAKE_LOG"')
+    env = dict(os.environ)
+    env.pop("AP_SSID", None)
+    run_bash('source desktop/presence-tools/connect-hime-h-reap.sh; hub_ap_up',
+             env=env, check=False)
+    assert "connection up presence-hub-ap" in fake_bin.log.read_text(encoding="utf-8")

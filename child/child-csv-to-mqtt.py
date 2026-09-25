@@ -10,12 +10,18 @@ QoS2 で発行する。ハブの bridge が Oracle(HHC001) へ書き込む。
 冪等性: event_id を「device_id + 行内容」のSHA1から決定的に生成するので、同じ行を
 再送しても二重記録されない(bridgeのinbox PK + Oracle MERGEキーで吸収)。
 
-WATCH_DIR の *.csv を処理したら ARCHIVE_DIR へ移動する。常駐(ポーリング)。
+送信完了は Oracle commit後のACK(presence/record/ack)を受け取って初めて確定する
+(MQTT publish成功だけでは確定しない)。ACK待ちの状態は ACK_DB の台帳で永続化し、
+未ACKは resend_after 秒後に同一event_idで再送する。詳細は
+docs/2026-09-23-child-oracle-ack-design.md。
+
+WATCH_DIR の *.csv を、全行ACK済みかつ読み取り前後でファイルが変化していない
+場合だけ ARCHIVE_DIR へ移動する(archiveは既存ファイルを上書きしない)。常駐(ポーリング)。
 
 環境変数(既定):
   MQTT_HOST=10.42.0.1  MQTT_PORT=1883  TOPIC=presence/record
   DEVICE_ID=$(hostname)  WATCH_DIR=./outbox  ARCHIVE_DIR=./sent
-  POLL_SECONDS=5
+  ACK_DB=./ack.db  POLL_SECONDS=5
 """
 import hashlib
 import json
@@ -25,6 +31,8 @@ import shutil
 import sys
 import time
 from pathlib import Path
+
+from ack_delivery import AckSession, DeliveryStore, deliver_file
 
 try:
     import paho.mqtt.client as mqtt
@@ -37,7 +45,10 @@ TOPIC = os.environ.get("TOPIC", "presence/record")
 DEVICE_ID = os.environ.get("DEVICE_ID") or os.uname().nodename
 WATCH_DIR = Path(os.environ.get("WATCH_DIR", "./outbox"))
 ARCHIVE_DIR = Path(os.environ.get("ARCHIVE_DIR", "./sent"))
+ACK_DB = Path(os.environ.get("ACK_DB", "./ack.db"))
 POLL_SECONDS = float(os.environ.get("POLL_SECONDS", "5"))
+# 1巡(WATCH_DIR全体の処理)がACK待ちで無限に伸びないための上限。design参照。
+CYCLE_SECONDS = 30.0
 
 _MK_DATE_RE = re.compile(r"^\d{14}$")
 SCHEMA_VERSION = 1
@@ -77,25 +88,17 @@ def parse_line(line: str) -> dict | None:
     }
 
 
-def publish_file(client: "mqtt.Client", path: Path) -> bool:
-    """1ファイルの全行を発行。全行発行できたら True。"""
-    ok = True
-    sent = 0
-    for raw in path.read_text(encoding="utf-8").splitlines():
-        if not raw.strip() or raw.lstrip().startswith("#"):
-            continue
-        rec = parse_line(raw)
-        if rec is None:
-            print(f"  skip(不正行): {raw!r}", flush=True)
-            continue
-        info = client.publish(TOPIC, json.dumps(rec), qos=2)
-        info.wait_for_publish(timeout=10)
-        if not info.is_published():
-            ok = False
-            break
-        sent += 1
-    print(f"  {path.name}: {sent}行 発行 (ok={ok})", flush=True)
-    return ok
+def archive_file(source: Path, archive_dir: Path) -> Path:
+    """sourceをarchive_dirへ移す。同名ファイルが既にあれば上書きせず別名にする。"""
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    target = archive_dir / source.name
+    if target.exists():
+        n = 1
+        while (candidate := archive_dir / f"{source.stem}.{n}{source.suffix}").exists():
+            n += 1
+        target = candidate
+    shutil.move(str(source), str(target))
+    return target
 
 
 def main() -> int:
@@ -105,6 +108,10 @@ def main() -> int:
     client.reconnect_delay_set(min_delay=1, max_delay=60)
     # 異常切断(電源断・NW断)時にブローカーが offline を出す遺言。connect前に設定。
     client.will_set(STATUS_TOPIC, payload="offline", qos=1, retain=True)
+    # AckSessionがon_connect/on_subscribe/on_disconnect/on_messageを握るので、
+    # connect前に組み立てる(SUBACK受信までtransport.send()はpublishしない)。
+    store = DeliveryStore(ACK_DB, f"{MQTT_HOST}:{MQTT_PORT}/{TOPIC}")
+    transport = AckSession(client, TOPIC, store)
     client.connect(MQTT_HOST, MQTT_PORT, keepalive=30)
     client.loop_start()
     # 接続直後に online を retained で通知（監視TUIが後から購読しても分かる）。
@@ -116,10 +123,16 @@ def main() -> int:
         while True:
             for path in sorted(WATCH_DIR.glob("*.csv")):
                 print(f"処理: {path.name}", flush=True)
-                if publish_file(client, path):
-                    shutil.move(str(path), str(ARCHIVE_DIR / path.name))
+                result = deliver_file(path, transport, parse_line, max_seconds=CYCLE_SECONDS)
+                print(
+                    f"  {path.name}: ack={result.acked} pending={result.pending} "
+                    f"invalid={result.invalid} complete={result.complete}",
+                    flush=True,
+                )
+                if result.complete:
+                    archive_file(path, ARCHIVE_DIR)
                 else:
-                    print(f"  発行未完→次回再試行: {path.name}", flush=True)
+                    print(f"  未完了→次回再試行: {path.name}", flush=True)
             now = time.monotonic()
             if now - last_hb >= HEARTBEAT_SECONDS:
                 client.publish(

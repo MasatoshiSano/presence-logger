@@ -27,6 +27,13 @@ detector_start() {
         || say "    ⚠ detector の起動に失敗（docker を確認してください）"
 }
 
+# 子Pi用 AP の接続名はフェーズ50 が作る <AP_SSID>-ap。2台目以降は
+# presence-hub-ap ではない(例 raspberrypi5-2-hub-ap)。site.env の無い旧機は
+# 従来の presence-hub。
+hub_ap_up() {
+    nmcli connection up "${AP_SSID:-presence-hub}-ap" >/dev/null 2>&1
+}
+
 main() {
     # root で実行（nmcli と secrets.env(0600) の読み取りに必要）。
     # pi で起動されたら sudo で同じ引数のまま再実行する（パスワードを聞かれる）。
@@ -156,9 +163,9 @@ PY
             fi
             # 子ラズパイ用の独自WiFi(AP)を起動し、子PiのMQTT書き込みを受けられるようにする
             PROJ="/home/pi/projects/presence-logger"
-            say "    子Pi用 AP(presence-hub) を起動中..."
-            if nmcli connection up presence-hub-ap >/dev/null 2>&1; then
-                say "    ✅ AP presence-hub 起動（子Pi=10.42.0.x / このPi=10.42.0.1）"
+            say "    子Pi用 AP(${AP_SSID:-presence-hub}) を起動中..."
+            if hub_ap_up; then
+                say "    ✅ AP ${AP_SSID:-presence-hub} 起動（子Pi=10.42.0.x / このPi=10.42.0.1）"
                 # AP(10.42.0.1)が上がってから、子Pi向けに mosquitto を公開（hub override）
                 if docker compose --project-directory "$PROJ" \
                         -f "$PROJ/docker-compose.yml" -f "$PROJ/docker-compose.hub.yml" \
@@ -168,7 +175,7 @@ PY
                     say "    ⚠ mosquitto の子Pi公開に失敗（docker を確認）"
                 fi
             else
-                say "    ⚠ AP presence-hub を起動できません（先に setup-dongle-ap.sh を実行）"
+                say "    ⚠ AP ${AP_SSID:-presence-hub} を起動できません（先に setup-dongle-ap.sh を実行）"
             fi
             # 次に検知を開始（detector コンテナ起動 = カメラ取得＋ENTER/EXIT判定）
             # ハブ(HUB_MODE=1)では detector_start が起動をスキップする。
@@ -181,15 +188,15 @@ PY
                 say " ✅ HIME-H-REAP 接続＋AP起動＋時刻同期＋検知を開始しました"
             fi
             say "    工場 : $PROFILE_NAME (wlan0)    IP : ${PCFG[ip]}"
-            say "    子Pi : presence-hub (wlan1)     IP : 10.42.0.1"
+            say "    子Pi : ${AP_SSID:-presence-hub} (wlan1)     IP : 10.42.0.1"
             say "===================================================="
             say ""
             if [ "$HUB_MODE" = "1" ]; then
-                say " ・子ラズパイは presence-hub に接続し MQTT(10.42.0.1)へ書き込み"
+                say " ・子ラズパイは ${AP_SSID:-presence-hub} に接続し MQTT(10.42.0.1)へ書き込み"
                 say "   → bridge が HHC001 へ送信します。"
             else
                 say " ・このPiの detector がカメラ判定 → bridge が HHC001 に記録。"
-                say " ・子ラズパイは presence-hub に接続し MQTT(10.42.0.1)へ書き込み"
+                say " ・子ラズパイは ${AP_SSID:-presence-hub} に接続し MQTT(10.42.0.1)へ書き込み"
                 say "   → bridge が HHC001 へ送信します。"
                 say " （カメラ起動に数秒・最初のMERGEまで最大5秒）"
                 say " 通信が一時的に切れても検知は継続し、復旧後にまとめて記録されます。"

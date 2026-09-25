@@ -45,7 +45,7 @@ dmesg | grep -iE "pegasus|056e"   # "pegasus ... probe ... failed with error -11
 
 ### 1-2. 前提パッケージ
 ```bash
-sudo apt-get install -y dkms build-essential git bc raspberrypi-kernel-headers
+sudo apt-get install -y dkms build-essential git bc linux-headers-rpi-2712 "linux-headers-$(uname -r)"
 # ヘッダが現行カーネルと一致しているか確認（build シンボリックリンクがあること）
 uname -r ; ls -d /lib/modules/$(uname -r)/build
 ```

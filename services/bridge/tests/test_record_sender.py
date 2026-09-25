@@ -35,9 +35,13 @@ class _FakeNet:
 class _FakeMqtt:
     def __init__(self):
         self.acks = []
+        self.nacks = []
 
     def publish_ack(self, topic, **kw):
         self.acks.append(kw)
+
+    def publish_nack(self, topic, **kw):
+        self.nacks.append(kw)
 
 
 def _seed(tmp_path, **kw):
@@ -53,7 +57,8 @@ def _seed(tmp_path, **kw):
     return r
 
 
-def _deps(tmp_path, *, ssid, oracle, mqtt, unretryable_ora_codes=frozenset()):
+def _deps(tmp_path, *, ssid, oracle, mqtt, unretryable_ora_codes=frozenset(),
+          topic_nack="presence/record/nack"):
     return RecordSenderDeps(
         record_inbox=_seed(tmp_path),
         resolver=ProfileResolver(profiles={"HIME-H-REAP": PROFILE}, unknown_policy="drop"),
@@ -62,6 +67,7 @@ def _deps(tmp_path, *, ssid, oracle, mqtt, unretryable_ora_codes=frozenset()):
         oracle=oracle,
         mqtt=mqtt,
         topic_ack="presence/record/ack",
+        topic_nack=topic_nack,
         unretryable_ora_codes=frozenset(unretryable_ora_codes),
     )
 
@@ -122,3 +128,121 @@ def test_non_unretryable_ora_code_still_retries_normally(tmp_path):
     row = next(iter(d.record_inbox.iter_received_due(now_iso="2099-01-01T00:00:00+00:00")))
     assert row.status == "received"
     assert row.retry_count == 1
+
+
+def test_unknown_database_error_never_marks_sent_or_acks(tmp_path):
+    mqtt = _FakeMqtt()
+    d = _deps(tmp_path, ssid="HIME-H-REAP", mqtt=mqtt,
+              oracle=_FakeOracle(_Result(ora_code=None, error_message="unknown DB error")))
+    RecordSender(deps=d).run_once(now=NOW)
+    assert mqtt.acks == []
+    row = next(d.record_inbox.iter_received_due(now_iso="2099-01-01"))
+    assert row.retry_count == 1
+
+
+def test_committed_duplicate_reacks_only_matching_content(tmp_path):
+    from dataclasses import replace
+
+    mqtt = _FakeMqtt()
+    d = _deps(tmp_path, ssid="HIME-H-REAP", mqtt=mqtt,
+              oracle=_FakeOracle(_Result(ora_code=None)))
+    incoming = next(d.record_inbox.iter_received_due(now_iso=NOW.isoformat()))
+    sender = RecordSender(deps=d)
+    sender.receive(incoming)
+    assert mqtt.acks == []
+    sender.run_once(now=NOW)
+    mqtt.acks.clear()
+    sender.receive(incoming)
+    assert len(mqtt.acks) == 1
+    mqtt.acks.clear()
+    sender.receive(replace(incoming, t1_status=99))
+    assert mqtt.acks == []
+    d.record_inbox.delete_sent(keep_newest=0)
+    sender.receive(incoming)
+    assert mqtt.acks == []
+    sender.run_once(now=NOW)
+    assert len(mqtt.acks) == 1
+    assert len(d.oracle.calls) == 2
+
+
+def test_failed_duplicate_is_not_acked(tmp_path):
+    mqtt = _FakeMqtt()
+    d = _deps(tmp_path, ssid="HIME-H-REAP", mqtt=mqtt,
+              oracle=_FakeOracle(_Result(ora_code=1)), unretryable_ora_codes={1})
+    incoming = next(d.record_inbox.iter_received_due(now_iso=NOW.isoformat()))
+    sender = RecordSender(deps=d)
+    sender.run_once(now=NOW)
+    sender.receive(incoming)
+    assert mqtt.acks == []
+
+
+def test_unretryable_ora_code_nacks_the_row_not_acks_it(tmp_path):
+    # This is the second-stage fix: a permanent failure must not leave the
+    # child waiting forever for an ACK that will never come. It gets a
+    # distinct nack instead, and mqtt.acks (which existing tests above pin to
+    # success-only) must stay untouched.
+    oracle = _FakeOracle(_Result(ora_code=1, error_message="unique constraint violated"))
+    mqtt = _FakeMqtt()
+    d = _deps(tmp_path, ssid="HIME-H-REAP", oracle=oracle, mqtt=mqtt,
+              unretryable_ora_codes={1})
+    RecordSender(deps=d).run_once(now=NOW)
+    assert mqtt.acks == []
+    assert len(mqtt.nacks) == 1
+    assert mqtt.nacks[0]["event_id"] == "r1"
+    assert "ORA-1" in mqtt.nacks[0]["reason"]
+
+
+def test_no_topic_nack_configured_skips_publish_but_still_gives_up(tmp_path):
+    # Backward/forward compat: an operator who hasn't set record.topic_nack
+    # yet (or a deliberately-disabled deployment) must not crash — the row
+    # still gets marked failed, it just doesn't notify anyone over MQTT.
+    oracle = _FakeOracle(_Result(ora_code=1, error_message="unique constraint violated"))
+    mqtt = _FakeMqtt()
+    d = _deps(tmp_path, ssid="HIME-H-REAP", oracle=oracle, mqtt=mqtt,
+              unretryable_ora_codes={1}, topic_nack=None)
+    RecordSender(deps=d).run_once(now=NOW)
+    assert mqtt.acks == []
+    assert mqtt.nacks == []
+    assert list(d.record_inbox.iter_received_due(now_iso=NOW.isoformat())) == []
+
+
+def test_success_never_nacks(tmp_path):
+    oracle = _FakeOracle(_Result(ora_code=None))
+    mqtt = _FakeMqtt()
+    d = _deps(tmp_path, ssid="HIME-H-REAP", oracle=oracle, mqtt=mqtt)
+    RecordSender(deps=d).run_once(now=NOW)
+    assert mqtt.nacks == []
+
+
+def test_failed_duplicate_resend_republishes_nack(tmp_path):
+    # The 897 already-failed rows in production were marked failed before this
+    # feature existed, so no nack was ever sent for them. The only way to
+    # reach those children is when they resend (per ack_delivery's
+    # resend_after) and the bridge sees a duplicate of an already-failed row.
+    oracle = _FakeOracle(_Result(ora_code=1, error_message="unique constraint violated"))
+    mqtt = _FakeMqtt()
+    d = _deps(tmp_path, ssid="HIME-H-REAP", oracle=oracle, mqtt=mqtt,
+              unretryable_ora_codes={1})
+    incoming = next(d.record_inbox.iter_received_due(now_iso=NOW.isoformat()))
+    sender = RecordSender(deps=d)
+    sender.run_once(now=NOW)  # marks failed, publishes first nack
+    mqtt.nacks.clear()
+    sender.receive(incoming)  # child resends the same content
+    assert mqtt.acks == []
+    assert len(mqtt.nacks) == 1
+    assert mqtt.nacks[0]["event_id"] == "r1"
+
+
+def test_failed_duplicate_content_mismatch_does_not_renack(tmp_path):
+    from dataclasses import replace
+
+    oracle = _FakeOracle(_Result(ora_code=1, error_message="unique constraint violated"))
+    mqtt = _FakeMqtt()
+    d = _deps(tmp_path, ssid="HIME-H-REAP", oracle=oracle, mqtt=mqtt,
+              unretryable_ora_codes={1})
+    incoming = next(d.record_inbox.iter_received_due(now_iso=NOW.isoformat()))
+    sender = RecordSender(deps=d)
+    sender.run_once(now=NOW)
+    mqtt.nacks.clear()
+    sender.receive(replace(incoming, t1_status=99))
+    assert mqtt.nacks == []

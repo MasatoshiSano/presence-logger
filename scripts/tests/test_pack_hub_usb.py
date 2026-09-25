@@ -16,6 +16,9 @@ SOURCE = "source scripts/pack-hub-usb.sh"
 
 def _env(extra=None):
     env = dict(os.environ)
+    # ドライバの有無は test_pack_hub_usb_driver.py で見る。ここの検証が
+    # 実行機の ~/8821au の有無で結果を変えないよう、無くても通す。
+    env.setdefault("PACK_ALLOW_NO_DRIVER", "1")
     if extra:
         env.update(extra)
     return env
@@ -407,3 +410,32 @@ def test_driver_kit_carries_source_but_not_build_artifacts(tmp_path):
         ".git/HEAD",
     ):
         assert not (dest / stale).exists(), f"{stale} を新機へ持ち込んではいけない"
+
+
+def test_pack_puts_preflight_at_kit_root(tmp_path):
+    """新機にはまだリポジトリが無い。点検はキット直下から bash で走らせる。"""
+    src = tmp_path / "src"
+    src.mkdir()
+    dest = tmp_path / "usb"
+    site = tmp_path / "site.env"
+    site.write_text(
+        "HUB_HOSTNAME=parent\nFACTORY_IP=172.22.13.17/24\nAP_SSID=presence-hub\n"
+        "PARENT_STA_NO1=1\nPARENT_STA_NO2=2\nPARENT_STA_NO3=3\n",
+        encoding="utf-8",
+    )
+    run_bash(
+        f'{SOURCE}; pack_hub_kit "{src}" "{dest}"',
+        env=_env({
+            "PACK_SKIP_DOCKER": "1",
+            "PACK_SITE_ENV": str(site),
+            "PACK_SECRETS": str(tmp_path / "no-secrets"),
+            "PACK_ALLOW_NO_PSK": "1",
+        }),
+    )
+    kit = dest / "presence-hub-kit"
+    preflight = kit / "preflight-new-hub.sh"
+    assert preflight.is_file()
+    assert "preflight_docker_verdict" in preflight.read_text(encoding="utf-8")
+    readme = (kit / "README.txt").read_text(encoding="utf-8")
+    assert "/media/pi/USB8G/presence-hub-kit/preflight-new-hub.sh" in readme
+    assert "/media/*/" not in readme
