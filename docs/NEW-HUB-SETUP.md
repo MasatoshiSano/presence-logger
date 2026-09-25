@@ -12,8 +12,8 @@
 > 全フェーズを回す。各節の「手動」はフェーズが失敗したときの拠り所として残してある
 > （顧客先でネットが無いときでも、この文書だけで復旧できる）。
 >
-> 機体固有値は `site.env` と `wifi-switch.conf` だけ。接続・切断・子AP・WiFi切替は
-> そこから読む。スクリプトに現行機の SSID を直書きしない。
+> 機体固有値は `site.env` に置く。WiFi切替を使う場合は新機で
+> `wifi-switch.conf` も作る（USBキットには含まれず、ウィザードも生成しない）。スクリプトに現行機の SSID を直書きしない。
 
 ---
 
@@ -36,10 +36,21 @@ sudo bash scripts/pack-hub-usb.sh /media/pi/USBのマウント先
 **載せないもの**: 親の `fleet/children.conf`、Oracle パスワード、AP パスワード、
 detector イメージ、SQLite バッファ。工場WiFi の PSK は載るので、USB は鍵と同じ扱い。
 
+ドライバ探索は `PACK_DRIVER_SRC` の明示指定を優先し、未指定なら
+`/usr/local/src/8821au` → `SUDO_USER` のホームの `8821au` → `$HOME/8821au`
+の順に探す。見つからなければ中止する。場所を指定する例:
+`sudo PACK_DRIVER_SRC=/home/pi/8821au bash scripts/pack-hub-usb.sh /media/pi/USBのマウント先`。
+意図的にドライバを含めない場合だけ `PACK_ALLOW_NO_DRIVER=1` を指定する
+（新機のフェーズ30で GitHub への接続が必要になる）。
+
 ### 新機（素の Pi OS Desktop）で
 
+対象は Raspberry Pi 5、64-bit Raspberry Pi OS Desktop（trixie）。フェーズ10/20 の
+apt 導入にはインターネットが必要なので、先にデスクトップから保守用WiFiへ接続する。
+USB はコンテナイメージとドライバソースを運ぶが、apt パッケージは運ばない。
+
 1. USB を挿し、`このUSBからコピー` をダブルクリックする
-   （開かないときは `bash /media/*/presence-hub-kit/copy-to-this-pi.sh`）
+   （開かないときは `bash /media/pi/*/presence-hub-kit/copy-to-this-pi.sh`）
 2. デスクトップの **ハブ初期設定** をクリックする
 3. 順に答える: ホスト名 / 工場の SSID・固定IP・ゲートウェイ・DNS / Oracle（ホスト・ポート・サービス・ユーザ・テーブル） / 子Pi用ハブAP名 / APパスワード / Oracleパスワード  
    （工場網と Oracle の既定値はコピー元。同居時のハブAP名の既定は「ホスト名-hub」。Enter でそのまま）
@@ -53,7 +64,8 @@ detector イメージ、SQLite バッファ。工場WiFi の PSK は載るので
 コピーした直後は AP もコンテナも起動しない（親と衝突しない）。
 ウィザードが `site.env` と secrets を書いてから `bootstrap-hub.sh` を回す。
 
-docker 本体と compose プラグインはフェーズ20 が入れる。docker グループへの追加も
+docker 本体と compose プラグインはフェーズ20 が Debian の
+`docker.io docker-cli docker-compose` で入れる（Docker社リポジトリは不要）。docker グループへの追加も
 そこで行う。残りのフェーズは root で docker を話すので、**再ログインを待たずに**
 コンテナまで上がる。実行ビットはコピー時に立て直す（FAT の USB でも
 `bash copy-to-this-pi.sh` で動く）。
@@ -91,6 +103,13 @@ sudo apt-get install -y "linux-headers-$(uname -r)"   # DKMS は今動いてい�
 sudo usermod -aG docker "$USER"      # 反映には再ログイン or reboot が必要
 ```
 
+この手動 apt 手順は素の新機向け。既に Docker CE がある親機では実行しない
+（`docker.io` と競合する）。自動のフェーズ20は Docker CE 導入済みなら Docker
+パッケージの入替えを避け、`docker compose version` を確認する。
+`linux-headers-rpi-2712` は最新版のヘッダなので、実行中カーネル用ヘッダも別途必要。
+旧版が取得できなければ、新機で OS 更新・再起動後にフェーズ20から再開する。
+パッケージ名の検証だけでは、素の実機での導入完走を保証しない。
+
 **`python3-yaml` は必須。** 次はいずれも **venv ではなくシステムの `python3`** で動く。
 
 | 使う場所 | 用途 |
@@ -106,12 +125,13 @@ sudo usermod -aG docker "$USER"      # 反映には再ログイン or reboot が
 ### 実行順序（3 つの依存関係）
 
 ```
-① インターネットに繋がっている間に  →  docker compose build
+① イメージを用意する              →  USBからload、またはネット接続中にbuild
 ② 子AP(ドングル側) を起動してから   →  docker compose up -d
 ③ /etc/presence-logger/ を揃えてから →  docker compose up -d
 ```
 
-1. **ビルドはインターネット接続中に行う。** `services/oracle-jdbc/Dockerfile` は
+1. **USBキットのイメージはフェーズ60が load し、`--no-build` で起動する。**
+   キットが無い手動経路のビルドはインターネット接続中に行う。 `services/oracle-jdbc/Dockerfile` は
    `ojdbc11.jar` を `repo1.maven.org` から `curl` で取得する。工場網（HIME-H-REAP）へ
    切り替えた後にビルドすると**必ず失敗する**。
 2. **`docker compose up -d` の前に子AP を上げる。** `docker-compose.override.yml` が
@@ -123,7 +143,8 @@ sudo usermod -aG docker "$USER"      # 反映には再ログイン or reboot が
 
 `services/detector` は `profiles: ["camera"]` 付きなので、ハブの素の
 `docker compose up -d`（`--profile camera` なし）では**起動しない**。フェーズ60 は
-`mosquitto oracle-jdbc bridge` だけを明示して `up -d --build` する。カメラ付き親で
+`mosquitto oracle-jdbc bridge` だけを明示する。キットの tar があれば
+load 後に `up -d --no-build`、なければ `up -d --build` する。カメラ付き親で
 detector を動かすときは `docker compose --profile camera up -d` が要る。
 
 `services/detector/Dockerfile` は `COPY models/efficientdet_lite0.tflite` を含むが、この
@@ -153,8 +174,19 @@ sudo bash scripts/bootstrap-hub.sh 30 60      # 30〜60（両端を含む）
 bash scripts/bootstrap-hub.sh --list          # 一覧
 ```
 
-**途中で失敗しても、そのフェーズから再開できる。** 全フェーズは冪等なので、範囲を指定して
-流し直しても壊れない。
+表の「完了後に人がすること」は手動経路向け。ウィザードはフェーズを続けて実行し、
+secrets を用意し、アイコンの信頼設定も試みる。再ログインは最後の再起動で兼ねる。
+
+**途中で失敗したら、そのフェーズから範囲指定で再開する。** ただし再実行で
+すべての値が更新されるわけではない。フェーズ40は既存の `/etc/presence-logger/secrets.env`
+を上書きせず、フェーズ50は自APが稼働中なら通常はスキップする。APパスワードは
+ウィザードの `p` で更新する（AP再作成中は子の通信が一時中断する）。Oracleパスワードは
+root で実際の secrets を更新する必要がある。`.kit/setup-complete` を消して
+ウィザードをやり直しても、この上書き制限は変わらない。AP名を変える場合は旧APの
+プロファイルが残るため、新機の旧設定を確認してから切り替える。
+
+手動で最後まで再開した場合は完了マーカーが自動で作られない。完了確認後に
+`date -Iseconds > .kit/setup-complete` を新機のリポジトリで実行する。
 
 子Pi の引っ越し・増設は [`child-migration.md`](child-migration.md)。
 SD クローンで 2 台目を作る場合は [`sd-clone-pattern-b.md`](sd-clone-pattern-b.md)。
@@ -237,8 +269,11 @@ nano site.env
 | `FACTORY_SSID` 等 | 現行機の `profiles.yaml` から転記 |
 | `FACTORY_IP` | **情シスへ申請した新機の固定IP**。現行機（`172.22.13.17/24`）と必ず別。内蔵 wlan0 の MAC を許可登録してもらう必要がある |
 | `PARENT_STA_NO1-3` | ハブでは Oracle に書かれないが**必須項目**。将来カメラを付けたときに備え、**他機・全子Piと重複しない値**を採番する。現行機と同じ値を入れてはならない |
-| `AP_SSID` / `AP_GW_IP` | **引っ越し**なら現行機と同じ値（子は無変更で繋ぎ替わる）。**増設**なら別の値（子側の変更が要る） |
+| `AP_SSID` / `AP_GW_IP` | **増設ではAP名を変える**。APごとに独立しているため GW は同じ `10.42.0.1` でよく、ウィザードも親の値を継承する。引っ越しで子を無変更にするにはAP名に加えてパスワードも旧親と揃える |
 | `ADMIN_SSID` | ここから離れると遠隔操作できなくなる接続。現行機では `F660P-sDcS-A` |
+
+ウィザードは `PARENT_STA_NO1-3` に親の値 + 3 を自動設定し、他機・子との重複は
+検査しない。同じ親から3台目以降を作る場合も同じ値になるので、全体の採番と照合する。
 
 **IPアドレスの書式（`FACTORY_IP` / `FACTORY_GW` / `AP_GW_IP`）**
 
@@ -279,13 +314,14 @@ chmod 600 wifi-switch.conf
 nano wifi-switch.conf
 ```
 
-`<PSKキー名>` を `-` にした行は nmcli プロファイルを作らない。**`presence-hub-ap` は必ず `-`
+`<PSKキー名>` を `-` にした行は nmcli プロファイルを作らない。**このハブの `${AP_SSID}-ap` は必ず `-`
 にする**（AP は子AP構築の工程が作るため、ここで二重に作ると設定が食い違う）。
 
 ### 3.3 `secrets.env`（#3）— 最重要
 
-フェーズ40（`sudo bash scripts/bootstrap-hub.sh 40`）は空の `secrets.env`
-（`600 root:docker`）を作り、欠けているキー名だけ出す。**値は人が手入力する。**
+フェーズ40は secrets が未作成なら `.kit/secrets.env` を配置し、キットが無ければ
+ひな型を作る（`600 root:docker`）。既存ファイルは上書きしない。ウィザード経由では
+入力した Oracle/AP パスワードとキットの工場PSKを使う。手動経路は不足値を入力する。
 
 **現行機の画面に表示させ、新機で手入力する。** ファイルをネットワーク越しにコピーしたり、
 チャット・チケット・コミットに貼ったりしない。
@@ -423,6 +459,9 @@ scripts/deploy-model.sh --list      # 版が見えることを確認
 >   （`ORIGIN_ALLOW_SAME_AP=1`）。クローンが自動で付くのは **AP 名とパスワードが旧ハブと
 >   同じときだけ**。パスワードは USB に入らない。鍵は SD 書き込みが必要。
 >   親機がまだ同じ工場網で動いていると、同じホスト名・工場IPは衝突する。
+>   別工場では継承される `FACTORY_SUBNETS`・`SNTP_SERVERS`・`FACTORY_HIDDEN` と
+>   工場PSKも見直す。ウィザードはこれらを質問せず、生成プロファイルのPSK参照名は
+>   `WIFI_PSK_HIMEREAP` のため、site.env と実際の secrets を修正してフェーズ40を再実行する。
 >
 > 新しい子のクローン増設だけ、同じアイコンで「新しい子を増やす」を選ぶ。
 >
@@ -574,7 +613,9 @@ fcitx5 が既に動いている状態で `profile` を書いた場合は、再�
 **現行機の `/etc/NetworkManager/system-connections/` を丸ごとコピーしない。** 全SSIDの PSK が
 平文で入っており、不要な古い接続も混ざるため。
 
-**自動**: `sudo bash scripts/bootstrap-hub.sh 70` が `wifi-switch.conf` と
+**自動**: USB経路では `wifi-switch.conf` が無いためWiFi切替はスキップされる。
+必要なら §3.2 で新機用に作成後、`sudo bash scripts/bootstrap-hub.sh 70` を実行する。
+フェーズ70が `wifi-switch.conf` と
 `secrets.env` から必要な分だけ作る。`warn` 行のランチャーは
 `--warn-disconnect "$ADMIN_SSID"` を付ける（旧 `--away-from-f66` ではない）。
 
@@ -594,7 +635,7 @@ sudo nmcli connection add type wifi con-name "F660P-sDcS-A" ifname wlan0 \
 
 **自動**: `sudo bash scripts/bootstrap-hub.sh 60`
 
-§0.5 の順序（インターネット中にビルド → 子AP を上げる → `/etc/presence-logger/` を揃える）
+§0.5 の順序（USBイメージの用意またはネット接続中のビルド → 子AP → `/etc/presence-logger/`）
 を満たしてから実行する。detector は compose profile `camera` の後ろなので、ハブの素の
 `up -d` では起動しない。
 
@@ -655,7 +696,7 @@ done
 chmod +x "$DESK"/*.desktop
 ```
 
-初回はアイコンを右クリックして「**信頼して実行**」を選ぶ（Raspberry Pi OS の既定動作）。
+自動配置では信頼設定を試みる。手動配置などで起動できない場合はアイコンを右クリックして「**信頼して実行**」を選ぶ（Raspberry Pi OS の既定動作）。
 
 **置かれるもの**
 
@@ -667,7 +708,8 @@ chmod +x "$DESK"/*.desktop
 | 直近30件の記録 | `show-recent-records.sh` | 不要 | JDBCサイドカー経由で Oracle を SELECT |
 | パイプライン監視 | `pipeline-monitor.sh` | 不要 | 子Pi→MQTT→inbox→Oracle を1画面で追う |
 | 子をこのハブへ付ける | `setup-children-wizard.sh` | 一部 | 既存の子の引っ越し / 新しい子の登録（会話形式） |
-| WiFi切替（`WiFi切替/` 内） | `switch-wifi.sh` | 要 | §3.11 で nmcli プロファイルを作った接続だけ。`warn` 行は `--warn-disconnect <ADMIN_SSID>`（旧 `--away-from-f66` ではない） |
+| 子SDをこのハブ用にする | `prepare-child-sd.sh` | 要 | 子SDへこのハブ用の設定を配置 |
+| WiFi切替（設定した場合のみ `WiFi切替/` 内） | `switch-wifi.sh` | 要 | §3.11 で nmcli プロファイルを作った接続だけ。`warn` 行は `--warn-disconnect <ADMIN_SSID>`（旧 `--away-from-f66` ではない） |
 
 **ハブ構成（カメラ無し）での注意 3 点**
 
@@ -684,7 +726,8 @@ chmod +x "$DESK"/*.desktop
 **確認**
 
 ```bash
-ls ~/Desktop/*.desktop ~/Desktop/WiFi切替/*.desktop
+ls ~/Desktop/*.desktop
+# WiFi切替は wifi-switch.conf を作ってフェーズ70を再実行した場合のみ置かれる
 # 「子をこのハブへ付ける」があること。ブラウザのフリート管理は置かない。
 ```
 
@@ -701,6 +744,60 @@ ls ~/Desktop/*.desktop ~/Desktop/WiFi切替/*.desktop
   読む（`fleet_ui.discovery.current_ap_dev`）ので、`AP_DEV=wlan0` を渡せばその場で効く。
   `site.env` の `AP_IF` とは**自動同期しない**ため、常駐させる場合は
   `fleet_ui/systemd/fleet-ui.service` の `Environment=AP_DEV=...` を `AP_IF` に揃える。
+
+### 3.15 中継経由での実機検証で判明した罠（2026-09-25、2台目ハブで実施）
+
+親機と共存する2台目を、**親機自身の子AP(`presence-hub`)をリモート作業の中継に使って**
+セットアップしたときに実際に踏んだ罠。工場網が使える現場では起きないものと、
+どの現場でも起きうるものが混ざっている。
+
+- **USBキットはビルド時刻より後の修正を含まない。** `pack-hub-usb.sh` はその時点の
+  作業ツリーをそのままコピーする。キットを作った**後**に `scripts/bootstrap/` を
+  直したなら、キットは古いままである(例: キットが16:49作成、修正コミットが17:15〜)。
+  `preflight-new-hub.sh` のような新設ファイルも同様に、キット作成後に足したものは
+  載らない。**キットを使う前に、キットの `.kit/origin.env` の作成時刻と
+  `git log --oneline scripts/bootstrap/` の最新コミット時刻を突き合わせる。**
+  古ければ `rsync -av scripts/bootstrap/ 新機:~/projects/presence-logger/scripts/bootstrap/`
+  で該当ファイルだけ上書きしてから再開する。
+
+- **`docker-ce` が既にある機体では、フェーズ20は `docker.io` を要求しない**
+  （`scripts/bootstrap/20-base-packages.sh` の `base_docker_packages()` が
+  `dpkg-query` で検出し、検出時は何もしない設計）。これは衝突を避ける正しい動作だが、
+  **「新しい修正版のDocker導入経路(`docker.io`)を実際に通しで検証したい」場合は
+  無効化してしまう**(古い `docker-ce` がそのまま残るだけで終わる)。検証目的で
+  まっさらにしたいときは、フェーズ20を回す前に手動で purge する。
+
+  ```bash
+  sudo systemctl stop docker containerd
+  sudo apt-get purge -y docker-ce docker-ce-cli docker-ce-rootless-extras \
+      docker-buildx-plugin docker-compose-plugin containerd.io
+  sudo apt-get autoremove -y
+  sudo rm -rf /var/lib/docker /var/lib/containerd /etc/docker
+  ```
+
+- **「増設」時の `AP_GW_IP` は、現場によっては同じ `10.42.0.1` のままで構わない
+  （§3.1 参照、各APは孤立したホットスポットなので通常は衝突しない）。ただし
+  中継に「別のハブの子AP」を使っている間だけ、話が変わる。** 新機の wlan0 が
+  中継先ハブの子APに `10.42.0.0/24` の一員として繋がっている状態で、新機自身の
+  wlan1 も既定の `10.42.0.1/10.42.0.0/24` で子AP を起動すると、**中継先ハブの
+  アドレス(`10.42.0.1`)を新機自身のwlan1が名乗ってしまい**、新機は「10.42.0.1宛の
+  通信は自分宛」と誤認して中継が切れる（wifiの関連付け自体は生きたまま、
+  ping/SSHだけ通らなくなる。`iw dev <if> station dump` で確認できる）。
+  症状が起きたら、新機の `site.env` の `AP_GW_IP` を中継網と重ならない値
+  （例: `10.42.1.1`）に変え、`bootstrap-hub.sh 50 70` から再開する。
+  本物の工場網ごしに作業する現場では、この衝突自体が発生しない。
+
+- **古い NetworkManager 接続プロファイルが `wlan1` を先に掴むことがある。**
+  以前の作業で繋いだ無関係なWiFi(モバイルルータのテザリング等)が
+  `autoconnect: yes` のまま残っていると、フェーズ50が作った子AP用プロファイルより
+  先に自動接続し、子APが永久に起動できない。`nmcli -t -f NAME,DEVICE,AUTOCONNECT
+  connection show` で `wlan1` に紐づく余計な接続がないか確認し、要らないものは
+  `sudo nmcli connection delete <NAME>` で消してから子APを起動し直す。
+
+- **上記いずれの現象も「動いているように見えて実は無反応」という形で現れる。**
+  `nmcli connection up` 自体は成功と返る。ARP/wifiの関連付けも生きたまま。
+  変わるのは ping・SSH だけ。**「起動できた」と「疎通できる」は別物として、
+  必ず疎通側で確認する**([[project-silent-success-pattern]] と同型)。
 
 ---
 
