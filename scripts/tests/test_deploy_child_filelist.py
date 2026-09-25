@@ -32,6 +32,9 @@ def test_default_distributes_code_files(fake_bin):
     assert "Picamera.py" in out
     assert "web_server.py" in out
     assert "child-csv-to-mqtt.py" in out
+    # child-csv-to-mqtt.py imports this; leaving it out breaks the child on deploy
+    # (found 2026-09-25: this list wasn't updated when f03259d added the module).
+    assert "ack_delivery.py" in out
 
 
 def test_default_does_not_distribute_shared_config(fake_bin):

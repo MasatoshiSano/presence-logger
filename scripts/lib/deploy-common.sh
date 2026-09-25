@@ -22,7 +22,7 @@ KEEP_BACKUPS="${KEEP_BACKUPS:-5}"
 
 # 子アプリの「正」= リポジトリ child/ 配下。~ 直下(flat)へ配る。
 # runtime 状態(send_target_state.json / logs 等)は *絶対に* 触らない → 一覧に入れない。
-CHILD_CODE_FILES=(Picamera.py web_server.py child-csv-to-mqtt.py index.html)
+CHILD_CODE_FILES=(Picamera.py web_server.py child-csv-to-mqtt.py index.html ack_delivery.py)
 
 # フリート共通の設定。全機体で同じ値であるべきものだけを置く。
 # 子のWeb UIからも編集できるため、配布は --with-shared-config 指定時のみ(既定は配らない)。
