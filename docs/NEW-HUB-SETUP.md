@@ -751,7 +751,9 @@ ls ~/Desktop/*.desktop
 - **「旧親から移す」は、旧親の名簿から子を外す。**
   「子をこのハブへ付ける」→ 1 → 1 は、子がこのハブの AP に現れて送り先を揃えたあと、
   (1) このハブの `fleet/children.conf` に子の行を足し、(2) **旧親の `fleet/children.conf` から、SSH で子の行を消す**
-  （`fleet_ui/migrate.py` の `take_child`）。完了メッセージにはこのことが出ない。
+  （`fleet_ui/migrate.py` の `take_child`）。完了メッセージには、旧親の名簿を読み直して外れたことを確かめた場合だけ
+  「旧親(…)の名簿 fleet/children.conf から … を外しました（読み直して確認済み）」と出る。
+  読めなかった・外せなかった・別の形で載っていた場合は「要対応:」で始まる行が出るので、その指示どおり旧親で直す。
   恒久的な引っ越しなら意図どおりだが、**試しに移して戻す**ときは、戻したあとも旧親の名簿から
   外れたままになり、次のことが起きる: `scripts/fleet-status.sh` と `scripts/deploy-fleet.sh` の対象から
   その子が**黙って漏れる**（到達不能とも表示されない）／旧親の `git status` に `fleet/children.conf` の
@@ -760,6 +762,8 @@ ls ~/Desktop/*.desktop
     指定して**逆向きに移す**。名簿の足し引きも自動で行われる。元のハブに `.kit/ap-join.env` が
     必要（無いと「AP のパスワードが読めません」で止まる。作り方は §3.7 の末尾の注意を参照。
     ウィザードを通さずに作った親には最初から無い）。
+    逆向きに移しても、旧親の `fleet/children.conf` は元の並び順に戻らず、末尾に空行が増えていることがある。
+    `git diff` が並び順と空行だけなら `git checkout -- fleet/children.conf` で戻してよい。
   - 手で戻したときは、**元のハブの `fleet/children.conf` に子の行を書き足す**。
   - どちらでも、戻したあとに `git status`（`fleet/children.conf` が変更なしに戻っているか）と
     `scripts/fleet-status.sh`（その子が一覧に出るか）を確かめる。

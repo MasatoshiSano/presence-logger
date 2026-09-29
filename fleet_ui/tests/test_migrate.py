@@ -5,6 +5,7 @@
 """
 import os
 import re
+import shlex
 import stat
 import subprocess
 from pathlib import Path
@@ -14,6 +15,7 @@ import pytest
 from fleet_ui.migrate import (
     CAT_OK,
     KEY_OK,
+    MISSING,
     WIFI_INSTALL,
     WIFI_OK,
     inventory_name,
@@ -191,7 +193,8 @@ def test_take_child_installs_key_switches_wifi_keeps_identity(tmp_path):
         if "presence-hub-join" in remote or "connection up" in remote:
             return f"{WIFI_OK}\n"
         if "printf" in remote and "children.conf" in remote:
-            # write-back of stripped inventory
+            # write-back of stripped inventory(旧親の名簿へ本当に反映する)
+            old_inv_text["body"] = shlex.split(remote)[2]
             return ""
         if "ssh-keyscan" in joined:
             return "hostkey-line\n"
@@ -239,6 +242,7 @@ def test_take_child_installs_key_switches_wifi_keeps_identity(tmp_path):
     assert waited == ["aa:bb:cc:dd:ee:ff"]
     body = inv.read_text(encoding="utf-8")
     assert "zero2.local" in body
+    assert "外しました（読み直して確認済み）" in res.message
 
 
 def test_take_child_rejects_unsafe_old_host():
@@ -384,6 +388,7 @@ def test_take_child_does_not_wipe_old_inventory_when_cat_fails(tmp_path):
     assert res.ok, res.message
     assert writes == []
     assert "手動削除" in res.message
+    assert "外しました" not in res.message
     assert "zero2.local" in inv.read_text(encoding="utf-8")
 
 
@@ -807,3 +812,142 @@ def test_take_child_align_uses_inventory_name_when_ip_unknown(tmp_path):
     assert res.ok, res.message
     (align_cmd,) = runner.align_calls
     assert "pi@zero2.local" in align_cmd
+
+
+# --- 完了メッセージ: 旧親の名簿は「読み直して」から伝える -------------------------------------
+
+_MOVED_HEAD = "zero2 をこのハブへ移しました（ホスト名と局番号はそのまま）。"
+
+
+def _old_parent(body, *, apply_write=True, reread="ok", missing=False, write_body=None):
+    """旧親の children.conf を1つ持つ偽物。
+
+    apply_write=False は「書き込みは成功に見える(空の返事)が、名簿は変わらない」状態。
+    run_cmd_long は失敗しても空文字を返すので、書き込みの返事からは何も分からない。
+    """
+    state = {"body": body, "reads": 0, "writes": []}
+
+    def handle(joined, remote):
+        if " > " in remote and "children.conf" in remote:
+            state["writes"].append(remote)
+            if apply_write:
+                written = shlex.split(remote)[2]  # printf %s <本文> > <path>
+                state["body"] = written if write_body is None else write_body
+            return ""
+        if "cat " in remote and "children.conf" in remote:
+            state["reads"] += 1
+            if missing:
+                return f"{MISSING}\n"
+            if state["reads"] >= 2 and reread == "fail":
+                return ""
+            return state["body"] + f"\n{CAT_OK}\n"
+        return _take_script(joined, remote)
+
+    return state, handle
+
+
+def _take_old_parent(tmp_path, body="# old\nzero2\nother.local\n", **kwargs):
+    state, handle = _old_parent(body, **kwargs)
+    res, _inv = _take(tmp_path, _recorder(handle))
+    return res, state
+
+
+def test_take_child_does_not_claim_removed_when_write_did_not_apply(tmp_path):
+    """書き込み SSH は成功に見える(空の返事)のに行が消えていない。成功と言ってはいけない。"""
+    res, state = _take_old_parent(tmp_path, apply_write=False)
+    assert res.ok, res.message
+    assert "外しました" not in res.message
+    assert "外せませんでした" in res.message
+    assert "手動削除" in res.message
+    assert state["reads"] == 2
+
+
+def test_take_child_reports_removal_only_after_reread(tmp_path):
+    res, state = _take_old_parent(tmp_path)
+    assert res.ok, res.message
+    assert "旧親(172.22.13.17)の名簿" in res.message
+    assert "外しました（読み直して確認済み）" in res.message
+    assert "commit" in res.message
+    assert "deploy-parent.sh" in res.message
+    assert "逆向き" in res.message
+    assert "other.local" in state["body"]
+    assert "# old" in state["body"]
+    assert "zero2\n" not in state["body"]
+
+
+def test_take_child_reread_failure_is_not_reported_as_removed(tmp_path):
+    res, _state = _take_old_parent(tmp_path, reread="fail")
+    assert res.ok, res.message
+    assert "確かめられていません" in res.message
+    assert "外しました" not in res.message
+    assert "手動削除" in res.message
+
+
+def test_take_child_reports_unexpected_rewrite_of_other_lines(tmp_path):
+    res, _state = _take_old_parent(tmp_path, write_body="")
+    assert res.ok, res.message
+    assert "想定と違う形" in res.message
+    assert "git diff fleet/children.conf" in res.message
+    assert "外しました" not in res.message
+
+
+def test_take_child_skips_write_when_entry_not_on_old_parent(tmp_path):
+    res, state = _take_old_parent(tmp_path, body="other.local\n")
+    assert res.ok, res.message
+    assert state["writes"] == []
+    assert "載っていませんでした" in res.message
+    assert "変えていません" in res.message
+    assert "手動削除" not in res.message
+
+
+def test_take_child_flags_local_suffix_mismatch_on_old_parent(tmp_path):
+    res, state = _take_old_parent(tmp_path, body="zero2.local\n")
+    assert res.ok, res.message
+    assert state["writes"] == []
+    assert "zero2.local として載っている" in res.message
+    assert "手動削除" in res.message
+
+
+def test_take_child_missing_old_inventory_is_not_manual_delete(tmp_path):
+    res, state = _take_old_parent(tmp_path, missing=True)
+    assert res.ok, res.message
+    assert "ありませんでした" in res.message
+    assert "手動削除" not in res.message
+    assert state["writes"] == []
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"apply_write": False},
+        {},
+        {"body": "other.local\n"},
+        {"missing": True},
+        {"reread": "fail"},
+    ],
+)
+def test_take_child_message_first_line_is_stable(tmp_path, kwargs):
+    res, _state = _take_old_parent(tmp_path, **kwargs)
+    assert res.message.splitlines()[0] == _MOVED_HEAD
+
+
+def test_take_child_output_stays_child_ip(tmp_path):
+    res, _state = _take_old_parent(tmp_path)
+    assert res.output == "10.42.0.9"
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"apply_write": False},
+        {},
+        {"reread": "fail"},
+        {"write_body": ""},
+        {"body": "other.local\n"},
+        {"body": "zero2.local\n"},
+        {"missing": True},
+    ],
+)
+def test_take_child_message_never_contains_psk(tmp_path, kwargs):
+    res, _state = _take_old_parent(tmp_path, **kwargs)
+    assert "pskpskpsk" not in res.message

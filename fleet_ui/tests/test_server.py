@@ -125,6 +125,7 @@ def test_index_html_has_handoff_section_and_never_mentions_psk():
     assert "他のハブから引き継ぐ" in html
     assert "/api/migrate/list" in html
     assert "/api/migrate/take" in html
+    assert "#migrate-msg { white-space: pre-line; }" in html
     assert "WIFI_AP_PSK" not in html
     assert "/api/adopt" in html
     assert "子をこのハブへ付ける" in html

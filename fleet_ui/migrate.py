@@ -325,6 +325,12 @@ sudo systemd-run --unit=presence-hub-join-switch --collect bash "$sw"
 """.strip()
 
 
+def _entry_forms(entry: str) -> set[str]:
+    """名簿での書かれ方の揺れ(`.local` の有無)を含めた候補。"""
+    short = entry[: -len(".local")] if entry.endswith(".local") else entry
+    return {entry, short, f"{short}.local"}
+
+
 def take_child(
     old_host: str,
     entry: str,
@@ -479,23 +485,64 @@ def take_child(
     remote_text, status = _read_remote_inventory(
         old_host, remote_inventory, runner=runner
     )
-    if status != "ok" or remote_text is None:
-        return StepResult(
-            ok=True,
-            message=(
-                f"{entry} をこのハブへ移しました（ホスト名と局番号はそのまま）。"
-                "旧親の名簿は更新できませんでした。旧親で手動削除してください。"
-            ),
-            output=waited.output,
+    head = f"{entry} をこのハブへ移しました（ホスト名と局番号はそのまま）。"
+    where = f"旧親({old_host})"
+
+    def done(*lines: str) -> StepResult:
+        return StepResult(ok=True, message="\n".join((head, *lines)), output=waited.output)
+
+    if status == "missing":
+        return done(
+            f"{where}には名簿 fleet/children.conf がありませんでした。旧親の名簿は変えていません。"
         )
+    if status != "ok" or remote_text is None:
+        return done(
+            f"要対応: {where}の名簿を読めなかったので、{entry} の行は旧親に残っています。"
+            "旧親で手動削除してください。"
+        )
+    before = parse_children_conf(remote_text)
+    if entry not in before:
+        other = sorted((_entry_forms(entry) - {entry}) & set(before))
+        if other:
+            return done(
+                f"要対応: {where}の名簿には {entry} ではなく {other[0]} として載っているので、"
+                "外していません。旧親で手動削除してください。"
+            )
+        return done(
+            f"{where}の名簿には {entry} が載っていませんでした。旧親の名簿は変えていません。"
+        )
+
     stripped = strip_inventory_entry(remote_text, entry)
     write_remote = f"printf %s {shlex.quote(stripped)} > {remote_inventory}"
-    ssh_pi(old_host, write_remote, runner=runner)
+    ssh_pi(old_host, write_remote, runner=runner)  # 返事は判定に使わない(失敗しても空文字)
 
-    return StepResult(
-        ok=True,
-        message=f"{entry} をこのハブへ移しました（ホスト名と局番号はそのまま）",
-        output=waited.output,
+    # 書いた側の申告ではなく、読み直した名簿で成否を決める。
+    after_text, after_status = _read_remote_inventory(
+        old_host, remote_inventory, runner=runner
+    )
+    if after_status != "ok" or after_text is None:
+        return done(
+            f"要対応: {where}の名簿を書き換えましたが、読み直せなかったので {entry} が外れたかは"
+            "確かめられていません。旧親で fleet/children.conf を開き、"
+            f"{entry} の行が残っていれば手動削除してください。"
+        )
+    after = parse_children_conf(after_text)
+    if entry in after:
+        return done(
+            f"要対応: {where}の名簿から {entry} を外せませんでした（読み直すと行が残っています）。"
+            "旧親で手動削除してください。"
+        )
+    if after != parse_children_conf(stripped):
+        return done(
+            f"要対応: {where}の名簿が想定と違う形になりました（{entry} 以外の行も変わっています）。"
+            "旧親で git diff fleet/children.conf を確認して直してください。"
+        )
+    return done(
+        f"{where}の名簿 fleet/children.conf から {entry} を外しました（読み直して確認済み）。",
+        "このハブと旧親の fleet/children.conf が変わっています。"
+        "commit してから deploy-parent.sh を実行してください。",
+        "試しに移しただけなら、元のハブで 1 → 1 を選び、"
+        "旧親にこのハブを指定して逆向きに移すと名簿も戻ります。",
     )
 
 
