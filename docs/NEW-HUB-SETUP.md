@@ -43,6 +43,9 @@ detector イメージ、SQLite バッファ。工場WiFi の PSK は載るので
 意図的にドライバを含めない場合だけ `PACK_ALLOW_NO_DRIVER=1` を指定する
 （新機のフェーズ30で GitHub への接続が必要になる）。
 
+2026-09-29 より前に作った USB は、コピーの後に初期設定が自動で始まらず、コピー先の確認もしない。
+`pack-hub-usb.sh` を実行し直して作り直すことを勧める。
+
 ### 新機（素の Pi OS Desktop）で
 
 対象は Raspberry Pi 5、64-bit Raspberry Pi OS Desktop（trixie）。フェーズ10/20 の
@@ -51,7 +54,11 @@ USB はコンテナイメージとドライバソースを運ぶが、apt パッ
 
 1. USB を挿し、`このUSBからコピー` をダブルクリックする
    （開かないときは `bash /media/pi/*/presence-hub-kit/copy-to-this-pi.sh`）
-2. デスクトップの **ハブ初期設定** をクリックする
+2. コピーが終わると事前点検が走り、問題がなければそのまま **ハブ初期設定** が始まる。
+   - BLOCK が出たら始まらない。直してからデスクトップの **ハブ初期設定** をクリックする。
+   - WARN が出たら読んで Enter。
+   - 始まらないとき（古い USB・SSH から流したとき・`COPY_NO_WIZARD=1`）もデスクトップの **ハブ初期設定** をクリックする。
+   - 設定済みのハブにもう一度コピーしたときは自動で始まらない。
 3. 順に答える: ホスト名 / 工場の SSID・固定IP・ゲートウェイ・DNS / Oracle（ホスト・ポート・サービス・ユーザ・テーブル） / 子Pi用ハブAP名 / APパスワード / Oracleパスワード  
    （工場網と Oracle の既定値はコピー元。同居時のハブAP名の既定は「ホスト名-hub」。Enter でそのまま）
 4. 終わったら再起動する。
@@ -63,6 +70,7 @@ USB はコンテナイメージとドライバソースを運ぶが、apt パッ
 
 コピーした直後は AP もコンテナも起動しない（親と衝突しない）。
 ウィザードが `site.env` と secrets を書いてから `bootstrap-hub.sh` を回す。
+コピー先の ~/projects/presence-logger に presence-logger ではない中身があると、コピーせずに止まる。
 
 docker 本体と compose プラグインはフェーズ20 が Debian の
 `docker.io docker-cli docker-compose` で入れる（Docker社リポジトリは不要）。docker グループへの追加も

@@ -3,23 +3,36 @@
 新機登録ウィザード(STA_NO を空にする / 改名)を流すと、稼働中の子の記録が止まる。
 引っ越しはホスト名と局番号を残し、WiFi と SSH 鍵とインベントリだけを付け替える。
 """
+import os
+import stat
+import subprocess
 from pathlib import Path
+
+import pytest
 
 from fleet_ui.migrate import (
     CAT_OK,
     KEY_OK,
+    WIFI_INSTALL,
     WIFI_OK,
     inventory_name,
     list_children_payload,
     list_remote_children,
     load_ap_join,
     migrate_status,
+    nm_escape_psk,
+    nm_join_keyfile,
+    nm_ssid,
     parse_children_conf,
+    psk_valid,
     read_pubkey,
     strip_inventory_entry,
     take_child,
     validate_old_host,
 )
+from scripts.tests import nm_vectors
+from scripts.tests.nm_readback import _nmcli, _pick, assert_roundtrip
+from scripts.tests.shellhelp import run_bash
 
 
 def test_parse_children_conf_skips_comments_and_blank_lines():
@@ -190,7 +203,11 @@ def test_take_child_installs_key_switches_wifi_keeps_identity(tmp_path):
     assert "password" not in joined
     assert "pskpskpsk" not in joined
     assert any("pskpskpsk" in blob for blob in runner.inputs)
-    assert "sibling-hub" in "\n".join(runner.inputs)
+    # A-M6: 標準入力の keyfile を NM / GLib で読み戻して、SSID・PSK が元の値になること。
+    (keyfile,) = [blob for blob in runner.inputs if "[wifi]" in blob]
+    written = tmp_path / "stdin.nmconnection"
+    written.write_text(keyfile, encoding="utf-8")
+    assert_roundtrip(written, "sibling-hub", "pskpskpsk")
     assert waited == ["aa:bb:cc:dd:ee:ff"]
     body = inv.read_text(encoding="utf-8")
     assert "zero2.local" in body
@@ -446,3 +463,215 @@ def test_take_child_wifi_failure_does_not_wait_or_inventory(tmp_path):
     assert "1 → 3" in res.message
     assert waited == ["aa:bb:cc:dd:ee:ff"]
     assert "zero2.local" not in inv.read_text(encoding="utf-8")
+
+
+# --- 引用符バグ(2026-09-25): 読み手で読み戻す --------------------------------------
+
+
+@pytest.mark.parametrize(("ssid", "psk"), nm_vectors.OK)
+def test_nm_join_keyfile_reads_back_intact(tmp_path, ssid, psk):
+    """A-M1: nm_vectors 全組で NM と GLib の読み戻しが元の値に一致する。"""
+    f = tmp_path / "join.nmconnection"
+    f.write_text(nm_join_keyfile(ssid, psk), encoding="utf-8")
+    assert_roundtrip(f, ssid, psk)
+
+
+def test_nm_join_keyfile_never_gives_up_reconnecting():
+    """A-M2: 既定の4回で諦めると電源再投入まで戻らない(2026-09-23)。NM が 0 として読む。"""
+    proc = _nmcli(
+        ["connection", "modify", "connection.autoconnect-priority", "200"],
+        stdin=nm_join_keyfile("sibling-hub", "pskpskpsk"),
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert _pick(proc.stdout)["autoconnect-retries"] == "0"
+
+
+@pytest.mark.parametrize(("ssid", "psk"), nm_vectors.OK)
+def test_nm_escape_matches_the_bash_implementation(ssid, psk):
+    """A-M3: 二重実装のずれ検出。同じ入力から bash 版と python 版が同じ出力を返す。"""
+    src = "source scripts/prepare-child-sd.sh; "
+    env = {**os.environ, "T_SSID": ssid, "T_PSK": psk}
+    bash_ssid = run_bash(src + 'child_sd_nm_ssid "$T_SSID"', env=env).stdout
+    bash_psk = run_bash(src + 'child_sd_nm_escape_psk "$T_PSK"', env=env).stdout
+    assert nm_ssid(ssid) == bash_ssid
+    assert nm_escape_psk(psk) == bash_psk
+
+
+@pytest.mark.parametrize("psk", [p for _, p in nm_vectors.OK])
+def test_psk_valid_accepts_wpa_values_like_bash(psk):
+    env = {**os.environ, "T_PSK": psk}
+    proc = run_bash(
+        'source scripts/prepare-child-sd.sh; child_sd_psk_valid "$T_PSK"', env=env, check=False
+    )
+    assert psk_valid(psk)
+    assert proc.returncode == 0
+
+
+@pytest.mark.parametrize("psk", nm_vectors.BAD_PSK)
+def test_psk_valid_rejects_what_wpa_forbids_like_bash(psk):
+    env = {**os.environ, "T_PSK": psk}
+    proc = run_bash(
+        'source scripts/prepare-child-sd.sh; child_sd_psk_valid "$T_PSK"', env=env, check=False
+    )
+    assert not psk_valid(psk)
+    assert proc.returncode != 0
+
+
+@pytest.mark.parametrize("bad", nm_vectors.BAD_SSID)
+def test_nm_ssid_rejects_outside_1_to_32_bytes(bad):
+    with pytest.raises(ValueError, match="ssid"):
+        nm_ssid(bad)
+
+
+@pytest.mark.parametrize("bad", nm_vectors.BAD_PSK)
+def test_take_child_rejects_bad_psk_without_touching_ssh(tmp_path, bad):
+    """A-M4: PSK が WPA の規則を外れたら SSH を1回も呼ばず、メッセージに PSK を含めない。"""
+    repo, inv = _take_repo(tmp_path)
+    (repo / ".kit" / "ap-join.env").write_text(
+        f"AP_SSID=sibling-hub\nWIFI_AP_PSK={bad}\n", encoding="utf-8"
+    )
+    runner = _recorder(lambda joined, remote: "")
+    from fleet_ui.provision import StepResult
+    res = take_child(
+        old_host="172.22.13.17",
+        entry="zero2",
+        repo=repo,
+        pubkey="ssh-ed25519 AAAA newhub",
+        runner=runner,
+        wait_fn=lambda mac, **k: StepResult(ok=True, message=""),
+        inventory_path=inv,
+    )
+    assert not res.ok
+    assert runner.calls == []
+    assert bad not in res.message + res.output
+
+
+def test_take_child_rejects_bad_ssid_without_touching_ssh(tmp_path):
+    repo, inv = _take_repo(tmp_path)
+    (repo / ".kit" / "ap-join.env").write_text(
+        "AP_SSID=" + "s" * 33 + "\nWIFI_AP_PSK=pskpskpsk\n", encoding="utf-8"
+    )
+    runner = _recorder(lambda joined, remote: "")
+    from fleet_ui.provision import StepResult
+    res = take_child(
+        old_host="172.22.13.17",
+        entry="zero2",
+        repo=repo,
+        pubkey="ssh-ed25519 AAAA newhub",
+        runner=runner,
+        wait_fn=lambda mac, **k: StepResult(ok=True, message=""),
+        inventory_path=inv,
+    )
+    assert not res.ok
+    assert runner.calls == []
+
+
+@pytest.mark.parametrize("bad", ["a\x00b", "\x00", "abc\x00"])
+def test_nm_ssid_rejects_nul_without_echoing_value(bad):
+    """設計 §1.2: SSID に NUL を含むなら書かずにエラー。メッセージに値を出さない。"""
+    with pytest.raises(ValueError, match="ssid") as ei:
+        nm_ssid(bad)
+    assert "\x00" not in str(ei.value)
+
+
+def test_nm_join_keyfile_rejects_nul_ssid():
+    with pytest.raises(ValueError, match="ssid"):
+        nm_join_keyfile("a\x00b", "pskpskpsk")
+
+
+def test_take_child_rejects_nul_ssid_without_touching_ssh(tmp_path):
+    repo, inv = _take_repo(tmp_path)
+    (repo / ".kit" / "ap-join.env").write_text(
+        "AP_SSID=a\x00b\nWIFI_AP_PSK=pskpskpsk\n", encoding="utf-8"
+    )
+    runner = _recorder(lambda joined, remote: "")
+    from fleet_ui.provision import StepResult
+    res = take_child(
+        old_host="172.22.13.17",
+        entry="zero2",
+        repo=repo,
+        pubkey="ssh-ed25519 AAAA newhub",
+        runner=runner,
+        wait_fn=lambda mac, **k: StepResult(ok=True, message=""),
+        inventory_path=inv,
+    )
+    assert not res.ok
+    assert runner.calls == []
+
+
+# --- WIFI_INSTALL の順序(A-M5): up 成功を確認してから他を切る ---------------------
+
+
+def _fake_bin(tmp_path, *, up_ok: bool):
+    """sudo / systemd-run / install / nmcli の偽物。呼び出しを log に残す(実機は触らない)。"""
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    log = tmp_path / "calls.log"
+    up_exit = 0 if up_ok else 4
+    scripts = {
+        "sudo": 'exec "$@"\n',
+        # systemd-run のオプションを飛ばして、残りをその場で同期実行する
+        "systemd-run": 'while [[ "${1:-}" == --* ]]; do shift; done\nexec "$@"\n',
+        "install": f'echo "install $*" >> "{log}"\n',
+        "nmcli": (
+            f'echo "nmcli $*" >> "{log}"\n'
+            'case "$*" in\n'
+            f'  *"connection up presence-hub-join"*) exit {up_exit} ;;\n'
+            "  *--active*) printf 'old-hub:802-11-wireless\\n' ;;\n"
+            '  *"connection show"*) printf '
+            "'old-hub:802-11-wireless\\npresence-hub-join:802-11-wireless"
+            "\\neth0:802-3-ethernet\\n' ;;\n"
+            "esac\n"
+        ),
+    }
+    for name, body in scripts.items():
+        f = bindir / name
+        f.write_text("#!/usr/bin/env bash\n" + body, encoding="utf-8")
+        f.chmod(f.stat().st_mode | stat.S_IXUSR)
+    return bindir, log
+
+
+def _run_wifi_install(tmp_path, *, up_ok: bool) -> list[str]:
+    bindir, log = _fake_bin(tmp_path, up_ok=up_ok)
+    env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}", "TMPDIR": str(tmp_path)}
+    proc = subprocess.run(  # noqa: S603 (fixed argv, fake bins only)
+        ["bash", "-c", WIFI_INSTALL],  # noqa: S607
+        input="[connection]\nid=x\n",
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    return log.read_text(encoding="utf-8").splitlines()
+
+
+def test_wifi_install_disables_others_only_after_up_succeeds(tmp_path):
+    """A-M5: up が成功するまで他プロファイルの自動接続を切らない(失敗しても孤立させない)。"""
+    calls = _run_wifi_install(tmp_path, up_ok=True)
+    up = calls.index("nmcli -w 15 connection up presence-hub-join")
+    off = calls.index("nmcli connection modify old-hub connection.autoconnect no")
+    assert up < off
+    assert not any("modify presence-hub-join" in c for c in calls)
+    assert not any("connection up old-hub" in c for c in calls)
+
+
+def test_wifi_install_falls_back_to_previous_profile_when_up_fails(tmp_path):
+    """A-M5: up が失敗したら、新プロファイルの自動接続を切り、元の Wi-Fi に戻す。"""
+    calls = _run_wifi_install(tmp_path, up_ok=False)
+    assert "nmcli connection modify presence-hub-join connection.autoconnect no" in calls
+    assert "nmcli -w 15 connection up old-hub" in calls
+    assert not any("modify old-hub" in c for c in calls)
+
+
+def test_wifi_install_runs_switch_in_its_own_unit():
+    """A-M5: SSH が切れてもシェルが止まらないよう、切替は systemd-run の独立ユニットで走らせる。"""
+    assert "systemd-run --unit=presence-hub-join-switch --collect" in WIFI_INSTALL
+    syntax = subprocess.run(  # noqa: S603
+        ["bash", "-n"],  # noqa: S607
+        input=WIFI_INSTALL,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert syntax.returncode == 0, syntax.stderr
