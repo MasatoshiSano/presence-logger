@@ -195,6 +195,29 @@ child_sd_hub_gw_ip() {
 # 片方だけ変えるともう片方が旧 IP へ送り続ける。既定(10.42.0.1)のときは drop-in を消す。
 # JSON は host 以外のキー(password を含む)を変えない。壊れた JSON は上書きせずエラー。
 # 設計: docs/2026-09-29-child-join-fix-design.md §2.4 (ii)
+# 何かを書く前に呼ぶ。send_target_config.json が壊れている(または object でない)なら失敗する。
+# 無ければ問題なし。ここで止めれば、SD 上のネットワーク設定を半端に変えたまま残さない。
+child_sd_check_send_target() {
+    local root="${1:?}"
+    python3 - "$root/home/pi/send_target_config.json" <<'PY' || return 1
+import json
+import os
+import sys
+
+p = sys.argv[1]
+if not os.path.exists(p):
+    sys.exit(0)
+try:
+    with open(p, encoding="utf-8") as fh:
+        cfg = json.load(fh)
+except (ValueError, OSError):
+    sys.exit("send_target_config.json が壊れているので書き換えません。SD は何も変更していません")
+if not isinstance(cfg, dict):
+    sys.exit("send_target_config.json が壊れているので書き換えません(オブジェクトではない)。"
+             "SD は何も変更していません")
+PY
+}
+
 child_sd_align_send_target() {
     local root="${1:?}" gw="${2:?}"
     local f="$root/home/pi/send_target_config.json"
@@ -255,6 +278,7 @@ child_sd_prepare() {
     local root="${1:?}" pub="${2:?}" ssid="${3:?}" psk="${4:?}"
     local gw="${5:-10.42.0.1}"
     child_sd_is_child_root "$root" || return 1
+    child_sd_check_send_target "$root" || return 1  # 何か書く前に JSON を検査
     child_sd_install_pubkey "$root" "$pub" || return 1
     child_sd_write_wifi "$root" "$ssid" "$psk" || return 1
     child_sd_disable_other_wifi "$root" || return 1

@@ -323,7 +323,8 @@ def test_prepare_aligns_json_host_and_writes_dropin_for_non_default_gw(tmp_path)
         "[Service]\nEnvironment=MQTT_HOST=10.42.1.1\n"
     )
     assert stat.S_IMODE(_dropin(root).stat().st_mode) == 0o644
-    assert "10.42.0.1" in proc.stdout and "10.42.1.1" in proc.stdout  # 「旧 → 新」を表示
+    assert "10.42.0.1" in proc.stdout  # 「旧 → 新」を表示
+    assert "10.42.1.1" in proc.stdout
 
 
 def test_prepare_default_gw_resets_host_and_removes_existing_dropin(tmp_path):
@@ -378,6 +379,34 @@ def test_prepare_broken_json_is_not_overwritten_and_no_dropin(tmp_path):
     assert proc.returncode != 0
     assert "壊れている" in proc.stderr
     assert _send_target(root).read_text(encoding="utf-8") == "{broken"
+    assert not _dropin(root).exists()
+
+
+def _snapshot(root):
+    return {
+        str(p.relative_to(root)): p.read_bytes()
+        for p in sorted(root.rglob("*"))
+        if p.is_file()
+    }
+
+
+@pytest.mark.parametrize("broken", ["{broken", "[1, 2]"])
+def test_prepare_broken_json_changes_nothing_on_the_sd(tmp_path, broken):
+    """JSON の検査は何かを書く前。壊れていたら鍵・Wi-Fi・他 Wi-Fi・drop-in のどれも変えない。"""
+    root = _child_root(tmp_path)
+    conn = root / "etc" / "NetworkManager" / "system-connections"
+    conn.mkdir(parents=True)
+    (conn / "old-hub.nmconnection").write_text(
+        "[connection]\nid=presence-hub\ntype=wifi\nautoconnect=true\n", encoding="utf-8"
+    )
+    _send_target(root).write_text(broken, encoding="utf-8")
+    before = _snapshot(root)
+    proc = _prepare_with_gw(root, tmp_path, "10.42.1.1", check=False)
+    assert proc.returncode != 0
+    assert "壊れている" in proc.stderr
+    assert _snapshot(root) == before
+    assert not _wifi_path(root).exists()
+    assert not (root / "home" / "pi" / ".ssh" / "authorized_keys").exists()
     assert not _dropin(root).exists()
 
 

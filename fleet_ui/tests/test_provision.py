@@ -38,7 +38,10 @@ _ALIGN_GW_RE = re.compile(r'python3 - "\$f" (\S+) <<')
 
 def _align_readback(gw, *, host_now=None):
     env = "" if gw == "10.42.0.1" else f"MQTT_HOST={gw}"
+    proc_host = "" if gw == "10.42.0.1" else gw
     return (
+        "PID_BEFORE=100\nPID_NOW=200\nPROC_ENV=ok\n"
+        f"PROC_MQTT_HOST={proc_host}\n"
         f"HOST_NOW={host_now or gw}\nENV_NOW={env}\nACTIVE_NOW=active\nJOIN_PROFILE=ok\n"
     )
 
@@ -465,7 +468,8 @@ def test_register_new_child_aligns_after_reboot_and_inventory(tmp_path):
     assert "pi@10.42.1.80" in cmd  # 再起動後の新しい IP(古い IP ではない)
     assert _align_gw(cmd) == "10.42.1.1"
     reboot = [i for i, c in enumerate(run.calls) if "sudo reboot" in c[-1]]
-    assert reboot and aligns[0] > max(reboot)
+    assert reboot
+    assert aligns[0] > max(reboot)
     assert "pizero2w-3.local" in inv.read_text(encoding="utf-8")
     assert "局番号は空" in res.message
 

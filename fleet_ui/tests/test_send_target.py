@@ -66,34 +66,68 @@ def test_load_ap_gw_ip_rejects_non_ipv4(tmp_path, bad):
 # --- B2-T2..T5 子の上で走る bash ---------------------------------------------
 
 
+_FAKE_SYSTEMCTL = r"""#!/bin/bash
+# 偽の systemd。MainPID と「実プロセスの環境」を持つ。プロセスは restart 時点の drop-in を
+# 起動時の環境として受け取る(=読み込んだ設定と実プロセスの環境は別物)。
+# 操作つまみ: FAKE_RESTART_RC(非0で restart 失敗・旧プロセス残留), FAKE_PID_SAME=1(PID 不変),
+#            FAKE_PROC_MQTT(実プロセスの MQTT_HOST を強制), FAKE_ACTIVE
+echo "systemctl $*" >> "$FAKE_LOG"
+base="$(dirname "$FAKE_LOG")"
+state="$base/state"
+proc="$base/proc"
+mkdir -p "$state"
+[ -f "$state/pid" ] || echo "${FAKE_PID_BEFORE:-100}" > "$state/pid"
+dropin_mqtt() {
+  [ -f "$FAKE_DROPIN" ] || return 0
+  grep -h '^Environment=MQTT_HOST=' "$FAKE_DROPIN" | tail -n 1 | cut -d= -f3-
+}
+case "$1" in
+  show)
+    case "$*" in
+      *MainPID*) cat "$state/pid" ;;
+      *)
+        if [ -f "$FAKE_DROPIN" ]; then
+          echo "Environment=$(grep -h ^Environment= "$FAKE_DROPIN" | cut -d= -f2-)"
+        else echo Environment=; fi ;;
+    esac ;;
+  is-active) echo "${FAKE_ACTIVE:-active}" ;;
+  restart)
+    if [ "${FAKE_RESTART_RC:-0}" -ne 0 ]; then exit "$FAKE_RESTART_RC"; fi
+    if [ -z "${FAKE_PID_SAME:-}" ]; then
+      new="${FAKE_PID_AFTER:-200}"
+      echo "$new" > "$state/pid"
+      mkdir -p "$proc/$new"
+      host="${FAKE_PROC_MQTT:-$(dropin_mqtt)}"
+      { printf 'PATH=/usr/bin\0'; [ -n "$host" ] && printf 'MQTT_HOST=%s\0' "$host"; } \
+        > "$proc/$new/environ"
+    fi ;;
+esac
+exit 0
+"""
+
+
 def _fake_child(tmp_path):
-    """偽の sudo(そのまま実行)と systemctl(呼び出しを記録し、drop-in の中身を映す)。"""
+    """偽の sudo(そのまま実行)・systemctl(上記)・sleep(待たない)。"""
     home = tmp_path / "home"
     home.mkdir()
     bindir = tmp_path / "bin"
     bindir.mkdir()
     dropin = tmp_path / "etc" / "10-hub-gw.conf"
     log = tmp_path / "calls.log"
+    old_proc = tmp_path / "proc" / "100"  # restart 前の旧プロセス(旧 GW の環境)
+    old_proc.mkdir(parents=True)
+    (old_proc / "environ").write_bytes(b"PATH=/usr/bin\0MQTT_HOST=10.42.0.1\0")
     (bindir / "sudo").write_text('#!/bin/bash\nexec "$@"\n', encoding="utf-8")
-    (bindir / "systemctl").write_text(
-        "#!/bin/bash\n"
-        'echo "systemctl $*" >> "$FAKE_LOG"\n'
-        'case "$1" in\n'
-        "  show)\n"
-        '    if [ -f "$FAKE_DROPIN" ]; then\n'
-        '      echo "Environment=$(grep -h ^Environment= "$FAKE_DROPIN" | cut -d= -f2-)"\n'
-        "    else echo Environment=; fi ;;\n"
-        "  is-active) echo \"${FAKE_ACTIVE:-active}\" ;;\n"
-        "esac\n"
-        "exit 0\n",
-        encoding="utf-8",
-    )
-    for f in ("sudo", "systemctl"):
+    (bindir / "sleep").write_text("#!/bin/bash\nexit 0\n", encoding="utf-8")
+    (bindir / "systemctl").write_text(_FAKE_SYSTEMCTL, encoding="utf-8")
+    for f in ("sudo", "sleep", "systemctl"):
         (bindir / f).chmod(0o755)
     return home, bindir, dropin, log
 
 
-def _run_align(tmp_path, gw, *, cfg_text=None, mode=0o600, dropin_text=None, active="active"):
+def _run_align(
+    tmp_path, gw, *, cfg_text=None, mode=0o600, dropin_text=None, active="active", fake_env=None
+):
     home, bindir, dropin, log = _fake_child(tmp_path)
     cfg = home / "send_target_config.json"
     if cfg_text is not None:
@@ -109,9 +143,11 @@ def _run_align(tmp_path, gw, *, cfg_text=None, mode=0o600, dropin_text=None, act
         "FAKE_LOG": str(log),
         "FAKE_DROPIN": str(dropin),
         "FAKE_ACTIVE": active,
+        **(fake_env or {}),
     }
+    script = align_remote_script(gw, dropin=str(dropin), proc_root=str(tmp_path / "proc"))
     proc = subprocess.run(  # noqa: S603
-        ["bash", "-c", align_remote_script(gw, dropin=str(dropin))],  # noqa: S607
+        ["bash", "-c", script],  # noqa: S607
         env=env, capture_output=True, text=True, check=False,
     )
     return proc, cfg, dropin, log
@@ -193,7 +229,7 @@ def test_align_script_reports_quoted_join_profile_without_touching_it(
     if profile is not None:
         path.write_text(profile, encoding="utf-8")
     script = align_remote_script("10.42.1.1", dropin=str(tmp_path / "d.conf"),
-                                 join_profile=str(path))
+                                 join_profile=str(path), proc_root=str(tmp_path / "proc"))
     home, bindir, _dropin, log = _fake_child(tmp_path)
     proc = subprocess.run(  # noqa: S603
         ["bash", "-c", script],  # noqa: S607
@@ -225,9 +261,13 @@ def test_default_dropin_path_is_the_designed_one():
 # --- B2-T6 読み戻しで判定する -------------------------------------------------
 
 
-def _readback(host="10.42.1.1", env="Environment=MQTT_HOST=10.42.1.1", active="active", join="ok"):
+def _readback(
+    host="10.42.1.1", proc_mqtt="10.42.1.1", active="active", join="ok",
+    pid_before="100", pid_now="200", proc_env="ok", env="Environment=MQTT_HOST=10.42.1.1",
+):
     return (
-        f"noise line\nHOST_NOW={host}\nENV_NOW={env}\n"
+        f"noise line\nPID_BEFORE={pid_before}\nPID_NOW={pid_now}\nPROC_ENV={proc_env}\n"
+        f"PROC_MQTT_HOST={proc_mqtt}\nHOST_NOW={host}\nENV_NOW={env}\n"
         f"ACTIVE_NOW={active}\nJOIN_PROFILE={join}\n"
     )
 
@@ -263,13 +303,41 @@ def test_align_send_target_fails_when_host_readback_differs():
     assert "10.42.0.1" in res.message
 
 
-def test_align_send_target_fails_when_non_default_env_missing():
-    for env in ("Environment=", "Environment=FOO=bar", "Environment=MQTT_HOST=10.42.1.10"):
+def test_align_send_target_fails_when_process_mqtt_host_wrong():
+    for proc_mqtt in ("", "10.42.0.1", "10.42.1.10"):
         res = align_send_target(
-            "10.42.1.50", "10.42.1.1", runner=_runner_returning(_readback(env=env))
+            "10.42.1.50", "10.42.1.1", runner=_runner_returning(_readback(proc_mqtt=proc_mqtt))
         )
-        assert not res.ok, env
+        assert not res.ok, proc_mqtt
         assert "MQTT_HOST" in res.message
+
+
+def test_align_send_target_ignores_loaded_unit_environment():
+    """systemctl show の Environment は読み込んだ設定。実プロセスが旧 IP なら成功にしない。"""
+    res = align_send_target(
+        "10.42.1.50", "10.42.1.1",
+        runner=_runner_returning(
+            _readback(proc_mqtt="10.42.0.1", env="Environment=MQTT_HOST=10.42.1.1")
+        ),
+    )
+    assert not res.ok
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"pid_now": "100"},  # 再起動されていない
+        {"pid_now": "0"},
+        {"pid_now": ""},
+        {"pid_before": "", "pid_now": ""},
+        {"proc_env": "unreadable"},
+    ],
+)
+def test_align_send_target_fails_unless_a_new_process_environment_was_read(kwargs):
+    res = align_send_target(
+        "10.42.1.50", "10.42.1.1", runner=_runner_returning(_readback(**kwargs))
+    )
+    assert not res.ok
 
 
 def test_align_send_target_fails_when_service_not_active():
@@ -287,21 +355,107 @@ def test_align_send_target_fails_on_empty_output_even_if_ssh_returned():
 
 
 def test_align_send_target_default_gw_needs_no_or_default_mqtt_host():
-    for env in ("Environment=", "Environment=MQTT_HOST=10.42.0.1", "Environment=A=b"):
+    for proc_mqtt in ("", "10.42.0.1"):
         res = align_send_target(
             "10.42.0.50", DEFAULT_GW,
-            runner=_runner_returning(_readback(host=DEFAULT_GW, env=env)),
+            runner=_runner_returning(_readback(host=DEFAULT_GW, proc_mqtt=proc_mqtt)),
         )
-        assert res.ok, (env, res.message)
+        assert res.ok, (proc_mqtt, res.message)
 
 
 def test_align_send_target_default_gw_fails_if_stale_non_default_env_remains():
     res = align_send_target(
         "10.42.0.50", DEFAULT_GW,
-        runner=_runner_returning(
-            _readback(host=DEFAULT_GW, env="Environment=MQTT_HOST=10.42.1.1")
-        ),
+        runner=_runner_returning(_readback(host=DEFAULT_GW, proc_mqtt="10.42.1.1")),
     )
+    assert not res.ok
+
+
+# --- B2-T6b 再起動の確認は「読み込んだ設定」でなく「動いているプロセス」で -------------
+
+
+def _align_end_to_end(tmp_path, gw, **run_kwargs):
+    """偽の子の上で本物の remote script を走らせ、その stdout を align_send_target の判定に通す。"""
+    proc, _cfg, _dropin, log = _run_align(
+        tmp_path, gw, cfg_text='{"host": "10.42.0.1"}', **run_kwargs
+    )
+    res = align_send_target("10.42.1.50", gw, runner=_runner_returning(proc.stdout))
+    return proc, res, log
+
+
+def _run_script_with_systemctl(tmp_path, systemctl_body):
+    home, bindir, dropin, _log = _fake_child(tmp_path)
+    (bindir / "systemctl").write_text(systemctl_body, encoding="utf-8")
+    script = align_remote_script("10.42.1.1", dropin=str(dropin), proc_root=str(tmp_path / "proc"))
+    return subprocess.run(  # noqa: S603
+        ["bash", "-c", script],  # noqa: S607
+        env={**os.environ, "HOME": str(home), "PATH": f"{bindir}:{os.environ['PATH']}"},
+        capture_output=True, text=True, check=False, timeout=30,
+    )
+
+
+def test_restart_failure_is_a_failure_even_if_show_and_is_active_look_fine(tmp_path):  # (a)
+    proc, res, _log = _align_end_to_end(tmp_path, "10.42.1.1", fake_env={"FAKE_RESTART_RC": "1"})
+    assert proc.returncode != 0
+    assert "ALIGN_ERROR=" in proc.stdout
+    assert "ACTIVE_NOW=" not in proc.stdout  # 失敗した時点で止まり、読み戻しで成功を装わない
+    assert not res.ok
+    assert "restart" in res.message
+
+
+def test_daemon_reload_failure_is_a_failure(tmp_path):
+    proc = _run_script_with_systemctl(
+        tmp_path, '#!/bin/bash\n[ "$1" = daemon-reload ] && exit 1\nexit 0\n'
+    )
+    assert proc.returncode != 0
+    assert "daemon-reload" in proc.stdout
+    res = align_send_target("10.42.1.50", "10.42.1.1", runner=_runner_returning(proc.stdout))
+    assert not res.ok
+
+
+def test_unchanged_main_pid_is_a_failure(tmp_path):  # (b)
+    proc, res, _log = _align_end_to_end(tmp_path, "10.42.1.1", fake_env={"FAKE_PID_SAME": "1"})
+    assert "PID_BEFORE=100" in proc.stdout
+    assert "PID_NOW=100" in proc.stdout  # 新しい PID が現れないまま待ちきった
+    assert not res.ok
+    assert "再起動" in res.message
+
+
+def test_process_environment_with_old_gw_is_a_failure(tmp_path):  # (c)
+    proc, res, _log = _align_end_to_end(
+        tmp_path, "10.42.1.1", fake_env={"FAKE_PROC_MQTT": "10.42.0.1"}
+    )
+    # 読み込んだ設定(drop-in / ENV_NOW)は新 GW、実プロセスだけ旧 GW
+    assert "ENV_NOW=MQTT_HOST=10.42.1.1" in proc.stdout
+    assert "ACTIVE_NOW=active" in proc.stdout
+    assert "PROC_MQTT_HOST=10.42.0.1" in proc.stdout
+    assert not res.ok
+    assert "MQTT_HOST" in res.message
+
+
+def test_healthy_restart_succeeds_for_non_default_gw(tmp_path):  # (d)
+    proc, res, _log = _align_end_to_end(tmp_path, "10.42.1.1")
+    assert proc.returncode == 0, proc.stderr
+    assert "PID_NOW=200" in proc.stdout
+    assert "PROC_MQTT_HOST=10.42.1.1" in proc.stdout
+    assert res.ok, res.message
+
+
+def test_healthy_restart_succeeds_for_default_gw_and_drops_stale_env(tmp_path):  # (d)
+    stale = "[Service]\nEnvironment=MQTT_HOST=10.42.1.1\n"
+    proc, res, _log = _align_end_to_end(tmp_path, DEFAULT_GW, dropin_text=stale)
+    assert proc.returncode == 0, proc.stderr
+    assert "PROC_MQTT_HOST=\n" in proc.stdout  # drop-in を消したので実プロセスに MQTT_HOST は無い
+    assert res.ok, res.message
+
+
+def test_restart_wait_is_bounded_when_environment_never_readable(tmp_path):
+    # MainPID は新しい値だが /proc/<pid>/environ が無い(起動直後で読めない状態が続く)
+    proc = _run_script_with_systemctl(
+        tmp_path, '#!/bin/bash\ncase "$*" in *MainPID*) echo 300;; esac\nexit 0\n'
+    )
+    assert "PROC_ENV=unreadable" in proc.stdout
+    res = align_send_target("10.42.1.50", "10.42.1.1", runner=_runner_returning(proc.stdout))
     assert not res.ok
 
 

@@ -31,8 +31,11 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 # ssh の argv と remote 文字列へ入る値なので厳しくする。
 _SAFE_HOST_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\Z")
 _SAFE_PATH_RE = re.compile(r"^/[A-Za-z0-9._/+-]+\Z")
-_MQTT_HOST_RE = re.compile(r'(?:^|[\s"=])MQTT_HOST=([^\s"]*)')
-_READBACK_KEYS = ("HOST_NOW", "ENV_NOW", "ACTIVE_NOW", "JOIN_PROFILE", "ALIGN_ERROR")
+_READBACK_KEYS = (
+    "HOST_NOW", "ENV_NOW", "ACTIVE_NOW", "JOIN_PROFILE", "ALIGN_ERROR",
+    "PID_BEFORE", "PID_NOW", "PROC_ENV", "PROC_MQTT_HOST",
+)
+_RESTART_WAIT_TRIES = 10  # 新プロセスの出現と環境の読み取りを待つ回数(1秒間隔。有限)
 
 
 def _check_ipv4(value: str) -> str:
@@ -116,19 +119,24 @@ _PY_READ_HOST = (
 
 
 def align_remote_script(
-    gw: str, *, dropin: str = DROPIN, join_profile: str = JOIN_PROFILE
+    gw: str, *, dropin: str = DROPIN, join_profile: str = JOIN_PROFILE, proc_root: str = "/proc"
 ) -> str:
     """子の上で走る bash。gw は IPv4 でなければ ValueError(shlex.quote もする)。
 
     1) ~/send_target_config.json の host だけ置き換える(壊れた JSON なら何もせず exit 3)
     2) gw が既定なら drop-in を消し、違えば MQTT_HOST の drop-in を置く
-    3) daemon-reload と restart
-    4) 読み手側で確認して出力: HOST_NOW / ENV_NOW / ACTIVE_NOW / JOIN_PROFILE
+    3) daemon-reload と restart(どちらも失敗したら ALIGN_ERROR を出して exit 5 / 6)
+    4) 実際に動いているプロセスから読んで出力:
+       PID_BEFORE / PID_NOW(restart 前後の MainPID)、PROC_ENV / PROC_MQTT_HOST
+       (新 MainPID の <proc_root>/<pid>/environ を sudo で読んだ MQTT_HOST。
+        systemctl show の Environment は読み込んだ設定であって実プロセスの環境ではない)。
+       新プロセスの出現と環境の読み取りは有限回(_RESTART_WAIT_TRIES)だけ待つ。
+       そのほか HOST_NOW / ENV_NOW(参考) / ACTIVE_NOW / JOIN_PROFILE
        (JOIN_PROFILE は presence-hub-join が引用符つきか。§1.5。報告だけで直さない。
         grep -q なので PSK は出力に出ない)
     """
     _check_ipv4(gw)
-    for p in (dropin, join_profile):
+    for p in (dropin, join_profile, proc_root):
         if not _SAFE_PATH_RE.match(p):
             raise ValueError(f"パスに使えない文字があります: {p!r}")
     q = shlex.quote
@@ -151,8 +159,36 @@ if [ "$rc" -ne 0 ]; then
   exit 3
 fi
 {dropin_step} || {{ echo "ALIGN_ERROR=drop-in を更新できません"; exit 4; }}
-sudo systemctl daemon-reload
-sudo systemctl restart {SERVICE}
+pid_before=$(systemctl show -p MainPID --value {SERVICE} 2>/dev/null || true)
+echo "PID_BEFORE=$pid_before"
+sudo systemctl daemon-reload || {{
+  echo "ALIGN_ERROR=systemctl daemon-reload に失敗しました"; exit 5
+}}
+sudo systemctl restart {SERVICE} || {{
+  echo "ALIGN_ERROR=systemctl restart {SERVICE} に失敗しました"; exit 6
+}}
+pid_now=0
+proc_env=unreadable
+proc_host=""
+etmp=$(mktemp)
+i=0
+while [ "$i" -lt {_RESTART_WAIT_TRIES} ]; do
+  i=$((i + 1))
+  pid_now=$(systemctl show -p MainPID --value {SERVICE} 2>/dev/null || true)
+  case "$pid_now" in ''|*[!0-9]*) pid_now=0 ;; esac
+  if [ "$pid_now" -ne 0 ] && [ "$pid_now" != "$pid_before" ]; then
+    if sudo cat {q(proc_root)}/"$pid_now"/environ > "$etmp" 2>/dev/null && [ -s "$etmp" ]; then
+      proc_env=ok
+      proc_host=$(tr '\\0' '\\n' < "$etmp" | grep '^MQTT_HOST=' | tail -n 1 | cut -d= -f2-)
+      break
+    fi
+  fi
+  sleep 1
+done
+rm -f "$etmp"
+echo "PID_NOW=$pid_now"
+echo "PROC_ENV=$proc_env"
+echo "PROC_MQTT_HOST=$proc_host"
 echo "HOST_NOW=$(python3 -c {q(_PY_READ_HOST)} "$f")"
 echo "ENV_NOW=$(systemctl show -p Environment {SERVICE} 2>/dev/null | sed 's/^Environment=//')"
 echo "ACTIVE_NOW=$(systemctl is-active {SERVICE} 2>/dev/null || true)"
@@ -178,19 +214,19 @@ def parse_align_output(text: str) -> dict[str, str]:
     return out
 
 
-def _mqtt_host_from_env(env_now: str) -> str | None:
-    found = _MQTT_HOST_RE.findall(env_now or "")
-    return found[-1] if found else None  # systemd は後ろの指定が勝つ
-
-
 def align_send_target(
     host: str, gw: str, *, runner: Callable[..., str]
 ) -> StepResult:
     """host(IP かホスト名)の子を SSH で gw に揃える。
 
-    書いた側の終了コードではなく、子の上で読み直した HOST_NOW / ENV_NOW / ACTIVE_NOW で判定する。
-    ok = HOST_NOW==gw かつ (gw==既定 なら MQTT_HOST が無いか既定; 非既定なら MQTT_HOST==gw)
-         かつ ACTIVE_NOW==active。詳細(JOIN_PROFILE を含む)は output に生のまま残す。
+    書いた側でなく、子の上の読み手から取った値で判定する。
+    ok = HOST_NOW==gw
+         かつ 新しい MainPID(0 でなく、restart 前と違う)
+         かつ その実プロセスの環境(/proc/<pid>/environ)の MQTT_HOST が
+             (gw==既定 なら 無いか既定; 非既定なら gw)
+         かつ ACTIVE_NOW==active。
+    ENV_NOW(systemctl show)は読み込んだ設定にすぎないので判定に使わない。
+    詳細(ENV_NOW と JOIN_PROFILE を含む)は output に生のまま残す。
     """
     from fleet_ui.provision import StepResult  # provision もこのモジュールを使うので遅延
 
@@ -219,12 +255,27 @@ def align_send_target(
     elif r["host_now"] != gw:
         problems.append(f"send_target_config.json の host が {r['host_now']} のままです(期待 {gw})")
     if r["host_now"]:
-        mqtt = _mqtt_host_from_env(r["env_now"])
-        if gw == DEFAULT_GW:
-            if mqtt not in (None, DEFAULT_GW):
-                problems.append(f"MQTT_HOST={mqtt} が残っています(既定 {DEFAULT_GW} に戻る想定)")
-        elif mqtt != gw:
-            problems.append(f"MQTT_HOST が {gw} になっていません(実際: {mqtt or '未設定'})")
+        pid_now, pid_before = r["pid_now"], r["pid_before"]
+        restarted = pid_now.isdigit() and int(pid_now) != 0 and pid_now != pid_before
+        if not restarted:
+            problems.append(
+                f"{SERVICE} が再起動されていません(MainPID {pid_before or '不明'} → "
+                f"{pid_now or '不明'})。旧プロセスが旧い送り先のまま動いている恐れがあります"
+            )
+        elif r["proc_env"] != "ok":
+            problems.append(f"新しいプロセス(PID {pid_now})の環境を読めませんでした")
+        else:
+            mqtt = r["proc_mqtt_host"]
+            if gw == DEFAULT_GW:
+                if mqtt not in ("", DEFAULT_GW):
+                    problems.append(
+                        f"実プロセスの MQTT_HOST={mqtt} が残っています"
+                        f"(既定 {DEFAULT_GW} に戻る想定)"
+                    )
+            elif mqtt != gw:
+                problems.append(
+                    f"実プロセスの MQTT_HOST が {gw} になっていません(実際: {mqtt or '未設定'})"
+                )
         if r["active_now"] != "active":
             problems.append(f"{SERVICE} が動いていません({r['active_now'] or '状態不明'})")
     if problems:

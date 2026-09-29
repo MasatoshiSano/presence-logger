@@ -130,7 +130,10 @@ def _align_readback(gw, *, host_now=None, env_now=None, active="active"):
     """子の上で読み直した値(send_target.align_remote_script の出力形式)。"""
     if env_now is None:
         env_now = "" if gw == "10.42.0.1" else f"MQTT_HOST={gw}"
+    proc_host = "" if gw == "10.42.0.1" else gw
     return (
+        "PID_BEFORE=100\nPID_NOW=200\nPROC_ENV=ok\n"
+        f"PROC_MQTT_HOST={proc_host}\n"
         f"HOST_NOW={host_now or gw}\nENV_NOW={env_now}\nACTIVE_NOW={active}\n"
         "JOIN_PROFILE=ok\n"
     )
@@ -745,13 +748,16 @@ def test_take_child_aligns_send_target_directly_from_this_hub(tmp_path):
     res, _inv = _take(tmp_path, runner, ip="10.42.1.9", gw_line="AP_GW_IP=10.42.1.1")
     assert res.ok, res.message
     (align_cmd,) = runner.align_calls
-    assert align_cmd[0] == "ssh" and "pi@10.42.1.9" in align_cmd
+    assert align_cmd[0] == "ssh"
+    assert "pi@10.42.1.9" in align_cmd
     assert "172.22.13.17" not in " ".join(align_cmd)  # 旧親を経由しない
     assert "ssh -o" not in align_cmd[-1]  # 入れ子 SSH ではない
-    assert "10.42.1.1" in align_cmd[-1] and "MQTT_HOST" in align_cmd[-1]
+    assert "10.42.1.1" in align_cmd[-1]
+    assert "MQTT_HOST" in align_cmd[-1]
     idx = {id(c): i for i, c in enumerate(runner.calls)}
     wifi = [i for i, c in enumerate(runner.calls) if "presence-hub-join-switch" in c[-1]]
-    assert wifi and idx[id(align_cmd)] > max(wifi)
+    assert wifi
+    assert idx[id(align_cmd)] > max(wifi)
 
 
 def test_take_child_aligns_to_default_gw_without_site_env(tmp_path):
@@ -780,7 +786,8 @@ def test_take_child_fails_when_child_ip_is_outside_hub_ap_range(tmp_path):
     runner = _recorder(_take_script)
     res, _inv = _take(tmp_path, runner, ip="10.42.0.9", gw_line="AP_GW_IP=10.42.1.1")
     assert not res.ok
-    assert "10.42.1.1/24" in res.message and "10.42.0.9" in res.message
+    assert "10.42.1.1/24" in res.message
+    assert "10.42.0.9" in res.message
     assert "bootstrap-hub.sh 50" in res.message
     assert runner.align_calls == []
 
