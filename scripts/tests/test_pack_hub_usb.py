@@ -473,3 +473,142 @@ def test_readme_drops_old_click_only_wording(tmp_path):
 
 def test_readme_explains_copy_no_wizard(tmp_path):
     assert "COPY_NO_WIZARD=1" in _readme_after_pack(tmp_path)
+
+
+# ---- このUSBからコピー.desktop を「デスクトップの読み手」で読み戻す ----
+# 文字列が期待どおりかだけを見ると、規格違反の Exec を見逃す（実機で発症済み）。
+# 検証器・GLib・規格どおりの自前パーサで読み、実際に bash で走らせる。
+
+_GIO_SNIPPET = (
+    "import sys, gi; gi.require_version('Gio','2.0'); from gi.repository import Gio;"
+    "a = Gio.DesktopAppInfo.new_from_filename(sys.argv[1]);"
+    "print((a.get_commandline() if a else None) or '')"
+)
+
+
+@pytest.fixture
+def copy_desktop(tmp_path):
+    path = tmp_path / "このUSBからコピー.desktop"
+    run_bash(f'{SOURCE}; pack_write_copy_desktop "{path}"', env=_env())
+    return path
+
+
+def _desktop_unescape(value):
+    """.desktop の string 値のエスケープ (\\\\ \\s \\n \\t \\r) を戻す。"""
+    table = {"\\": "\\", "s": " ", "n": "\n", "t": "\t", "r": "\r"}
+    out, i = [], 0
+    while i < len(value):
+        if value[i] == "\\" and i + 1 < len(value) and value[i + 1] in table:
+            out.append(table[value[i + 1]])
+            i += 2
+        else:
+            out.append(value[i])
+            i += 1
+    return "".join(out)
+
+
+def _exec_argv(exec_value):
+    """Exec 値を規格どおり引数に分ける（二重引用符内は \\" \\` \\$ \\\\ のみ特別）。"""
+    argv, cur, in_quote, started, i = [], [], False, False, 0
+    while i < len(exec_value):
+        ch = exec_value[i]
+        if in_quote:
+            if ch == "\\" and i + 1 < len(exec_value) and exec_value[i + 1] in '"`$\\':
+                cur.append(exec_value[i + 1])
+                i += 2
+                continue
+            assert ch not in "`$", f"二重引用符内の {ch!r} がエスケープされていない"
+            if ch == '"':
+                in_quote = False
+            else:
+                cur.append(ch)
+        elif ch == '"':
+            in_quote = started = True
+        elif ch == " ":
+            if started or cur:
+                argv.append("".join(cur))
+                cur, started = [], False
+        else:
+            cur.append(ch)
+        i += 1
+    assert not in_quote, "二重引用符が閉じていない"
+    if started or cur:
+        argv.append("".join(cur))
+    return argv
+
+
+def _read_argv(desktop):
+    for line in desktop.read_text(encoding="utf-8").splitlines():
+        if line.startswith("Exec="):
+            return _exec_argv(_desktop_unescape(line[len("Exec="):]))
+    raise AssertionError("Exec 行がない")
+
+
+def test_copy_desktop_passes_desktop_file_validate(copy_desktop):
+    import shutil
+    import subprocess
+
+    validator = shutil.which("desktop-file-validate")
+    if not validator:
+        pytest.skip("desktop-file-validate がない")
+    r = subprocess.run(  # noqa: S603
+        [validator, str(copy_desktop)], capture_output=True, text=True
+    )
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "Exec" not in r.stdout + r.stderr, r.stdout + r.stderr
+
+
+def test_copy_desktop_is_understood_by_glib(copy_desktop):
+    import subprocess
+
+    py = "/usr/bin/python3"
+    if not os.path.exists(py):
+        pytest.skip("システム python3 がない")
+    probe = subprocess.run([py, "-c", "import gi"], capture_output=True)  # noqa: S603
+    if probe.returncode != 0:
+        pytest.skip("gi (PyGObject) がない")
+    r = subprocess.run(  # noqa: S603
+        [py, "-c", _GIO_SNIPPET, str(copy_desktop)], capture_output=True, text=True
+    )
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip(), "GLib が Exec を解釈できていない（コマンドラインが空）"
+    assert "lxterminal" in r.stdout
+
+
+def test_copy_desktop_exec_parses_to_expected_argv(copy_desktop):
+    argv = _read_argv(copy_desktop)
+    assert argv[:6] == ["lxterminal", "-t", "ハブをコピー", "-e", "bash", "-c"]
+    assert len(argv) == 7
+    script = argv[6]
+    assert "$(find" in script
+    assert '"$HOME"' in script
+    assert '"$kit"' in script
+    assert "\\" not in script  # エスケープの痕跡が残っていない
+
+
+def _run_copy_script(script, home):
+    import subprocess
+
+    env = dict(os.environ, HOME=str(home))
+    return subprocess.run(  # noqa: S603
+        ["/bin/bash", "-c", script], input="\n", capture_output=True, text=True, env=env, timeout=30
+    )
+
+
+def test_copy_desktop_script_runs_kit_found_under_home(copy_desktop, tmp_path):
+    home = tmp_path / "home"
+    kit = home / "presence-hub-kit"
+    kit.mkdir(parents=True)
+    marker = tmp_path / "ran.txt"
+    (kit / "copy-to-this-pi.sh").write_text(f'echo ran > "{marker}"\n', encoding="utf-8")
+    r = _run_copy_script(_read_argv(copy_desktop)[6], home)
+    assert marker.read_text().strip() == "ran", r.stdout + r.stderr
+
+
+def test_copy_desktop_script_reports_missing_kit(copy_desktop, tmp_path):
+    home = tmp_path / "empty-home"
+    home.mkdir()
+    r = _run_copy_script(_read_argv(copy_desktop)[6], home)
+    if "見つかりません" not in r.stdout:
+        pytest.skip("実機の USB に copy-to-this-pi.sh があり干渉している")
+    assert r.returncode == 0

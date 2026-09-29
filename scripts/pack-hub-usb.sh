@@ -306,7 +306,7 @@ Version=1.0
 Name=このUSBからコピー
 Name[ja]=このUSBからコピー
 Comment=この Raspberry Pi にハブ一式をコピーし、続けて初期設定を始めます
-Exec=lxterminal -t "ハブをコピー" -e bash -c "kit=$(find /media /run/media \"$HOME\" -name copy-to-this-pi.sh 2>/dev/null | head -1); if [ -z \"$kit\" ]; then echo USB の copy-to-this-pi.sh が見つかりません; else bash \"$kit\"; fi; echo; read -r -p 'Enterで閉じる '"
+Exec=lxterminal -t "ハブをコピー" -e bash -c "kit=\\$(find /media /run/media \\"\\$HOME\\" -name copy-to-this-pi.sh 2>/dev/null | head -1); if [ -z \\"\\$kit\\" ]; then echo USB の copy-to-this-pi.sh が見つかりません; else bash \\"\\$kit\\"; fi; echo; read -r -p 'Enterで閉じる '"
 Icon=media-removable
 Terminal=false
 Categories=Utility;
