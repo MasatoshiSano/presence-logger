@@ -9,7 +9,7 @@ import json
 import sys
 from pathlib import Path
 
-from fleet_ui import migrate, provision
+from fleet_ui import migrate, provision, send_target
 from fleet_ui.hostname import read_hub_hostname, suggest_hostname, validate_hostname
 from fleet_ui.discovery import (
     classify,
@@ -103,6 +103,7 @@ def cmd_register(args: list[str]) -> int:
         args[2],
         existing=_inventory_entries(),
         inventory_path=INVENTORY,
+        repo=REPO,
     )
     return _emit({"ok": r.ok, "message": r.message, "output": r.output})
 
@@ -111,9 +112,59 @@ def cmd_adopt(args: list[str]) -> int:
     if not args:
         return _emit({"ok": False, "message": "子の IP を指定してください"})
     r = provision.adopt_keeping_identity(
-        args[0], existing=_inventory_entries(), inventory_path=INVENTORY
+        args[0], existing=_inventory_entries(), inventory_path=INVENTORY, repo=REPO
     )
     return _emit({"ok": r.ok, "message": r.message, "output": r.output})
+
+
+def cmd_align(args: list[str]) -> int:
+    """既存の子の記録の送り先を、このハブの AP_GW_IP に揃えて点検する。
+
+    引数なしならインベントリ全台。各子の HOST_NOW/ENV_NOW と、presence-hub-join が引用符つき
+    (2026-09-25 の不具合版の書式)かを報告する。引用符つきは報告だけで直さない
+    (PSK をフリート全体へ流す操作を増やさないため)。
+    """
+    try:
+        gw = send_target.load_ap_gw_ip(REPO)
+    except ValueError as e:
+        return _emit({"ok": False, "message": f"{e}。site.env を確認してください", "children": []})
+    entries = [migrate.inventory_name(a) for a in args] if args else _inventory_entries()
+    if not entries:
+        return _emit({"ok": False, "message": "対象の子がありません", "gw": gw, "children": []})
+    rows = []
+    for entry in entries:
+        r = send_target.align_send_target(entry, gw, runner=migrate.run_cmd_long)
+        got = send_target.parse_align_output(r.output)
+        rows.append({
+            "entry": entry,
+            "ok": r.ok,
+            "host_now": got["host_now"],
+            "env_now": got["env_now"],
+            "active_now": got["active_now"],
+            "join_profile": got["join_profile"],
+            "message": r.message,
+        })
+        sys.stderr.write(
+            f"{entry}: {'OK' if r.ok else 'NG'} host={got['host_now'] or '?'} "
+            f"env={got['env_now'] or '(なし)'} "
+            f"service={got['active_now'] or '?'} presence-hub-join={got['join_profile'] or '?'}\n"
+        )
+    quoted = [r["entry"] for r in rows if r["join_profile"] == "quoted"]
+    failed = [r["entry"] for r in rows if not r["ok"]]
+    notes = []
+    if failed:
+        notes.append(f"揃えられなかった子: {', '.join(failed)}")
+    if quoted:
+        notes.append(
+            f"引用符つきの presence-hub-join(以前の不具合版)が残っている子: {', '.join(quoted)}。"
+            "自動では直しません。take をやり直すか、SD を prepare-child-sd.sh で書き直してください"
+        )
+    return _emit({
+        "ok": not failed,
+        "message": " / ".join(notes) or f"{len(rows)} 台の送り先を {gw} に揃えました",
+        "gw": gw,
+        "children": rows,
+    })
 
 
 COMMANDS = {
@@ -125,6 +176,7 @@ COMMANDS = {
     "suggest": cmd_suggest,
     "register": cmd_register,
     "adopt": cmd_adopt,
+    "align": cmd_align,
 }
 
 
@@ -133,7 +185,7 @@ def main(argv: list[str] | None = None) -> int:
     if not argv or argv[0] in ("-h", "--help"):
         print(
             "usage: python3 -m fleet_ui.child_cli "
-            "{status|pubkey|list|take|candidates|suggest|register|adopt} ...",
+            "{status|pubkey|list|take|candidates|suggest|register|adopt|align} ...",
             file=sys.stderr,
         )
         return 2

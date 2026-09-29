@@ -133,3 +133,110 @@ def test_register_dispatches(monkeypatch, capsys):
     assert calls == [("10.42.0.9", "aa:bb:cc:dd:ee:01", "pizero2w-3")]
     body = json.loads(capsys.readouterr().out)
     assert body["ok"] is True
+
+
+# --- B2-T16: align(子の送り先を揃え、引用符つきプロファイルは報告だけ) -----------------
+
+
+def _align_output(gw, *, join="ok", active="active", host_now=None):
+    env = "" if gw == "10.42.0.1" else f"MQTT_HOST={gw}"
+    return (
+        f"HOST_NOW={host_now or gw}\nENV_NOW={env}\nACTIVE_NOW={active}\nJOIN_PROFILE={join}\n"
+    )
+
+
+def _patch_align(monkeypatch, per_host, gw="10.42.1.1"):
+    from fleet_ui.provision import StepResult
+
+    calls = []
+
+    def fake_align(host, want, *, runner):
+        calls.append((host, want))
+        out = per_host[host]
+        ok = f"HOST_NOW={want}" in out
+        return StepResult(ok=ok, message="" if ok else "host が違います", output=out)
+
+    monkeypatch.setattr(child_cli.send_target, "align_send_target", fake_align)
+    monkeypatch.setattr(child_cli.send_target, "load_ap_gw_ip", lambda repo=None: gw)
+    return calls
+
+
+def test_align_without_args_covers_whole_inventory_and_reports(monkeypatch, capsys):
+    monkeypatch.setattr(child_cli, "_inventory_entries", lambda: ["zero2.local", "zero3.local"])
+    calls = _patch_align(monkeypatch, {
+        "zero2.local": _align_output("10.42.1.1", join="quoted"),
+        "zero3.local": _align_output("10.42.1.1", join="ok"),
+    })
+    assert child_cli.main(["align"]) == 0
+    body = json.loads(capsys.readouterr().out)
+    assert calls == [("zero2.local", "10.42.1.1"), ("zero3.local", "10.42.1.1")]
+    assert body["ok"] is True
+    assert body["gw"] == "10.42.1.1"
+    rows = {r["entry"]: r for r in body["children"]}
+    assert rows["zero2.local"]["host_now"] == "10.42.1.1"
+    assert rows["zero2.local"]["join_profile"] == "quoted"
+    assert rows["zero3.local"]["join_profile"] == "ok"
+    assert "quoted" in body["message"] or "引用符" in body["message"]
+
+
+def test_align_does_not_repair_quoted_profile(monkeypatch, capsys):
+    """§1.5: PSK をフリートへ流す操作を増やさない。報告だけで、直す呼び出しをしない。"""
+    monkeypatch.setattr(child_cli, "_inventory_entries", lambda: ["zero2.local"])
+    calls = _patch_align(monkeypatch, {"zero2.local": _align_output("10.42.1.1", join="quoted")})
+    called = []
+    monkeypatch.setattr(child_cli.migrate, "take_child", lambda *a, **k: called.append("take"))
+    monkeypatch.setattr(child_cli.migrate, "nm_join_keyfile", lambda *a, **k: called.append("kf"))
+    assert child_cli.main(["align"]) == 0
+    assert called == []
+    assert calls == [("zero2.local", "10.42.1.1")]  # SSH は align の1回だけ
+    out = capsys.readouterr()
+    assert "psk" not in (out.out + out.err).lower()
+
+
+def test_align_with_entries_normalizes_names(monkeypatch, capsys):
+    monkeypatch.setattr(child_cli, "_inventory_entries", lambda: ["zero2.local", "zero3.local"])
+    calls = _patch_align(monkeypatch, {"zero3.local": _align_output("10.42.1.1")})
+    assert child_cli.main(["align", "zero3"]) == 0
+    assert calls == [("zero3.local", "10.42.1.1")]
+    body = json.loads(capsys.readouterr().out)
+    assert [r["entry"] for r in body["children"]] == ["zero3.local"]
+
+
+def test_align_failure_of_one_child_is_not_ok_but_continues(monkeypatch, capsys):
+    monkeypatch.setattr(child_cli, "_inventory_entries", lambda: ["zero2.local", "zero3.local"])
+    calls = _patch_align(monkeypatch, {
+        "zero2.local": _align_output("10.42.1.1", host_now="10.42.0.1"),
+        "zero3.local": _align_output("10.42.1.1"),
+    })
+    assert child_cli.main(["align"]) == 1
+    body = json.loads(capsys.readouterr().out)
+    assert len(calls) == 2  # 1台の失敗で残りを止めない
+    assert body["ok"] is False
+    rows = {r["entry"]: r for r in body["children"]}
+    assert rows["zero2.local"]["ok"] is False
+    assert rows["zero3.local"]["ok"] is True
+
+
+def test_align_with_empty_inventory_is_not_ok(monkeypatch, capsys):
+    monkeypatch.setattr(child_cli, "_inventory_entries", lambda: [])
+    _patch_align(monkeypatch, {})
+    assert child_cli.main(["align"]) == 1
+    assert json.loads(capsys.readouterr().out)["ok"] is False
+
+
+def test_align_bad_site_env_gw_fails_before_ssh(monkeypatch, capsys):
+    monkeypatch.setattr(child_cli, "_inventory_entries", lambda: ["zero2.local"])
+    calls = _patch_align(monkeypatch, {"zero2.local": _align_output("10.42.1.1")})
+
+    def bad(repo=None):
+        raise ValueError("site.env の AP_GW_IP が IPv4 ではありません: 'x'")
+
+    monkeypatch.setattr(child_cli.send_target, "load_ap_gw_ip", bad)
+    assert child_cli.main(["align"]) == 1
+    assert calls == []
+    assert "AP_GW_IP" in json.loads(capsys.readouterr().out)["message"]
+
+
+def test_align_is_listed_in_usage(capsys):
+    assert child_cli.main([]) == 2
+    assert "align" in capsys.readouterr().err

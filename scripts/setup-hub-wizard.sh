@@ -10,6 +10,8 @@ WIZARD_REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WIZARD_WORKDIR="${WIZARD_WORKDIR:-$WIZARD_REPO_DIR}"
 # shellcheck source=scripts/lib/site-env.sh
 source "$WIZARD_REPO_DIR/scripts/lib/site-env.sh"
+# shellcheck source=scripts/lib/ap-subnet.sh
+source "$WIZARD_REPO_DIR/scripts/lib/ap-subnet.sh"
 
 wizard_already_configured() {
     [ -f "$1" ]
@@ -159,7 +161,8 @@ wizard_render_site_env() {
     local hint="${FACTORY_IP:-$ORIGIN_FACTORY_IP}"
     FACTORY_IP="$(wizard_normalize_factory_ip "$factory_ip" "$hint")"
     AP_SSID="$ap_ssid"
-    AP_GW_IP="${AP_GW_IP:-10.42.0.1}"
+    # 既定(親の値)を継承する。重なりを検出して承諾されたときだけ WIZ_AP_GW_IP が入る。
+    AP_GW_IP="${WIZ_AP_GW_IP:-${AP_GW_IP:-10.42.0.1}}"
     [ -n "${WIZ_FACTORY_SSID:-}" ] && FACTORY_SSID="$WIZ_FACTORY_SSID"
     [ -n "${WIZ_FACTORY_GW:-}" ] && FACTORY_GW="$WIZ_FACTORY_GW"
     [ -n "${WIZ_FACTORY_DNS:-}" ] && FACTORY_DNS="$WIZ_FACTORY_DNS"
@@ -284,6 +287,40 @@ wizard_redo_ap_psk() {
 }
 
 WIZ_BACK='__WIZ_BACK__'
+
+# 子Pi用 AP のアドレス範囲が、この機械の別の経路と重なるときだけ、空き候補を聞く。
+# 重ならなければ何も聞かず、既定(親の値)を継承する。承諾なら WIZ_AP_GW_IP に入れる。
+# 戻り値: 0=続行 / 2=0(戻る) / 1=中止(候補を断った、または空きが無い)
+# フェーズ50も起動前に同じ検査をする(ここと状態が変わりうるので省かない)。
+wizard_resolve_ap_gw_ip() {
+    local gw="${WIZ_AP_GW_IP:-${AP_GW_IP:-10.42.0.1}}" apif="${AP_IF:-wlan1}"
+    local conflicts cand v
+    conflicts="$(ap_subnet_conflicts "$gw" "$apif")"
+    [ -n "$conflicts" ] || return 0
+    echo
+    echo "----- 子Pi用 AP のアドレスが重なっています -----"
+    echo "この機械の別の接続と、AP の予定のアドレス範囲 ${gw%.*}.0/24 が重なっています。"
+    echo "このまま進めると、フェーズ50 が AP を起動せずに止まります。"
+    echo "(起動すると別の接続の先と ping も SSH も通じなくなるため)"
+    while read -r v; do
+        [ -n "$v" ] && echo "  重なっている接続 : $v"
+    done <<<"$conflicts"
+    cand="$(ap_suggest_free_gw "$apif")" || {
+        echo "10.42.N.1 に空きが見つかりません。site.env の AP_GW_IP を手で決めてください。" >&2
+        return 1
+    }
+    echo "空いている候補: ${cand}（AP のアドレスに ${cand} を使いますか？）"
+    v="$(wizard_ask "使う Y/n" "Y")" || return 1
+    wizard_is_back "$v" && return 2
+    if [[ "$v" =~ ^[yY]$ ]]; then
+        WIZ_AP_GW_IP="$cand"
+        export WIZ_AP_GW_IP
+        return 0
+    fi
+    echo "別のハブの Wi-Fi を中継に使っているだけなら、作業を工場網へ切り替えてから" >&2
+    echo "もう一度開いてください。子の設定は何も変わりません。" >&2
+    return 1
+}
 
 wizard_is_back() {
     [ "${1:-}" = "$WIZ_BACK" ]
@@ -574,6 +611,12 @@ main() {
                 fi
                 ;;
             15)
+                wizard_resolve_ap_gw_ip
+                case $? in
+                    0) ;;
+                    2) step=14; continue ;;
+                    *) return 1 ;;
+                esac
                 echo
                 echo "----- 確認 -----"
                 echo "  ① このハブのホスト名         : $hostname"
@@ -583,6 +626,7 @@ main() {
                 echo "  ⑤ Oracle                     : $oracle_user@$oracle_host:$oracle_port/$oracle_service"
                 echo "     テーブル                   : $oracle_table"
                 echo "  ⑥ 子Pi用ハブAPの Wi-Fi名     : $ap_ssid"
+                [ -z "${WIZ_AP_GW_IP:-}" ] || echo "     子Pi用APのアドレス         : $WIZ_AP_GW_IP（重なりを避けるため変更）"
                 echo "  ⑦ 子Pi用APパスワード         : （入力済み）"
                 echo "     Oracle パスワード          : （入力済み）"
                 echo "---------------"

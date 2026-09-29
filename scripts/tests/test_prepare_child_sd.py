@@ -278,3 +278,208 @@ def test_sd_wifi_profile_never_gives_up_reconnecting(tmp_path):
         stdin=_wifi_path(root).read_text(encoding="utf-8"),
     )
     assert _pick(proc.stdout)["autoconnect-retries"] == "0", "4回で諦めると電源再投入が要る"
+
+
+# --- B2: 記録の送り先を付け替え先ハブの AP_GW_IP に揃える(設計 §2.4 (ii)) ----------------
+
+
+def _send_target(root):
+    return root / "home" / "pi" / "send_target_config.json"
+
+
+def _dropin(root):
+    return (
+        root / "etc" / "systemd" / "system" / "child-csv-to-mqtt.service.d" / "10-hub-gw.conf"
+    )
+
+
+def _prepare_with_gw(root, tmp_path, gw, *, check=True):
+    pub = tmp_path / "id_ed25519.pub"
+    pub.write_text("ssh-ed25519 AAAA newhub\n", encoding="utf-8")
+    return run_bash(
+        f'{SOURCE}; child_sd_prepare "{root}" "{pub}" sibling-hub ap-secret9 "{gw}"',
+        env=_env(),
+        check=check,
+    )
+
+
+def test_prepare_aligns_json_host_and_writes_dropin_for_non_default_gw(tmp_path):
+    """B2-T12: host だけが変わり、他のキー・所有者・モードは保たれる。"""
+    import json
+    import stat
+
+    root = _child_root(tmp_path)
+    original = {"host": "10.42.0.1", "password": "dummy-pass", "enabled": True, "port": 1883}
+    cfg = _send_target(root)
+    cfg.write_text(json.dumps(original), encoding="utf-8")
+    cfg.chmod(0o640)
+    before = cfg.stat()
+    proc = _prepare_with_gw(root, tmp_path, "10.42.1.1")
+    assert json.loads(cfg.read_text(encoding="utf-8")) == {**original, "host": "10.42.1.1"}
+    after = cfg.stat()
+    assert stat.S_IMODE(after.st_mode) == 0o640
+    assert (after.st_uid, after.st_gid) == (before.st_uid, before.st_gid)
+    assert _dropin(root).read_text(encoding="utf-8") == (
+        "[Service]\nEnvironment=MQTT_HOST=10.42.1.1\n"
+    )
+    assert stat.S_IMODE(_dropin(root).stat().st_mode) == 0o644
+    assert "10.42.0.1" in proc.stdout  # 「旧 → 新」を表示
+    assert "10.42.1.1" in proc.stdout
+
+
+def test_prepare_default_gw_resets_host_and_removes_existing_dropin(tmp_path):
+    """B2-T13: 既定のハブへ戻す向き。"""
+    import json
+
+    root = _child_root(tmp_path)
+    _send_target(root).write_text('{"host": "10.42.1.1", "password": "x"}', encoding="utf-8")
+    _dropin(root).parent.mkdir(parents=True)
+    _dropin(root).write_text("[Service]\nEnvironment=MQTT_HOST=10.42.1.1\n", encoding="utf-8")
+    _prepare_with_gw(root, tmp_path, "10.42.0.1")
+    assert json.loads(_send_target(root).read_text(encoding="utf-8")) == {
+        "host": "10.42.0.1", "password": "x",
+    }
+    assert not _dropin(root).exists()
+
+
+def test_prepare_default_gw_without_dropin_is_fine(tmp_path):
+    root = _child_root(tmp_path)
+    _prepare_with_gw(root, tmp_path, "10.42.0.1")
+    assert not _dropin(root).exists()
+
+
+def test_prepare_without_json_creates_only_host(tmp_path):
+    """B2-T14: enabled を足さない(勝手に送信を始めない)。"""
+    import json
+
+    root = _child_root(tmp_path)
+    assert not _send_target(root).exists()
+    _prepare_with_gw(root, tmp_path, "10.42.1.1")
+    assert json.loads(_send_target(root).read_text(encoding="utf-8")) == {"host": "10.42.1.1"}
+
+
+def test_prepare_default_arg_is_default_gw(tmp_path):
+    """既存の4引数呼び出しは既定(10.42.0.1)に揃える。"""
+    import json
+
+    root = _child_root(tmp_path)
+    pub = tmp_path / "id_ed25519.pub"
+    pub.write_text("ssh-ed25519 AAAA newhub\n", encoding="utf-8")
+    run_bash(
+        f'{SOURCE}; child_sd_prepare "{root}" "{pub}" sibling-hub ap-secret9',
+        env=_env(),
+    )
+    assert json.loads(_send_target(root).read_text(encoding="utf-8")) == {"host": "10.42.0.1"}
+
+
+def test_prepare_broken_json_is_not_overwritten_and_no_dropin(tmp_path):
+    root = _child_root(tmp_path)
+    _send_target(root).write_text("{broken", encoding="utf-8")
+    proc = _prepare_with_gw(root, tmp_path, "10.42.1.1", check=False)
+    assert proc.returncode != 0
+    assert "壊れている" in proc.stderr
+    assert _send_target(root).read_text(encoding="utf-8") == "{broken"
+    assert not _dropin(root).exists()
+
+
+def _snapshot(root):
+    return {
+        str(p.relative_to(root)): p.read_bytes()
+        for p in sorted(root.rglob("*"))
+        if p.is_file()
+    }
+
+
+@pytest.mark.parametrize("broken", ["{broken", "[1, 2]"])
+def test_prepare_broken_json_changes_nothing_on_the_sd(tmp_path, broken):
+    """JSON の検査は何かを書く前。壊れていたら鍵・Wi-Fi・他 Wi-Fi・drop-in のどれも変えない。"""
+    root = _child_root(tmp_path)
+    conn = root / "etc" / "NetworkManager" / "system-connections"
+    conn.mkdir(parents=True)
+    (conn / "old-hub.nmconnection").write_text(
+        "[connection]\nid=presence-hub\ntype=wifi\nautoconnect=true\n", encoding="utf-8"
+    )
+    _send_target(root).write_text(broken, encoding="utf-8")
+    before = _snapshot(root)
+    proc = _prepare_with_gw(root, tmp_path, "10.42.1.1", check=False)
+    assert proc.returncode != 0
+    assert "壊れている" in proc.stderr
+    assert _snapshot(root) == before
+    assert not _wifi_path(root).exists()
+    assert not (root / "home" / "pi" / ".ssh" / "authorized_keys").exists()
+    assert not _dropin(root).exists()
+
+
+@pytest.mark.parametrize("bad", ["10.42.1", "10.42.1.256", "10.42.01.1", "10.42.1.1; rm", "x"])
+def test_prepare_rejects_non_ipv4_gw_and_writes_nothing(tmp_path, bad):
+    root = _child_root(tmp_path)
+    proc = _prepare_with_gw(root, tmp_path, bad, check=False)
+    assert proc.returncode != 0
+    assert "AP_GW_IP" in proc.stderr
+    assert not _send_target(root).exists()
+    assert not _dropin(root).exists()
+
+
+def test_align_send_target_keeps_non_ascii_values_intact(tmp_path):
+    import json
+
+    root = _child_root(tmp_path)
+    _send_target(root).write_text(
+        json.dumps({"host": "10.42.0.1", "note": "工場A"}, ensure_ascii=False), encoding="utf-8"
+    )
+    run_bash(f'{SOURCE}; child_sd_align_send_target "{root}" 10.42.1.1', env=_env())
+    assert json.loads(_send_target(root).read_text(encoding="utf-8"))["note"] == "工場A"
+
+
+def _site_env_repo(tmp_path, text):
+    repo = tmp_path / "hub"
+    repo.mkdir(exist_ok=True)
+    if text is not None:
+        (repo / "site.env").write_text(text, encoding="utf-8")
+    return repo
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("AP_SSID=x\nAP_GW_IP=10.42.1.1\n", "10.42.1.1"),
+        ('AP_GW_IP="10.42.2.1"\n', "10.42.2.1"),
+        ("AP_SSID=x\n", "10.42.0.1"),
+        ("AP_GW_IP=\n", "10.42.0.1"),
+        (None, "10.42.0.1"),  # site.env が無い
+    ],
+)
+def test_hub_gw_ip_reads_site_env_or_defaults(tmp_path, text, expected):
+    """B2-T1(bash 側): python の load_ap_gw_ip と同じ表。"""
+    repo = _site_env_repo(tmp_path, text)
+    out = run_bash(f'{SOURCE}; child_sd_hub_gw_ip "{repo}"', env=_env()).stdout.strip()
+    assert out == expected
+
+
+@pytest.mark.parametrize("bad", ["10.42.1", "10.42.1.256", "10.42.01.1", "10.42.1.1/24", "abc"])
+def test_hub_gw_ip_rejects_invalid(tmp_path, bad):
+    repo = _site_env_repo(tmp_path, f"AP_GW_IP={bad}\n")
+    proc = run_bash(f'{SOURCE}; child_sd_hub_gw_ip "{repo}"', env=_env(), check=False)
+    assert proc.returncode != 0
+    assert "AP_GW_IP" in proc.stderr
+
+
+def test_hub_gw_ip_matches_python_loader(tmp_path):
+    """bash と python の二重実装がずれていない。"""
+    from fleet_ui.send_target import load_ap_gw_ip
+
+    for text in ("AP_GW_IP=10.42.1.1\n", "AP_SSID=x\n", 'AP_GW_IP="10.42.9.1"\n'):
+        repo = _site_env_repo(tmp_path, text)
+        out = run_bash(f'{SOURCE}; child_sd_hub_gw_ip "{repo}"', env=_env()).stdout.strip()
+        assert out == load_ap_gw_ip(repo)
+
+
+def test_main_reads_site_env_gw_and_passes_it_to_the_sudo_reexec():
+    """B2-T15: 値は1回だけ読み、sudo env の再実行へ引数で渡す(site.env を再読しない)。"""
+    from pathlib import Path
+
+    text = Path("scripts/prepare-child-sd.sh").read_text(encoding="utf-8")
+    assert 'child_sd_hub_gw_ip "$PREPARE_REPO_DIR"' in text
+    assert 'sudo env CHILD_SD_PUBKEY="$pub" HOME="$HOME"' in text
+    assert '"$PREPARE_REPO_DIR/scripts/prepare-child-sd.sh" "$root" "$gw"' in text
+    assert 'child_sd_prepare "$root" "$pub" "$ssid" "$psk" "$gw"' in text

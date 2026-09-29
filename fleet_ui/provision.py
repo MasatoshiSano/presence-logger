@@ -17,6 +17,7 @@ from pathlib import Path
 
 from fleet_ui.discovery import current_ap_dev, parse_neigh, run_cmd
 from fleet_ui.hostname import validate_hostname
+from fleet_ui.send_target import align_send_target, load_ap_gw_ip
 
 # ホスト名として安全な形。sed/printf へ素で埋め込むため、ここを緩めてはいけない。
 _SAFE_HOSTNAME_RE = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?\Z")
@@ -222,6 +223,28 @@ def add_to_inventory(entry: str, *, path: Path = INVENTORY) -> StepResult:
     return _guarded(_do, "インベントリを更新しました")
 
 
+def _align_after_join(
+    host: str, inv_name: str, gw: str, *, runner: Callable[[list[str]], str]
+) -> StepResult:
+    """インベントリ追加のあと、記録の送り先(JSON の host と MQTT_HOST)をこのハブの値へ揃える。
+
+    揃えられないまま成功と言うと、記録が旧 IP へ流れ続けて0件になる(黙って届かない)。
+    """
+    aligned = align_send_target(host, gw, runner=runner)
+    if aligned.ok:
+        return aligned
+    return StepResult(
+        ok=False,
+        message=(
+            f"{inv_name} はこのハブへ取り込みましたが、記録の送り先を {gw} に揃えられませんでした。"
+            " このままでは記録が届きません。"
+            f" python3 -m fleet_ui.child_cli align {inv_name} を実行してください。"
+            f" {aligned.message}"
+        ),
+        output=aligned.output,
+    )
+
+
 def probe_hostname(
     ip: str, *, runner: Callable[[list[str]], str] = run_cmd
 ) -> str:
@@ -248,12 +271,19 @@ def adopt_keeping_identity(
     runner: Callable[[list[str]], str] = run_cmd,
     known_hosts: Path | None = None,
     inventory_path: Path | None = None,
+    repo: Path | None = None,
 ) -> StepResult:
     """AP に既に居る子を、ホスト名と局番号を変えずに取り込む。
 
     新機登録ウィザードはクローン増設向け（STA_NO を空にする / 改名）。
     既存の子のSDを別ハブへ持ってきたときはそれを流してはいけない。
+    取り込んだら、記録の送り先をこのハブの AP_GW_IP に揃える(SD を旧コードで準備した子や、
+    手で繋いだ子はここで揃う)。
     """
+    try:
+        gw = load_ap_gw_ip(repo)
+    except ValueError as e:
+        return StepResult(ok=False, message=f"{e}。site.env を確認してください")
     hostname = probe_hostname(ip, runner=runner)
     if not hostname:
         return StepResult(
@@ -276,6 +306,9 @@ def adopt_keeping_identity(
     added = add_to_inventory(inv_name, path=inventory_path or INVENTORY)
     if not added.ok:
         return added
+    aligned = _align_after_join(ip, inv_name, gw, runner=runner)
+    if not aligned.ok:
+        return aligned
     return StepResult(
         ok=True,
         message=f"{hostname} をこのハブへ取り込みました（ホスト名と局番号はそのまま）",
@@ -293,10 +326,12 @@ def register_new_child(
     wait_fn: Callable[..., StepResult] = wait_for_return,
     known_hosts: Path | None = None,
     inventory_path: Path | None = None,
+    repo: Path | None = None,
 ) -> StepResult:
     """クローン増設向けの6工程。STA_NO を空にし、ホスト名を変える。
 
     既存の子を別ハブへ移すときは adopt_keeping_identity を使う。
+    クローン元の子の送り先を引き継いでいるので、最後にこのハブの AP_GW_IP へ揃える。
     """
     if not ip or any(c in ip for c in " ;|&$()`<>\"'\\"):
         return StepResult(ok=False, message="子の IP が不正です")
@@ -306,6 +341,11 @@ def register_new_child(
     err = validate_hostname(new_hostname, existing)
     if err:
         return StepResult(ok=False, message=err)
+    # 揃える先が決まらないまま再起動まで進めない。
+    try:
+        gw = load_ap_gw_ip(repo)
+    except ValueError as e:
+        return StepResult(ok=False, message=f"{e}。site.env を確認してください")
 
     r = stop_publisher(ip, runner=runner)
     if not r.ok:
@@ -339,6 +379,9 @@ def register_new_child(
     added = add_to_inventory(inv_name, path=inventory_path or INVENTORY)
     if not added.ok:
         return added
+    aligned = _align_after_join(new_ip, inv_name, gw, runner=runner)
+    if not aligned.ok:
+        return aligned
     return StepResult(
         ok=True,
         message=(
