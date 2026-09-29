@@ -63,7 +63,15 @@ copy_install_setup_icon() {
 copy_dest_verdict() {
     local dir="$1" listing
     [ -e "$dir" ] || [ -L "$dir" ] || return 0
-    if [ -d "$dir" ] && [ -z "$(ls -A "$dir" 2>/dev/null)" ]; then return 0; fi
+    if [ -d "$dir" ]; then
+        # 列挙に失敗した（権限なし等）ときの空出力を「空」と読まない。
+        if ! listing="$(ls -A "$dir" 2>/dev/null)"; then
+            echo "❌ $dir の中身を確認できません（読み取り権限がありません）" >&2
+            echo "   別のアプリが入っているかもしれないので、何もせずに止めました。権限を確認して、もう一度開いてください。" >&2
+            return 1
+        fi
+        [ -n "$listing" ] || return 0
+    fi
     if [ -e "$dir/docker-compose.yml" ] && [ -e "$dir/services/bridge" ] \
         && [ -e "$dir/scripts/bootstrap-hub.sh" ]; then
         return 0

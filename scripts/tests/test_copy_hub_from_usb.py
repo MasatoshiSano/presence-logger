@@ -7,6 +7,8 @@ import os
 import pwd
 import stat
 
+import pytest
+
 from scripts.tests.shellhelp import run_bash
 
 SOURCE = "source scripts/copy-hub-from-usb.sh"
@@ -183,6 +185,23 @@ def test_foreign_dest_refuses_copy(tmp_path):
     assert (dest / "notes.txt").read_text(encoding="utf-8") == "mine\n"
     assert "presence-logger ではない中身" in proc.stderr
     assert not wiz_log.exists()
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root は権限に関係なく読めるので再現できない")
+def test_unreadable_dest_is_refused_not_treated_as_empty(tmp_path):
+    """読み取り権限が無い（書き込みは可）ディレクトリを「空」と誤判定しない。"""
+    dest = tmp_path / "foreign-dest"
+    dest.mkdir()
+    (dest / "existing").write_text("foreign", encoding="utf-8")
+    dest.chmod(0o300)
+    try:
+        proc = run_bash(f'{SOURCE}; copy_dest_verdict "{dest}"; echo verdict=$?',
+                        env=_env(), check=False)
+    finally:
+        dest.chmod(0o700)
+    assert "verdict=1" in proc.stdout, proc.stdout + proc.stderr
+    assert "中身を確認できません" in proc.stderr
+    assert (dest / "existing").read_text(encoding="utf-8") == "foreign"
 
 
 def test_existing_presence_logger_dest_is_updated(tmp_path):
