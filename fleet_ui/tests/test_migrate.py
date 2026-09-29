@@ -242,7 +242,7 @@ def test_take_child_installs_key_switches_wifi_keeps_identity(tmp_path):
     assert waited == ["aa:bb:cc:dd:ee:ff"]
     body = inv.read_text(encoding="utf-8")
     assert "zero2.local" in body
-    assert "外しました（読み直して確認済み）" in res.message
+    assert "外しました（読み直して、子の行が消え、ほかの子の行が変わっていないことを確認済み）" in res.message
 
 
 def test_take_child_rejects_unsafe_old_host():
@@ -866,7 +866,7 @@ def test_take_child_reports_removal_only_after_reread(tmp_path):
     res, state = _take_old_parent(tmp_path)
     assert res.ok, res.message
     assert "旧親(172.22.13.17)の名簿" in res.message
-    assert "外しました（読み直して確認済み）" in res.message
+    assert "外しました（読み直して、子の行が消え、ほかの子の行が変わっていないことを確認済み）" in res.message
     assert "commit" in res.message
     assert "deploy-parent.sh" in res.message
     assert "逆向き" in res.message

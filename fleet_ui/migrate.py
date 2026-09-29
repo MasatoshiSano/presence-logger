@@ -534,11 +534,11 @@ def take_child(
         )
     if after != parse_children_conf(stripped):
         return done(
-            f"要対応: {where}の名簿が想定と違う形になりました（{entry} 以外の行も変わっています）。"
+            f"要対応: {where}の名簿が想定と違う形になりました（{entry} 以外の子の行も変わっています）。"
             "旧親で git diff fleet/children.conf を確認して直してください。"
         )
     return done(
-        f"{where}の名簿 fleet/children.conf から {entry} を外しました（読み直して確認済み）。",
+        f"{where}の名簿 fleet/children.conf から {entry} を外しました（読み直して、子の行が消え、ほかの子の行が変わっていないことを確認済み）。",
         "このハブと旧親の fleet/children.conf が変わっています。"
         "commit してから deploy-parent.sh を実行してください。",
         "試しに移しただけなら、元のハブで 1 → 1 を選び、"
