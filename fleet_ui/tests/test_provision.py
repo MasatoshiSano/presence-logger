@@ -6,6 +6,8 @@
 対象は必ずIPで指定する。ホスト名で指定するとクローン2台のどちらを操作しているか
 判別できない。
 """
+import re
+
 from fleet_ui.provision import (
     add_to_inventory,
     adopt_keeping_identity,
@@ -29,6 +31,33 @@ def _recorder(fail_on=None, out=""):
         return out
     run.calls = calls
     return run
+
+
+_ALIGN_GW_RE = re.compile(r'python3 - "\$f" (\S+) <<')
+
+
+def _align_readback(gw, *, host_now=None):
+    env = "" if gw == "10.42.0.1" else f"MQTT_HOST={gw}"
+    return (
+        f"HOST_NOW={host_now or gw}\nENV_NOW={env}\nACTIVE_NOW=active\nJOIN_PROFILE=ok\n"
+    )
+
+
+def _is_align(cmd):
+    return "send_target_config.json" in cmd[-1]
+
+
+def _align_gw(cmd):
+    m = _ALIGN_GW_RE.search(cmd[-1])
+    return m.group(1) if m else "?"
+
+
+def _hub_repo(tmp_path, gw_line=None):
+    repo = tmp_path / "hub"
+    repo.mkdir()
+    if gw_line is not None:
+        (repo / "site.env").write_text(gw_line + "\n", encoding="utf-8")
+    return repo
 
 
 def test_register_new_child_ssh_uses_accept_new():
@@ -198,6 +227,8 @@ def test_adopt_keeps_identity_and_skips_blank_rename(tmp_path):
             return "zero2\n"
         if "ssh-keyscan" in cmd:
             return "hostkey-line\n"
+        if _is_align(cmd):
+            return _align_readback(_align_gw(cmd))
         return ""
 
     inv = tmp_path / "children.conf"
@@ -210,6 +241,7 @@ def test_adopt_keeps_identity_and_skips_blank_rename(tmp_path):
         runner=run,
         known_hosts=known,
         inventory_path=inv,
+        repo=_hub_repo(tmp_path),
     )
     assert res.ok, res.message
     joined = "\n".join(" ".join(c) for c in calls)
@@ -241,6 +273,8 @@ def test_register_new_child_blanks_sta_and_renames(tmp_path):
         calls.append(cmd)
         if "ssh-keyscan" in cmd:
             return "hostkey-line\n"
+        if _is_align(cmd):
+            return _align_readback(_align_gw(cmd))
         return ""
 
     inv = tmp_path / "children.conf"
@@ -256,6 +290,7 @@ def test_register_new_child_blanks_sta_and_renames(tmp_path):
         wait_fn=lambda mac, **k: StepResult(ok=True, message="復帰", output="10.42.0.80"),
         known_hosts=known,
         inventory_path=inv,
+        repo=_hub_repo(tmp_path),
     )
     assert res.ok, res.message
     joined = "\n".join(" ".join(c) for c in calls)
@@ -322,3 +357,131 @@ def test_wait_for_return_fails_when_the_child_never_answers():
     )
     assert not res.ok
     assert "復帰" in res.message
+
+
+# --- B2-T11: 付け替え先ハブの AP_GW_IP へ送り先を揃える ---------------------------------
+
+
+def _adopt_runner(align=None):
+    calls = []
+
+    def run(cmd):
+        calls.append(cmd)
+        if cmd[-1] == "hostname":
+            return "zero2\n"
+        if "ssh-keyscan" in cmd:
+            return "hostkey-line\n"
+        if _is_align(cmd):
+            gw = _align_gw(cmd)
+            return align(gw) if align else _align_readback(gw)
+        return ""
+
+    run.calls = calls
+    return run
+
+
+def _adopt(tmp_path, run, gw_line=None, ip="10.42.1.9"):
+    inv = tmp_path / "children.conf"
+    inv.write_text("# empty\n", encoding="utf-8")
+    known = tmp_path / "known_hosts"
+    known.write_text("", encoding="utf-8")
+    res = adopt_keeping_identity(
+        ip,
+        existing=[],
+        runner=run,
+        known_hosts=known,
+        inventory_path=inv,
+        repo=_hub_repo(tmp_path, gw_line),
+    )
+    return res, inv
+
+
+def test_adopt_aligns_send_target_to_hub_gw_after_inventory(tmp_path):
+    run = _adopt_runner()
+    res, inv = _adopt(tmp_path, run, gw_line="AP_GW_IP=10.42.1.1")
+    assert res.ok, res.message
+    aligns = [c for c in run.calls if _is_align(c)]
+    assert len(aligns) == 1
+    assert "pi@10.42.1.9" in aligns[0]
+    assert _align_gw(aligns[0]) == "10.42.1.1"
+    assert "MQTT_HOST" in aligns[0][-1]
+    assert "zero2.local" in inv.read_text(encoding="utf-8")
+
+
+def test_adopt_aligns_to_default_when_hub_uses_default(tmp_path):
+    run = _adopt_runner()
+    res, _inv = _adopt(tmp_path, run, ip="10.42.0.9")
+    assert res.ok, res.message
+    (align_cmd,) = [c for c in run.calls if _is_align(c)]
+    assert _align_gw(align_cmd) == "10.42.0.1"
+    assert "rm -f" in align_cmd[-1]  # 既定へ戻す向きも同じ処理
+
+
+def test_adopt_reports_failure_when_align_readback_disagrees(tmp_path):
+    run = _adopt_runner(align=lambda gw: _align_readback(gw, host_now="10.42.0.1"))
+    res, inv = _adopt(tmp_path, run, gw_line="AP_GW_IP=10.42.1.1")
+    assert not res.ok
+    assert "記録が届きません" in res.message
+    assert "python3 -m fleet_ui.child_cli align zero2.local" in res.message
+    assert "zero2.local" in inv.read_text(encoding="utf-8")  # 取り込み自体は済んでいる
+
+
+def test_adopt_rejects_bad_site_env_gw_before_touching_ssh(tmp_path):
+    run = _adopt_runner()
+    res, _inv = _adopt(tmp_path, run, gw_line="AP_GW_IP=nonsense")
+    assert not res.ok
+    assert "AP_GW_IP" in res.message
+    assert run.calls == []
+
+
+def _register(tmp_path, run, gw_line=None):
+    from fleet_ui.provision import StepResult
+
+    inv = tmp_path / "children.conf"
+    inv.write_text("# empty\n", encoding="utf-8")
+    known = tmp_path / "known_hosts"
+    known.write_text("", encoding="utf-8")
+    res = register_new_child(
+        "10.42.1.194",
+        "aa:bb:cc:dd:ee:ff",
+        "pizero2w-3",
+        existing=["zero2.local"],
+        runner=run,
+        wait_fn=lambda mac, **k: StepResult(ok=True, message="復帰", output="10.42.1.80"),
+        known_hosts=known,
+        inventory_path=inv,
+        repo=_hub_repo(tmp_path, gw_line),
+    )
+    return res, inv
+
+
+def test_register_new_child_aligns_after_reboot_and_inventory(tmp_path):
+    run = _adopt_runner()
+    res, inv = _register(tmp_path, run, gw_line="AP_GW_IP=10.42.1.1")
+    assert res.ok, res.message
+    aligns = [i for i, c in enumerate(run.calls) if _is_align(c)]
+    assert len(aligns) == 1
+    cmd = run.calls[aligns[0]]
+    assert "pi@10.42.1.80" in cmd  # 再起動後の新しい IP(古い IP ではない)
+    assert _align_gw(cmd) == "10.42.1.1"
+    reboot = [i for i, c in enumerate(run.calls) if "sudo reboot" in c[-1]]
+    assert reboot and aligns[0] > max(reboot)
+    assert "pizero2w-3.local" in inv.read_text(encoding="utf-8")
+    assert "局番号は空" in res.message
+
+
+def test_register_new_child_reports_failure_when_align_fails(tmp_path):
+    run = _adopt_runner(align=lambda gw: "")
+    res, inv = _register(tmp_path, run, gw_line="AP_GW_IP=10.42.1.1")
+    assert not res.ok
+    assert "記録が届きません" in res.message
+    assert "python3 -m fleet_ui.child_cli align pizero2w-3.local" in res.message
+    assert "pizero2w-3.local" in inv.read_text(encoding="utf-8")
+
+
+def test_register_new_child_rejects_bad_site_env_gw_before_stopping_anything(tmp_path):
+    run = _adopt_runner()
+    res, _inv = _register(tmp_path, run, gw_line="AP_GW_IP=1.2.3")
+    assert not res.ok
+    assert "AP_GW_IP" in res.message
+    assert run.calls == []

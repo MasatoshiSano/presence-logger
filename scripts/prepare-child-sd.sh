@@ -168,16 +168,101 @@ child_sd_disable_other_wifi() {
     done
 }
 
+# このハブの AP_GW_IP(site.env)。無ければ既定。IPv4 でなければ非0。
+# fleet_ui/send_target.py の load_ap_gw_ip と同じ規則(別実装)。
+child_sd_hub_gw_ip() {
+    local repo="${1:?}" f v=""
+    f="$repo/site.env"
+    if [ -f "$f" ]; then
+        v="$(grep -E '^AP_GW_IP=' "$f" | tail -1 | cut -d= -f2-)"
+        v="${v%$'\r'}"
+        if [[ ${#v} -ge 2 && "${v:0:1}" == "${v: -1}" && ( "${v:0:1}" == '"' || "${v:0:1}" == "'" ) ]]; then
+            v="${v:1:${#v}-2}"
+        fi
+    fi
+    [ -n "$v" ] || v=10.42.0.1
+    if [[ "$v" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] && _site_env_ipv4_octets_valid "$v"; then
+        printf '%s\n' "$v"
+        return 0
+    fi
+    echo "site.env の AP_GW_IP が IPv4 ではありません: $v" >&2
+    return 1
+}
+
+# 記録の送り先を付け替え先ハブの AP_GW_IP に揃える。子の記録送信は2経路あり、
+#   - カメラ内蔵の送信: ~/send_target_config.json の host
+#   - child-csv-to-mqtt(ACK付き): 環境変数 MQTT_HOST(JSON は読まない) ← systemd drop-in で渡す
+# 片方だけ変えるともう片方が旧 IP へ送り続ける。既定(10.42.0.1)のときは drop-in を消す。
+# JSON は host 以外のキー(password を含む)を変えない。壊れた JSON は上書きせずエラー。
+# 設計: docs/2026-09-29-child-join-fix-design.md §2.4 (ii)
+child_sd_align_send_target() {
+    local root="${1:?}" gw="${2:?}"
+    local f="$root/home/pi/send_target_config.json"
+    local dropin="$root/etc/systemd/system/child-csv-to-mqtt.service.d/10-hub-gw.conf"
+    if ! [[ "$gw" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || ! _site_env_ipv4_octets_valid "$gw"; then
+        echo "AP_GW_IP が IPv4 ではありません: $gw" >&2
+        return 1
+    fi
+    python3 - "$f" "$gw" <<'PY' || return 1
+import json
+import os
+import sys
+import tempfile
+
+p, gw = sys.argv[1], sys.argv[2]
+try:
+    st = os.stat(p)
+except FileNotFoundError:
+    cfg = {}
+    mode = 0o644
+    d = os.stat(os.path.dirname(p))
+    uid, gid = d.st_uid, d.st_gid
+else:
+    try:
+        with open(p, encoding="utf-8") as fh:
+            cfg = json.load(fh)
+    except ValueError:
+        sys.exit("send_target_config.json が壊れているので書き換えません")
+    if not isinstance(cfg, dict):
+        sys.exit("send_target_config.json が壊れているので書き換えません(オブジェクトではない)")
+    mode, uid, gid = st.st_mode & 0o777, st.st_uid, st.st_gid
+old = cfg.get("host", "")
+cfg["host"] = gw
+fd, tmp = tempfile.mkstemp(dir=os.path.dirname(p))
+try:
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        json.dump(cfg, fh, ensure_ascii=False, indent=2)
+        fh.write("\n")
+    os.chmod(tmp, mode)
+    os.chown(tmp, uid, gid)
+    os.replace(tmp, p)
+except BaseException:
+    if os.path.exists(tmp):
+        os.unlink(tmp)
+    raise
+print(f"  記録の送り先: {old or '(未設定)'} → {gw}")
+PY
+    if [ "$gw" = 10.42.0.1 ]; then
+        rm -f "$dropin"
+    else
+        mkdir -p "$(dirname "$dropin")" || return 1
+        printf '[Service]\nEnvironment=MQTT_HOST=%s\n' "$gw" > "$dropin" || return 1
+        chmod 644 "$dropin"
+    fi
+}
+
 child_sd_prepare() {
     local root="${1:?}" pub="${2:?}" ssid="${3:?}" psk="${4:?}"
+    local gw="${5:-10.42.0.1}"
     child_sd_is_child_root "$root" || return 1
     child_sd_install_pubkey "$root" "$pub" || return 1
     child_sd_write_wifi "$root" "$ssid" "$psk" || return 1
     child_sd_disable_other_wifi "$root" || return 1
+    child_sd_align_send_target "$root" "$gw" || return 1
 }
 
 main() {
-    local root="${1:-}" pub ssid psk
+    local root="${1:-}" gw="${2:-}" pub ssid psk
     pub="${CHILD_SD_PUBKEY:-$HOME/.ssh/id_ed25519.pub}"
     if [ -z "$root" ]; then
         root="$(child_sd_find_root /media)" || {
@@ -209,13 +294,19 @@ main() {
         return 1
     fi
 
+    # 記録の送り先はこのハブの AP_GW_IP に揃える。値は1回だけ読み、sudo の再実行には引数で渡す。
+    if [ -z "$gw" ]; then
+        gw="$(child_sd_hub_gw_ip "$PREPARE_REPO_DIR")" || return 1
+    fi
+
     echo "子PiのSD: $root"
     echo "  ホスト名と局番号はそのままにします。"
     echo "  このハブの公開鍵と AP（$ssid）を書き込みます。"
+    echo "  記録の送り先は、このハブの $gw に揃えます。"
     if [ "$(id -u)" -ne 0 ]; then
         # sudo すると HOME が /root になる。公開鍵のパスと HOME を明示して渡す。
         sudo env CHILD_SD_PUBKEY="$pub" HOME="$HOME" \
-            bash "$PREPARE_REPO_DIR/scripts/prepare-child-sd.sh" "$root" || return 1
+            bash "$PREPARE_REPO_DIR/scripts/prepare-child-sd.sh" "$root" "$gw" || return 1
         echo
         echo "SD を外して子Pi に挿し、電源を入れてください。"
         echo "起動したらデスクトップの「子をこのハブへ付ける」を開き、"
@@ -225,7 +316,7 @@ main() {
         read -r -p "Enterで閉じる " _
         return 0
     fi
-    child_sd_prepare "$root" "$pub" "$ssid" "$psk" || return 1
+    child_sd_prepare "$root" "$pub" "$ssid" "$psk" "$gw" || return 1
     echo "✅ 書き込みました。SD を外して子Pi に挿してください。"
 }
 

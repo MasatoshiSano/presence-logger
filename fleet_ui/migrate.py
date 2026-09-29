@@ -18,6 +18,7 @@ from pathlib import Path
 
 from fleet_ui.hostname import validate_hostname
 from fleet_ui.provision import StepResult, add_to_inventory, register_host_key, wait_for_return
+from fleet_ui.send_target import align_send_target, ip_in_subnet, load_ap_gw_ip
 
 _IPV4_RE = re.compile(
     r"^(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)$"
@@ -378,6 +379,12 @@ def take_child(
     if not 1 <= len(ssid.encode("utf-8")) <= 32 or "\x00" in ssid:
         return StepResult(ok=False, message="このハブの AP 名の長さが不正です(1〜32バイト)")
 
+    # 揃える先が決まらないまま Wi-Fi を切り替えると、子は記録の届かない状態になる。先に確かめる。
+    try:
+        gw = load_ap_gw_ip(repo)
+    except ValueError as e:
+        return StepResult(ok=False, message=f"{e}。site.env を確認してください")
+
     mac_inner = (
         "cat /sys/class/net/wlan0/address 2>/dev/null || "
         "cat /sys/class/net/wlan1/address 2>/dev/null"
@@ -443,6 +450,31 @@ def take_child(
     added = add_to_inventory(inv_name, path=inv_file)
     if not added.ok:
         return added
+
+    # 子はもうこのハブの AP にいる。旧親経由ではなく、このハブから直接 SSH して
+    # 記録の送り先(JSON の host と MQTT_HOST)を付け替え先の値へ揃える(設計 §2.4)。
+    if _IPV4_RE.match(ip) and not ip_in_subnet(ip, gw, 24):
+        return StepResult(
+            ok=False,
+            message=(
+                f"{entry} の IP {ip} がこのハブの AP の範囲({gw}/24)にありません。"
+                " site.env の AP_GW_IP と実際の AP が食い違っています。"
+                " bash scripts/bootstrap-hub.sh 50 をやり直してください"
+            ),
+            output=waited.output,
+        )
+    aligned = align_send_target(ip if _IPV4_RE.match(ip) else inv_name, gw, runner=runner)
+    if not aligned.ok:
+        return StepResult(
+            ok=False,
+            message=(
+                f"{entry} はこのハブへ移りましたが、記録の送り先を {gw} に揃えられませんでした。"
+                " このままでは記録が届きません。"
+                f" python3 -m fleet_ui.child_cli align {inv_name} を実行してください。"
+                f" {aligned.message}"
+            ),
+            output=aligned.output,
+        )
 
     remote_text, status = _read_remote_inventory(
         old_host, remote_inventory, runner=runner

@@ -4,6 +4,7 @@
 引っ越しはホスト名と局番号を残し、WiFi と SSH 鍵とインベントリだけを付け替える。
 """
 import os
+import re
 import stat
 import subprocess
 from pathlib import Path
@@ -122,20 +123,44 @@ def test_read_pubkey_returns_stripped_line(tmp_path):
     assert read_pubkey(p) == "ssh-ed25519 AAAA comment"
 
 
-def _recorder(script):
-    """ssh の remote 文字列を見て、stdout を返す偽 runner。"""
+_ALIGN_GW_RE = re.compile(r'python3 - "\$f" (\S+) <<')
+
+
+def _align_readback(gw, *, host_now=None, env_now=None, active="active"):
+    """子の上で読み直した値(send_target.align_remote_script の出力形式)。"""
+    if env_now is None:
+        env_now = "" if gw == "10.42.0.1" else f"MQTT_HOST={gw}"
+    return (
+        f"HOST_NOW={host_now or gw}\nENV_NOW={env_now}\nACTIVE_NOW={active}\n"
+        "JOIN_PROFILE=ok\n"
+    )
+
+
+def _recorder(script, *, align=None):
+    """ssh の remote 文字列を見て、stdout を返す偽 runner。
+
+    記録の送り先を揃える ssh(send_target)は script より先に受けて、既定では
+    成功の読み戻しを返す。align=callable(gw) で読み戻しを差し替えられる。
+    """
     calls = []
     inputs = []
+    align_calls = []
 
     def run(cmd, input_text=None):
         calls.append(cmd)
         inputs.append(input_text or "")
         remote = cmd[-1] if cmd else ""
         joined = " ".join(cmd)
+        if "send_target_config.json" in remote:
+            m = _ALIGN_GW_RE.search(remote)
+            gw = m.group(1) if m else "?"
+            align_calls.append(cmd)
+            return align(gw) if align else _align_readback(gw)
         return script(joined, remote)
 
     run.calls = calls
     run.inputs = inputs
+    run.align_calls = align_calls
     return run
 
 
@@ -675,3 +700,103 @@ def test_wifi_install_runs_switch_in_its_own_unit():
         check=False,
     )
     assert syntax.returncode == 0, syntax.stderr
+
+
+# --- B2: 付け替え先ハブの AP_GW_IP へ子の送り先を揃える(設計 §2.4 (i)) ---------------------
+
+
+def _take_script(joined, remote):
+    if "wlan0/address" in remote:
+        return "aa:bb:cc:dd:ee:ff\n"
+    if "authorized_keys" in remote:
+        return f"{KEY_OK}\n"
+    if "cat " in remote and "children.conf" in remote:
+        return f"zero2\n{CAT_OK}\n"
+    if "ssh-keyscan" in joined:
+        return "hostkey-line\n"
+    if "presence-hub-join-switch" in remote:
+        return f"{WIFI_OK}\n"
+    return ""
+
+
+def _take(tmp_path, runner, *, ip="10.42.0.9", gw_line=None, wait_ok=True):
+    from fleet_ui.provision import StepResult
+
+    repo, inv = _take_repo(tmp_path)
+    if gw_line is not None:
+        (repo / "site.env").write_text(gw_line + "\n", encoding="utf-8")
+    res = take_child(
+        old_host="172.22.13.17",
+        entry="zero2",
+        repo=repo,
+        pubkey="ssh-ed25519 AAAA newhub",
+        runner=runner,
+        wait_fn=lambda mac, **k: StepResult(ok=wait_ok, message="復帰", output=ip),
+        known_hosts=tmp_path / "known_hosts",
+        inventory_path=inv,
+        remote_inventory="~/projects/presence-logger/fleet/children.conf",
+    )
+    return res, inv
+
+
+def test_take_child_aligns_send_target_directly_from_this_hub(tmp_path):
+    """B2-T8: WIFI_INSTALL の後、このハブから子の IP へ直接 1 回。旧親経由の入れ子ではない。"""
+    runner = _recorder(_take_script)
+    res, _inv = _take(tmp_path, runner, ip="10.42.1.9", gw_line="AP_GW_IP=10.42.1.1")
+    assert res.ok, res.message
+    (align_cmd,) = runner.align_calls
+    assert align_cmd[0] == "ssh" and "pi@10.42.1.9" in align_cmd
+    assert "172.22.13.17" not in " ".join(align_cmd)  # 旧親を経由しない
+    assert "ssh -o" not in align_cmd[-1]  # 入れ子 SSH ではない
+    assert "10.42.1.1" in align_cmd[-1] and "MQTT_HOST" in align_cmd[-1]
+    idx = {id(c): i for i, c in enumerate(runner.calls)}
+    wifi = [i for i, c in enumerate(runner.calls) if "presence-hub-join-switch" in c[-1]]
+    assert wifi and idx[id(align_cmd)] > max(wifi)
+
+
+def test_take_child_aligns_to_default_gw_without_site_env(tmp_path):
+    runner = _recorder(_take_script)
+    res, _inv = _take(tmp_path, runner)
+    assert res.ok, res.message
+    (align_cmd,) = runner.align_calls
+    assert "rm -f" in align_cmd[-1]  # 既定へ戻す向きも同じ処理(drop-in を消す)
+
+
+def test_take_child_fails_with_guidance_when_align_fails(tmp_path):
+    """B2-T9: 記録が届かない状態を成功と言わない。インベントリには入っている。"""
+    runner = _recorder(
+        _take_script, align=lambda gw: _align_readback(gw, host_now="10.42.0.1")
+    )
+    res, inv = _take(tmp_path, runner, ip="10.42.1.9", gw_line="AP_GW_IP=10.42.1.1")
+    assert not res.ok
+    assert "記録が届きません" in res.message
+    assert "python3 -m fleet_ui.child_cli align zero2.local" in res.message
+    assert "10.42.1.1" in res.message
+    assert "zero2.local" in inv.read_text(encoding="utf-8")
+
+
+def test_take_child_fails_when_child_ip_is_outside_hub_ap_range(tmp_path):
+    """B2-T10: site.env の AP_GW_IP と実際の AP が食い違っている。"""
+    runner = _recorder(_take_script)
+    res, _inv = _take(tmp_path, runner, ip="10.42.0.9", gw_line="AP_GW_IP=10.42.1.1")
+    assert not res.ok
+    assert "10.42.1.1/24" in res.message and "10.42.0.9" in res.message
+    assert "bootstrap-hub.sh 50" in res.message
+    assert runner.align_calls == []
+
+
+def test_take_child_rejects_bad_site_env_gw_before_touching_ssh(tmp_path):
+    """揃える先が決まらないまま Wi-Fi を切り替えると、子が届かない状態で孤立する。"""
+    runner = _recorder(_take_script)
+    res, _inv = _take(tmp_path, runner, gw_line="AP_GW_IP=10.42.1.1; rm")
+    assert not res.ok
+    assert "AP_GW_IP" in res.message
+    assert runner.calls == []
+
+
+def test_take_child_align_uses_inventory_name_when_ip_unknown(tmp_path):
+    runner = _recorder(_take_script)
+    res, _inv = _take(tmp_path, runner, ip="")
+    assert res.ok, res.message
+    (align_cmd,) = runner.align_calls
+    assert "pi@zero2.local" in align_cmd
