@@ -566,6 +566,39 @@ def test_take_child_rejects_bad_ssid_without_touching_ssh(tmp_path):
     assert runner.calls == []
 
 
+@pytest.mark.parametrize("bad", ["a\x00b", "\x00", "abc\x00"])
+def test_nm_ssid_rejects_nul_without_echoing_value(bad):
+    """設計 §1.2: SSID に NUL を含むなら書かずにエラー。メッセージに値を出さない。"""
+    with pytest.raises(ValueError, match="ssid") as ei:
+        nm_ssid(bad)
+    assert "\x00" not in str(ei.value)
+
+
+def test_nm_join_keyfile_rejects_nul_ssid():
+    with pytest.raises(ValueError, match="ssid"):
+        nm_join_keyfile("a\x00b", "pskpskpsk")
+
+
+def test_take_child_rejects_nul_ssid_without_touching_ssh(tmp_path):
+    repo, inv = _take_repo(tmp_path)
+    (repo / ".kit" / "ap-join.env").write_text(
+        "AP_SSID=a\x00b\nWIFI_AP_PSK=pskpskpsk\n", encoding="utf-8"
+    )
+    runner = _recorder(lambda joined, remote: "")
+    from fleet_ui.provision import StepResult
+    res = take_child(
+        old_host="172.22.13.17",
+        entry="zero2",
+        repo=repo,
+        pubkey="ssh-ed25519 AAAA newhub",
+        runner=runner,
+        wait_fn=lambda mac, **k: StepResult(ok=True, message=""),
+        inventory_path=inv,
+    )
+    assert not res.ok
+    assert runner.calls == []
+
+
 # --- WIFI_INSTALL の順序(A-M5): up 成功を確認してから他を切る ---------------------
 
 

@@ -253,6 +253,8 @@ def nm_ssid(ssid: str) -> str:
     raw = ssid.encode("utf-8")
     if not 1 <= len(raw) <= 32:
         raise ValueError("ssid length must be 1..32 bytes")
+    if b"\x00" in raw:
+        raise ValueError("ssid must not contain NUL")
     if _PRINTABLE.match(ssid) and "\\" not in ssid and ssid[0] != " " and ssid[-1] != " ":
         return ssid.replace(";", "\\\\;")
     return "".join(f"{b};" for b in raw)
@@ -373,7 +375,7 @@ def take_child(
                 "(8〜63文字の半角英数記号、または16進64文字)。.kit/ap-join.env を確認してください"
             ),
         )
-    if not 1 <= len(ssid.encode("utf-8")) <= 32:
+    if not 1 <= len(ssid.encode("utf-8")) <= 32 or "\x00" in ssid:
         return StepResult(ok=False, message="このハブの AP 名の長さが不正です(1〜32バイト)")
 
     mac_inner = (
