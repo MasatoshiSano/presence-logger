@@ -44,8 +44,24 @@ for f in "${files[@]}"; do [ -f "$CHILD_SRC/$f" ] || die "child/$f が無い"; d
 TS="$(date +%Y%m%d-%H%M%S)"
 log "子アプリ配布 (tag=$TS, files=${#files[@]}, with_shared=$WITH_SHARED, dry_run=$DRY_RUN)"
 
+# 配布元。共通設定を配るときだけ一時ディレクトリへ複製し、send_target_config.json の
+# host を「このハブの AP_GW_IP」に書き換えたものを配る。リポジトリの child/ は 10.42.0.1 を
+# 持つので、そのまま配ると非既定ハブの子の host が既定に戻り、カメラ内蔵の送信が黙って止まる。
+# host はフリート共通ではなく「どのハブの AP にいるか」で決まる値。
+# (子の child-csv-to-mqtt の MQTT_HOST は systemd drop-in なので、この配布は触らない)
+# 注: 共通ファイルの上書きは子の password も空にする(既存の別問題。今回は範囲外)。
+SRC_DIR="$CHILD_SRC"
+if [ "$WITH_SHARED" -eq 1 ]; then
+  HUB_GW="$(hub_ap_gw_ip "$REPO_DIR")" || die "site.env の AP_GW_IP を確認してください"
+  SRC_DIR="$(mktemp -d)"; trap 'rm -rf "$SRC_DIR"' EXIT
+  ( cd "$CHILD_SRC" && cp -a "${files[@]}" "$SRC_DIR/" )
+  render_send_target_host "$SRC_DIR/send_target_config.json" "$HUB_GW" \
+    || die "send_target_config.json の host を書き換えられません"
+  ok "send_target_config.json の host = $HUB_GW (このハブの AP_GW_IP)"
+fi
+
 if [ "$DRY_RUN" -eq 1 ]; then
-  rsync -avn --relative "${files[@]/#/$CHILD_SRC/./}" "$CHILD_SSH:~/" 2>&1 | sed 's/^/    /'
+  rsync -avn --relative "${files[@]/#/$SRC_DIR/./}" "$CHILD_SSH:~/" 2>&1 | sed 's/^/    /'
   echo "  (systemd units: ${CHILD_UNITS[*]} を再起動予定)"
   exit 0
 fi
@@ -58,7 +74,7 @@ rc "for u in ${CHILD_UNITS[*]}; do sudo cp -a /etc/systemd/system/\$u.service ~/
 
 # 2) 配布（--relative でリポジトリ側の相対構造のまま ~ に置く。--delete は使わない=既存を消さない）
 log "rsync -> $CHILD_SSH:~/"
-( cd "$CHILD_SRC" && rsync -a --info=stats0 "${files[@]}" "$CHILD_SSH:~/" ) || die "rsync 失敗"
+( cd "$SRC_DIR" && rsync -a --info=stats0 "${files[@]}" "$CHILD_SSH:~/" ) || die "rsync 失敗"
 # systemd unit（内容が変わっていれば）を配置
 for u in "${CHILD_UNITS[@]}"; do
   if [ -f "$CHILD_SRC/systemd/$u.service" ]; then

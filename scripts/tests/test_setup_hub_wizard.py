@@ -5,10 +5,16 @@
 """
 import os
 import textwrap
-
 from pathlib import Path
 
 from scripts.tests.shellhelp import run_bash
+from scripts.tests.test_ap_subnet import (
+    HEALTHY_ADDR,
+    HEALTHY_ROUTE,
+    INCIDENT_ADDR,
+    INCIDENT_ROUTE,
+    _fake_ip,
+)
 
 SOURCE = "source scripts/setup-hub-wizard.sh"
 SITE = "source scripts/lib/site-env.sh"
@@ -103,10 +109,13 @@ def _kit_workdir(tmp_path: Path) -> Path:
     return tmp_path
 
 
-def _run_hub_wizard(tmp_path: Path, lines: list[str]):
+def _run_hub_wizard(tmp_path: Path, lines: list[str], route=HEALTHY_ROUTE, addr=HEALTHY_ADDR):
+    # 実機の経路は読まない。既定は「重なりの無い機体」。
+    fake_ip = _fake_ip(tmp_path / ".kit", route, addr)
     return run_bash(
         "timeout 20 bash -c 'source scripts/setup-hub-wizard.sh; main'",
-        env=_env({"WIZARD_WORKDIR": str(tmp_path), "WIZARD_DRY_RUN": "1"}),
+        env=_env({"WIZARD_WORKDIR": str(tmp_path), "WIZARD_DRY_RUN": "1",
+                  "AP_SUBNET_IP_CMD": str(fake_ip)}),
         stdin="\n".join(lines) + "\n",
         check=False,
     )
@@ -519,3 +528,50 @@ def test_already_configured_p_redoes_ap_psk_without_bootstrap(tmp_path):
         check=False,
     )
     assert proc2.returncode != 0
+
+
+# ---------------------------------------------------------------------------
+# AP のアドレスが自機の別経路と重なるときだけ、AP_GW_IP の候補を聞く(設計 §2.3)
+# ---------------------------------------------------------------------------
+_FULL_ANSWERS = ["1", "tpc12345", ""] + _AFTER_SSID
+
+
+def test_wizard_asks_for_ap_gw_ip_only_when_the_range_overlaps(tmp_path):
+    work = _kit_workdir(tmp_path)
+    proc = _run_hub_wizard(work, _FULL_ANSWERS + ["", "y"],
+                           route=INCIDENT_ROUTE, addr=INCIDENT_ADDR)
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    assert "10.42.1.1" in proc.stdout
+    assert "を使いますか" in proc.stdout
+    confirm = proc.stdout.split("----- 確認 -----")[-1]
+    assert "10.42.1.1" in confirm                 # 承諾した値が確認画面に出る
+
+
+def test_wizard_does_not_ask_when_nothing_overlaps(tmp_path):
+    work = _kit_workdir(tmp_path)
+    proc = _run_hub_wizard(work, _FULL_ANSWERS + ["y"])
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    assert "を使いますか" not in proc.stdout       # 既存の質問順は変わらない
+    assert "10.42.1.1" not in proc.stdout
+
+
+def test_wizard_declining_the_candidate_stops_instead_of_writing_an_overlapping_ap(tmp_path):
+    work = _kit_workdir(tmp_path)
+    proc = _run_hub_wizard(work, _FULL_ANSWERS + ["n"],
+                           route=INCIDENT_ROUTE, addr=INCIDENT_ADDR)
+    assert proc.returncode != 0
+    assert "を使いますか" in proc.stdout           # 候補を聞いたうえでの中止
+    assert "----- 確認 -----" not in proc.stdout  # 確認画面へ進んでいない
+
+
+def test_render_writes_the_accepted_ap_gw_ip_and_inherits_otherwise(tmp_path):
+    tmpl = tmp_path / "site.env.template"
+    tmpl.write_text(TEMPLATE, encoding="utf-8")
+    origin = tmp_path / "origin.env"
+    origin.write_text(ORIGIN, encoding="utf-8")
+    cmd = (f'{SITE}; {SOURCE}; wizard_render_site_env "{tmpl}" "{origin}" '
+           'presence-hub-2 172.22.13.18 presence-hub-2-hub')
+    accepted = run_bash(cmd, env=_env({"WIZ_AP_GW_IP": "10.42.1.1"})).stdout
+    assert "AP_GW_IP=10.42.1.1" in accepted.splitlines()
+    inherited = run_bash(cmd, env=_env()).stdout
+    assert "AP_GW_IP=10.42.0.1" in inherited.splitlines()

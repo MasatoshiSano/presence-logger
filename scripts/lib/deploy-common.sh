@@ -70,6 +70,54 @@ child_resolve_ap_ip() {
   ok "子IP(子から取得): $CHILD_AP_IP"
 }
 
+# ---- このハブの AP ゲートウェイ / 子の送信先 -------------------------------
+# このハブの子AP のゲートウェイIPを返す。$1=リポジトリ(site.env のある場所、既定 $REPO_DIR)。
+#   site.env に AP_GW_IP あり → その値 / 無し(site.env 自体が無い場合も) → 10.42.0.1 /
+#   IPv4 として不正 → 何も出さず非0。
+# site.env は source せず grep で読む(デプロイ中に任意のコードを走らせない)。
+# 規則は python 側 fleet_ui.send_target.load_ap_gw_ip と同じにする(共通の小テスト表で照合)。
+hub_ap_gw_ip() {
+  local f="${1:-$REPO_DIR}/site.env" line="" v
+  [ ! -f "$f" ] || line="$(grep -E '^[[:space:]]*AP_GW_IP=' "$f" | tail -n1 || true)"
+  if [ -z "$line" ]; then echo 10.42.0.1; return 0; fi
+  v="${line#*=}"
+  v="$(printf '%s' "$v" | sed -e 's/[[:space:]]#.*$//' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' \
+        -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'\$/\1/")"
+  if ! [[ "$v" =~ ^(0|[1-9][0-9]{0,2})(\.(0|[1-9][0-9]{0,2})){3}$ ]]; then
+    warn "site.env の AP_GW_IP が IPv4 として不正です: $v"; return 1
+  fi
+  local IFS=. o
+  for o in $v; do [ "$o" -le 255 ] || { warn "site.env の AP_GW_IP が IPv4 として不正です: $v"; return 1; }; done
+  echo "$v"
+}
+
+# send_target_config.json の host だけを書き換える($1=ファイル $2=ホスト)。
+# 他のキーはそのまま。壊れた JSON や IPv4 でない host のときは、書かずに非0で返す。
+render_send_target_host() {
+  local file="$1" host="$2"
+  [[ "$host" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || { warn "host が IPv4 ではありません: $host"; return 1; }
+  python3 - "$file" "$host" <<'PY' || return 1
+import json
+import sys
+
+path, host = sys.argv[1], sys.argv[2]
+with open(path, encoding="utf-8") as f:
+    raw = f.read()
+try:
+    data = json.loads(raw)
+except ValueError as e:
+    sys.exit(f"send_target_config.json が JSON として読めません: {e}")
+if not isinstance(data, dict):
+    sys.exit("send_target_config.json の中身がオブジェクトではありません")
+data["host"] = host
+out = json.dumps(data, ensure_ascii=False)
+if raw.endswith("\n"):
+    out += "\n"
+with open(path, "w", encoding="utf-8") as f:
+    f.write(out)
+PY
+}
+
 # ---- 事前チェック -----------------------------------------------------------
 require_child_reachable() {
   log "子($CHILD_SSH) 到達確認"

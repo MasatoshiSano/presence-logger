@@ -111,10 +111,14 @@ bash desktop/presence-tools/pipeline-monitor.sh
 
 引っ越し手順の 3（旧 AP 停止）は**やらない**。両ハブが同時に生きる。
 
-1. 新ハブの `site.env` で **`AP_SSID` と `AP_GW_IP` を現行機と別の値**にする
-   （同じだと子がどちらに繋ぐか不定になる）
-2. 新ハブ配下に置く子の `~/send_target_config.json` の `"host"` を、新しい
-   `AP_GW_IP` へ変更する（既定の `10.42.0.1` のままでは旧ハブへ送り続ける）
+1. 新ハブの `site.env` で **`AP_SSID` を現行機と別の値**にする
+   （同じだと子がどちらに繋ぐか不定になる）。`AP_GW_IP` は既定のままでよい
+   （AP同士は孤立している）。この機械の別の接続と範囲が重なる場合だけ、フェーズ50が
+   検出して止め、空き候補を出す
+2. 子の送信先（`~/send_target_config.json` の `host` と `child-csv-to-mqtt` の
+   `MQTT_HOST`）は、付け替え時に自動で新ハブの `AP_GW_IP` に揃う。**手で変えない**
+   （2か所あり、片方だけ変えると ACK 経路が止まる）。既に付いている子は
+   `python3 -m fleet_ui.child_cli align` で揃える
 3. 子の STA_NO（`id_names_config.json`）が**全ハブを通じて一意**であること。
    Oracle の MERGE キーは `MK_DATE + STA_NO1-3 + T1_STATUS` のみで `device_id` を
    含まない。ハブが別でも STA_NO が衝突すればレコードは無警告で欠落する
