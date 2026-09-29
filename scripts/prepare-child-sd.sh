@@ -49,13 +49,48 @@ child_sd_install_pubkey() {
     chown "$owner_uid:$owner_uid" "$root/home/pi/.ssh" "$dest" 2>/dev/null || true
 }
 
-# NetworkManager の keyfile は未引用だと # 以降がコメントになる。
-# 引用符とバックスラッシュだけエスケープして二重引用符で囲む。
-child_sd_nm_quote() {
-    local v="${1:-}"
+# NetworkManager の keyfile(GLib key-file) は引用符を特別扱いしない。囲むと引用符ごと
+# SSID/PSK になり、子は存在しない AP を探し続ける(2026-09-25 に発症)。値の途中の # は
+# コメントにならない。書式は `nmcli --offline connection add` の出力に合わせる。
+# 規則は fleet_ui/migrate.py と同じ(別実装)。テストベクタは scripts/tests/nm_vectors.py。
+# 設計: docs/2026-09-29-child-join-fix-design.md §1.2
+
+# 0=OK。WPA-PSK: 表示可能ASCII 8..63 文字、または16進64文字。
+child_sd_psk_valid() {
+    local LC_ALL=C v="${1:-}"
+    [[ ${#v} -eq 64 && "$v" =~ ^[0-9A-Fa-f]+$ ]] && return 0
+    (( ${#v} >= 8 && ${#v} <= 63 )) || return 1
+    [[ "$v" =~ ^[\ -~]+$ ]]
+}
+
+# バックスラッシュは二重に、先頭の空白は1文字ごとに \s (NM は先頭空白を黙って落とす)。
+child_sd_nm_escape_psk() {
+    local v="${1:-}" lead=""
     v="${v//\\/\\\\}"
-    v="${v//\"/\\\"}"
-    printf '"%s"' "$v"
+    while [ "${v:0:1}" = " " ]; do lead+='\s'; v="${v:1}"; done
+    printf '%s%s' "$lead" "$v"
+}
+
+# 1..32 バイトでなければ非0。素直な ASCII は文字列形式(; だけ二重バックスラッシュ付き)、
+# それ以外は NM 自身と同じバイト列形式(10進を ; 区切り、末尾にも ;)。
+child_sd_nm_ssid() {
+    local LC_ALL=C v="${1:-}" n
+    n=${#v}
+    (( n >= 1 && n <= 32 )) || return 1
+    if [[ "$v" =~ ^[!-~]([\ -~]*[!-~])?$ && "$v" != *\\* ]]; then
+        printf '%s' "${v//;/\\\\;}"
+    else
+        printf '%s' "$v" | od -An -v -tu1 | tr -s ' \n' '\n\n' | grep . | tr '\n' ';'
+    fi
+}
+
+# 書き込み前の旧ファイルが引用符つき(不具合版の書式)なら知らせる。上書きで直る。
+child_sd_report_legacy_quotes() {
+    local f="${1:?}"
+    [ -f "$f" ] || return 0
+    if grep -qE '^(ssid|psk)=".*"$' "$f"; then
+        echo "以前の書式（引用符つき）で書かれていたので直しました。この子は以前このハブに繋がれなかったはずです。"
+    fi
 }
 
 child_sd_write_wifi() {
@@ -63,10 +98,19 @@ child_sd_write_wifi() {
     local dir="$root/etc/NetworkManager/system-connections"
     local dest="$dir/presence-hub-join.nmconnection"
     local uuid qssid qpsk
+    # 書く前に検証する。外れた値は AP 側でも使えず、ファイルを壊すだけ。PSK の値は表示しない。
+    child_sd_psk_valid "$psk" || {
+        echo "このハブの AP パスワードは子Pi が使えない形式です(8〜63文字の半角英数記号、または16進64文字)" >&2
+        return 1
+    }
+    qssid="$(child_sd_nm_ssid "$ssid")" || {
+        echo "AP 名の長さが不正です(1〜32バイト)" >&2
+        return 1
+    }
+    qpsk="$(child_sd_nm_escape_psk "$psk")"
     mkdir -p "$dir"
+    child_sd_report_legacy_quotes "$dest"
     uuid="$(cat /proc/sys/kernel/random/uuid 2>/dev/null || python3 -c 'import uuid; print(uuid.uuid4())')"
-    qssid="$(child_sd_nm_quote "$ssid")"
-    qpsk="$(child_sd_nm_quote "$psk")"
     umask 077
     cat > "$dest" <<EOF
 [connection]

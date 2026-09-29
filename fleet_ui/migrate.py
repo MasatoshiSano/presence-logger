@@ -226,8 +226,36 @@ def _extract_mac(text: str) -> str:
     return ""
 
 
-def nm_quote(value: str) -> str:
-    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+_PRINTABLE = re.compile(r"^[\x20-\x7e]+$")
+_HEX64 = re.compile(r"^[0-9A-Fa-f]{64}$")
+
+
+def psk_valid(psk: str) -> bool:
+    """WPA-PSK の規則(表示可能ASCII 8〜63文字、または16進64文字)。
+
+    外れた値は AP 側でも使えないので、書く前に止める。"""
+    return bool(_HEX64.match(psk)) or (8 <= len(psk) <= 63 and bool(_PRINTABLE.match(psk)))
+
+
+def nm_escape_psk(psk: str) -> str:
+    """keyfile は引用符を特別扱いしない。囲むと引用符ごと PSK になる(2026-09-25)。
+
+    バックスラッシュは二重に、先頭の空白は1文字ごとに \\s(NM は先頭空白を黙って落とす)。
+    書式は `nmcli --offline connection add` の出力に合わせる。scripts/prepare-child-sd.sh と
+    同じ規則(別実装)。テストベクタは scripts/tests/nm_vectors.py。"""
+    v = psk.replace("\\", "\\\\")
+    stripped = v.lstrip(" ")
+    return "\\s" * (len(v) - len(stripped)) + stripped
+
+
+def nm_ssid(ssid: str) -> str:
+    """nmcli と同じ: 素直な ASCII は文字列形式、それ以外はバイト列形式。"""
+    raw = ssid.encode("utf-8")
+    if not 1 <= len(raw) <= 32:
+        raise ValueError("ssid length must be 1..32 bytes")
+    if _PRINTABLE.match(ssid) and "\\" not in ssid and ssid[0] != " " and ssid[-1] != " ":
+        return ssid.replace(";", "\\\\;")
+    return "".join(f"{b};" for b in raw)
 
 
 def nm_join_keyfile(ssid: str, psk: str) -> str:
@@ -239,14 +267,16 @@ def nm_join_keyfile(ssid: str, psk: str) -> str:
         "type=wifi\n"
         "autoconnect=true\n"
         "autoconnect-priority=200\n"
+        # SD 側と同じ。既定の4回で諦めると電源再投入まで戻らない(2026-09-23)。
+        "autoconnect-retries=0\n"
         "\n"
         "[wifi]\n"
         "mode=infrastructure\n"
-        f"ssid={nm_quote(ssid)}\n"
+        f"ssid={nm_ssid(ssid)}\n"
         "\n"
         "[wifi-security]\n"
         "key-mgmt=wpa-psk\n"
-        f"psk={nm_quote(psk)}\n"
+        f"psk={nm_escape_psk(psk)}\n"
         "\n"
         "[ipv4]\n"
         "method=auto\n"
@@ -256,6 +286,10 @@ def nm_join_keyfile(ssid: str, psk: str) -> str:
     )
 
 
+# 切替は SSH が切れても止まらないよう systemd-run の独立ユニットで走らせる。
+# 順序は「up が成功してから他プロファイルの自動接続を切る」。先に切ると、up が失敗した
+# とき子はどこにも繋がらない孤立状態になる。失敗時は新プロファイルを切って元の Wi-Fi に戻す。
+# WIFI_OK はユニット側(journalctl -u presence-hub-join-switch)に出る。SSH には届かない。
 WIFI_INSTALL = """
 umask 077
 tmp=$(mktemp)
@@ -263,12 +297,28 @@ cat > "$tmp" || exit 1
 sudo install -m 600 "$tmp" /etc/NetworkManager/system-connections/presence-hub-join.nmconnection
 rm -f "$tmp"
 sudo nmcli connection reload
-sudo nmcli -t -f NAME,TYPE connection show 2>/dev/null | while IFS=: read -r n t; do
+sw=$(mktemp)
+cat > "$sw" <<'SWITCH'
+prev=$(nmcli -t -f NAME,TYPE connection show --active 2>/dev/null | while IFS=: read -r n t; do
   [ "$t" = "802-11-wireless" ] || [ "$t" = "wifi" ] || continue
   [ "$n" = "presence-hub-join" ] && continue
-  sudo nmcli connection modify "$n" connection.autoconnect no 2>/dev/null || true
-done
-sudo nmcli -w 15 connection up presence-hub-join && echo WIFI_OK
+  echo "$n"; break
+done)
+if nmcli -w 15 connection up presence-hub-join; then
+  nmcli -t -f NAME,TYPE connection show 2>/dev/null | while IFS=: read -r n t; do
+    [ "$t" = "802-11-wireless" ] || [ "$t" = "wifi" ] || continue
+    [ "$n" = "presence-hub-join" ] && continue
+    nmcli connection modify "$n" connection.autoconnect no 2>/dev/null || true
+  done
+  echo WIFI_OK
+else
+  nmcli connection modify presence-hub-join connection.autoconnect no 2>/dev/null || true
+  [ -z "$prev" ] || nmcli -w 15 connection up "$prev"
+  echo WIFI_FAILED
+fi
+rm -f "$0"
+SWITCH
+sudo systemd-run --unit=presence-hub-join-switch --collect bash "$sw"
 """.strip()
 
 
@@ -306,11 +356,25 @@ def take_child(
     if not pubkey or not _PUBKEY_RE.match(pubkey.split("\n", 1)[0]):
         return StepResult(ok=False, message="このハブの SSH 公開鍵がありません")
     ssid, psk = load_ap_join(repo)
-    if not ssid or len(psk) < 8:
+    if not ssid or not psk:
         return StepResult(
             ok=False,
-            message="このハブの AP 名またはパスワードが読めません。.kit/ap-join.env を確認してください",
+            message=(
+                "このハブの AP 名またはパスワードが読めません。"
+                ".kit/ap-join.env を確認してください"
+            ),
         )
+    # 書く前に検証する。値そのものはメッセージに出さない。
+    if not psk_valid(psk):
+        return StepResult(
+            ok=False,
+            message=(
+                "このハブの AP パスワードは子Pi が使えない形式です"
+                "(8〜63文字の半角英数記号、または16進64文字)。.kit/ap-join.env を確認してください"
+            ),
+        )
+    if not 1 <= len(ssid.encode("utf-8")) <= 32:
+        return StepResult(ok=False, message="このハブの AP 名の長さが不正です(1〜32バイト)")
 
     mac_inner = (
         "cat /sys/class/net/wlan0/address 2>/dev/null || "
@@ -321,7 +385,10 @@ def take_child(
     if not mac:
         return StepResult(
             ok=False,
-            message=f"{entry} の MAC が取れませんでした。旧親からその子へ SSH できるか確認してください",
+            message=(
+                f"{entry} の MAC が取れませんでした。"
+                "旧親からその子へ SSH できるか確認してください"
+            ),
             output=mac_out,
         )
 

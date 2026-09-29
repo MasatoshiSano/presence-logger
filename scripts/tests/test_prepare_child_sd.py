@@ -4,6 +4,15 @@
 """
 import os
 
+import pytest
+
+from scripts.tests import nm_vectors
+from scripts.tests.nm_readback import (
+    assert_glib_roundtrip,
+    assert_nm_roundtrip,
+    assert_roundtrip,
+    nm_read,
+)
 from scripts.tests.shellhelp import run_bash
 
 SOURCE = "source scripts/prepare-child-sd.sh"
@@ -25,6 +34,21 @@ def _child_root(tmp_path):
     )
     (home / "hostname-keep").write_text("zero2\n", encoding="utf-8")
     return root
+
+
+def _wifi_path(root):
+    return (
+        root / "etc" / "NetworkManager" / "system-connections" / "presence-hub-join.nmconnection"
+    )
+
+
+def _write_wifi(root, ssid, psk, *, check=True):
+    """値は環境変数で渡す(TAB・引用符・末尾空白をシェルの引用に頼らず届ける)。"""
+    return run_bash(
+        f'{SOURCE}; child_sd_write_wifi "{root}" "$T_SSID" "$T_PSK"',
+        env=_env({"T_SSID": ssid, "T_PSK": psk}),
+        check=check,
+    )
 
 
 def test_find_root_from_media_tree(tmp_path):
@@ -67,10 +91,10 @@ def test_prepare_writes_key_and_wifi_keeps_identity(tmp_path):
         root / "etc" / "NetworkManager" / "system-connections"
         / "presence-hub-join.nmconnection"
     )
-    body = wifi.read_text(encoding="utf-8")
-    assert 'ssid="sibling-hub"' in body
-    assert 'psk="ap-secret9"' in body
-    assert "autoconnect-priority=200" in body
+    # A-R1: 文字列一致ではなく、NM と GLib の読み手で元の値に読み戻せること。
+    assert_roundtrip(wifi, "sibling-hub", "ap-secret9")
+    assert nm_read(wifi)["ssid"] == "sibling-hub"
+    assert "autoconnect-priority=200" in wifi.read_text(encoding="utf-8")
     assert oct(wifi.stat().st_mode & 0o777) == "0o600"
     assert (root / "home" / "pi" / "id_names_config.json").read_text(encoding="utf-8") == (
         '{"id_names":{"1":["H","T","1"]}}\n'
@@ -91,18 +115,121 @@ def test_prepare_does_not_duplicate_pubkey(tmp_path):
     assert keys.count("ssh-ed25519 AAAA newhub") == 1
 
 
-def test_prepare_quotes_hash_in_psk_so_nm_does_not_truncate(tmp_path):
+@pytest.mark.parametrize(("ssid", "psk"), nm_vectors.OK)
+def test_prepare_psk_with_hash_reads_back_intact(tmp_path, ssid, psk):
+    """A-R2/R4/R5: `#` `;` `\\` `"` 先頭空白・末尾空白・非ASCII SSID・16進64桁。
+
+    引用符で囲むと引用符ごと値になる(2026-09-25)。未引用でも `#` はコメントにならない。"""
     root = _child_root(tmp_path)
-    pub = tmp_path / "id_ed25519.pub"
-    pub.write_text("ssh-ed25519 AAAA newhub\n", encoding="utf-8")
-    run_bash(
-        f'{SOURCE}; child_sd_write_wifi "{root}" sibling-hub "sec#ret99"',
-        env=_env(),
+    _write_wifi(root, ssid, psk)
+    assert_roundtrip(_wifi_path(root), ssid, psk)
+
+
+@pytest.mark.parametrize(("ssid", "psk"), nm_vectors.OK)
+def test_prepare_ssid_psk_lines_are_not_quoted(tmp_path, ssid, psk):
+    """A-R3: 引用符で囲まない(再発防止。読み戻しの補助)。"""
+    root = _child_root(tmp_path)
+    _write_wifi(root, ssid, psk)
+    lines = _wifi_path(root).read_text(encoding="utf-8").splitlines()
+    for key in ("ssid=", "psk="):
+        (line,) = [ln for ln in lines if ln.startswith(key)]
+        if not (ssid.startswith('"') or psk.startswith('"')):
+            assert not line[len(key):].startswith('"'), line
+
+
+def test_prepare_writes_bytes_form_for_non_ascii_ssid(tmp_path):
+    """A-R4: 非ASCII は NM 自身と同じバイト列形式。"""
+    root = _child_root(tmp_path)
+    _write_wifi(root, "工場-hub", "plain-pass-1")
+    body = _wifi_path(root).read_text(encoding="utf-8")
+    assert "ssid=229;183;165;229;160;180;45;104;117;98;\n" in body
+    assert_nm_roundtrip(_wifi_path(root), "工場-hub", "plain-pass-1")
+
+
+def test_prepare_semicolon_in_ssid_is_escaped_like_nm(tmp_path):
+    """A-R5: セミコロンは二重バックスラッシュ付きで書く(NM と同じ)。
+
+    片方だけだと NM が SSID ごと落とす。"""
+    root = _child_root(tmp_path)
+    _write_wifi(root, "a;b", "plain-pass-1")
+    body = _wifi_path(root).read_text(encoding="utf-8")
+    assert "ssid=a\\\\;b\n" in body
+    assert_roundtrip(_wifi_path(root), "a;b", "plain-pass-1")
+
+
+def test_nm_reads_hand_written_bytes_form_ssid(tmp_path):
+    """A-R6: ヘルパ自体の前提。手書きのバイト列形式を NM が `trail ` として読む。"""
+    f = tmp_path / "hand.nmconnection"
+    f.write_text(
+        "[connection]\nid=presence-hub-join\ntype=wifi\n\n"
+        "[wifi]\nmode=infrastructure\nssid=116;114;97;105;108;32;\n\n"
+        "[wifi-security]\nkey-mgmt=wpa-psk\npsk=plain-pass-1\n",
+        encoding="utf-8",
     )
-    body = (
-        root / "etc" / "NetworkManager" / "system-connections" / "presence-hub-join.nmconnection"
-    ).read_text(encoding="utf-8")
-    assert 'psk="sec#ret99"' in body
+    assert nm_read(f)["ssid"] == "trail "
+    assert_glib_roundtrip(f, "trail ", "plain-pass-1")
+
+
+@pytest.mark.parametrize("bad", nm_vectors.BAD_PSK)
+def test_prepare_rejects_psk_wpa_forbids(tmp_path, bad):
+    """A-R7: 書く前に拒否。前のファイルを壊さない。エラー文に PSK を含めない。"""
+    root = _child_root(tmp_path)
+    _write_wifi(root, "sibling-hub", "ap-secret9")
+    before = _wifi_path(root).read_bytes()
+    proc = _write_wifi(root, "sibling-hub", bad, check=False)
+    assert proc.returncode != 0
+    assert _wifi_path(root).read_bytes() == before
+    assert bad not in proc.stdout + proc.stderr
+
+
+def test_prepare_bad_psk_creates_no_file(tmp_path):
+    """A-R7: 前のファイルが無いときは、ファイルを作らない。"""
+    root = _child_root(tmp_path)
+    proc = _write_wifi(root, "sibling-hub", "short12", check=False)
+    assert proc.returncode != 0
+    assert not _wifi_path(root).exists()
+
+
+@pytest.mark.parametrize("bad", nm_vectors.BAD_SSID)
+def test_prepare_rejects_ssid_outside_1_to_32_bytes(tmp_path, bad):
+    """A-R8: 空、33 バイト以上(非ASCII はバイト数で数える)。"""
+    root = _child_root(tmp_path)
+    if bad == "":
+        # ssid="${2:?}" が空を止めるので、関数へは空文字を明示的に渡す形で確認する
+        proc = run_bash(
+            f'{SOURCE}; child_sd_write_wifi "{root}" "" "plain-pass-1"',
+            env=_env(),
+            check=False,
+        )
+    else:
+        proc = _write_wifi(root, bad, "plain-pass-1", check=False)
+    assert proc.returncode != 0
+    assert not _wifi_path(root).exists()
+
+
+def test_prepare_reports_and_repairs_legacy_quoted_profile(tmp_path):
+    """A-R9: 旧書式(引用符つき)の SD は上書きで直り、直したことを表示する。"""
+    root = _child_root(tmp_path)
+    wifi = _wifi_path(root)
+    wifi.parent.mkdir(parents=True)
+    wifi.write_text(
+        "[connection]\nid=presence-hub-join\ntype=wifi\n\n"
+        '[wifi]\nmode=infrastructure\nssid="sibling-hub"\n\n'
+        '[wifi-security]\nkey-mgmt=wpa-psk\npsk="ap-secret9"\n',
+        encoding="utf-8",
+    )
+    proc = _write_wifi(root, "sibling-hub", "ap-secret9")
+    assert "以前の書式（引用符つき）" in proc.stdout
+    assert_roundtrip(wifi, "sibling-hub", "ap-secret9")
+
+
+def test_prepare_says_nothing_about_legacy_when_profile_is_clean(tmp_path):
+    root = _child_root(tmp_path)
+    _write_wifi(root, "sibling-hub", "ap-secret9")
+    proc = _write_wifi(root, "sibling-hub", "ap-secret9")  # 2回目: 新書式が既にある
+    assert "以前の書式" not in proc.stdout
+    fresh = _write_wifi(_child_root(tmp_path / "other"), "sibling-hub", "ap-secret9")
+    assert "以前の書式" not in fresh.stdout
 
 
 def test_sudo_reexec_passes_pubkey_and_home():
@@ -142,11 +269,12 @@ def test_sd_wifi_profile_never_gives_up_reconnecting(tmp_path):
     物理的な電源再投入が必要だった。SD に書くプロファイルも同じ穴を持つ。
     """
     root = _child_root(tmp_path)
-    run_bash(
-        f'{SOURCE}; child_sd_write_wifi "{root}" sibling-hub "ap-secret9"',
-        env=_env(),
+    _write_wifi(root, "sibling-hub", "ap-secret9")
+    # A-R10: NM 自身の読み手が autoconnect-retries=0 として読むこと。
+    from scripts.tests.nm_readback import _nmcli, _pick
+
+    proc = _nmcli(
+        ["connection", "modify", "connection.autoconnect-priority", "200"],
+        stdin=_wifi_path(root).read_text(encoding="utf-8"),
     )
-    body = (
-        root / "etc" / "NetworkManager" / "system-connections" / "presence-hub-join.nmconnection"
-    ).read_text(encoding="utf-8")
-    assert "autoconnect-retries=0" in body, "4回で諦めると電源再投入が要る"
+    assert _pick(proc.stdout)["autoconnect-retries"] == "0", "4回で諦めると電源再投入が要る"
