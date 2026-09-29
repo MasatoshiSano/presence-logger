@@ -281,11 +281,16 @@ Oracle のパスワードと新しい AP のパスワードは載せていませ
    別のアプリが既に入っている Pi なら、先に点検する（何も変更しません）:
      bash /media/pi/USB8G/presence-hub-kit/preflight-new-hub.sh
    最後の行に「進めてはいけません」があれば、ここで止めて相談してください
+   （~/projects/presence-logger に別のアプリがある場合は、コピーの段階で止まります）
 2. ファイルマネージャで presence-hub-kit を開き、
    「このUSBからコピー」をダブルクリックする
    （開かないときはターミナルで）
      bash /media/pi/USB8G/presence-hub-kit/copy-to-this-pi.sh
-3. デスクトップに「ハブ初期設定」が現れるのでクリックする
+3. コピーが終わると、同じ画面で点検が走り、続けて「ハブ初期設定」が自動で始まります
+   ・点検に BLOCK が出たときは始まりません。表示に従って直してから、デスクトップの「ハブ初期設定」をクリックする
+   ・WARN が出たときは内容を読み、了承できるなら Enter
+   ・自動で始まらないとき（ターミナルから流したとき・古い USB）は、デスクトップの「ハブ初期設定」をクリックする
+   ・自動で始めたくないときは: COPY_NO_WIZARD=1 bash /media/pi/USB8G/presence-hub-kit/copy-to-this-pi.sh
 4. 工場の SSID・ゲートウェイ・Oracle なども順に答える（Enter でコピー元の値）
 5. 終わったら再起動し、デスクトップの「子をこのハブへ付ける」で子を追加する
 
@@ -300,7 +305,7 @@ Type=Application
 Version=1.0
 Name=このUSBからコピー
 Name[ja]=このUSBからコピー
-Comment=この Raspberry Pi にハブ一式をコピーし、初期設定アイコンを置きます
+Comment=この Raspberry Pi にハブ一式をコピーし、続けて初期設定を始めます
 Exec=lxterminal -t "ハブをコピー" -e bash -c "kit=$(find /media /run/media \"$HOME\" -name copy-to-this-pi.sh 2>/dev/null | head -1); if [ -z \"$kit\" ]; then echo USB の copy-to-this-pi.sh が見つかりません; else bash \"$kit\"; fi; echo; read -r -p 'Enterで閉じる '"
 Icon=media-removable
 Terminal=false

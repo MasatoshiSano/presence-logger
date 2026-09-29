@@ -439,3 +439,37 @@ def test_pack_puts_preflight_at_kit_root(tmp_path):
     readme = (kit / "README.txt").read_text(encoding="utf-8")
     assert "/media/pi/USB8G/presence-hub-kit/preflight-new-hub.sh" in readme
     assert "/media/*/" not in readme
+
+
+def _readme_after_pack(tmp_path):
+    src = tmp_path / "src"
+    src.mkdir()
+    dest = tmp_path / "usb"
+    dest.mkdir()
+    site = tmp_path / "site.env"
+    site.write_text("SITE_ID=x\n", encoding="utf-8")
+    run_bash(
+        f'{SOURCE}; pack_hub_kit "{src}" "{dest}"',
+        env=_env({
+            "PACK_SKIP_DOCKER": "1",
+            "PACK_SITE_ENV": str(site),
+            "PACK_SECRETS": str(tmp_path / "no-secrets"),
+            "PACK_ALLOW_NO_PSK": "1",
+        }),
+    )
+    return (dest / "presence-hub-kit" / "README.txt").read_text(encoding="utf-8")
+
+
+def test_readme_step3_says_wizard_starts_automatically(tmp_path):
+    readme = _readme_after_pack(tmp_path)
+    assert "自動で始まります" in readme
+    assert "始まらないとき" in readme
+    assert "デスクトップの「ハブ初期設定」をクリック" in readme
+
+
+def test_readme_drops_old_click_only_wording(tmp_path):
+    assert "現れるのでクリックする" not in _readme_after_pack(tmp_path)
+
+
+def test_readme_explains_copy_no_wizard(tmp_path):
+    assert "COPY_NO_WIZARD=1" in _readme_after_pack(tmp_path)

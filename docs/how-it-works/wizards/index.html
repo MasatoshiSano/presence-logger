@@ -108,7 +108,7 @@
   <tr><td>子を1台増やす</td><td>子をこのハブへ付ける</td><td class="q">2</td></tr>
   <tr><td>別のハブから子を引っ越す</td><td>子をこのハブへ付ける</td><td class="q">1</td></tr>
   <tr><td>クローンしたSDを子用に仕込む</td><td>子SDをこのハブ用にする</td><td>カードを挿すだけ</td></tr>
-  <tr><td>新しい親ハブを一から作る</td><td>ハブ用USBを作る → 新機で ハブ初期設定</td><td class="q">1</td></tr>
+  <tr><td>新しい親ハブを一から作る</td><td>ハブ用USBを作る → 新機でコピー（初期設定が続けて始まる）</td><td class="q">1</td></tr>
 </table>
 
 <!-- ───────────── 2 ───────────── -->
@@ -207,7 +207,7 @@
   <li><strong>【数日前】固定IPを申請</strong> — 新機の <code>wlan0</code> のMACを許可登録してもらいます。MACは新機で <code>cat /sys/class/net/wlan0/address</code>。ウィザードは登録の有無を確かめません。</li>
   <li><strong>【親機】USBを作る</strong> — USBを挿して、デスクトップの <strong>ハブ用USBを作る</strong> をクリック。挿さっているUSBを自動で見つけ、確認してから書き出します。</li>
   <li><strong>【新機】コピー</strong> — USBを挿し、<code>presence-hub-kit</code> の「このUSBからコピー」をダブルクリック。開かないときは <code>bash /media/pi/*/presence-hub-kit/copy-to-this-pi.sh</code>。</li>
-  <li><strong>【新機】ハブ初期設定</strong> — デスクトップに出たアイコンをクリック。この時点では電波もコンテナも起動しません（親機とぶつからないため）。</li>
+  <li><strong>【新機】ハブ初期設定</strong> — コピーが終わると同じ画面で事前点検が走り、続けて自動で始まります（BLOCK が出たら止まるので、直してからデスクトップのアイコンをクリック）。この時点では電波もコンテナも起動しません（親機とぶつからないため）。</li>
   <li><strong>【新機】再起動して子を迎える</strong> — 終わったら再起動し、2章の手順で子を足します。</li>
 </ol>
 
