@@ -105,6 +105,20 @@ bash desktop/presence-tools/pipeline-monitor.sh
 ①子Pi別受信 / ②MQTT生ログ / ③record_inbox / ④Oracle。
 同じ event_id を **② → ③ → ④** で辿れること。④の工場網確認は HIME-H-REAP 接続中。
 
+### 名簿（`fleet/children.conf`）の扱い
+
+引っ越しが済んだら、子の名簿を新旧で合わせる。
+
+- デスクトップの「子をこのハブへ付ける」→ 1 → 1（旧親から移す）を使ったときは、**自動**で
+  新ハブの名簿に足され、**旧親の名簿からは消える**（旧親の `fleet/children.conf` が SSH で書き換わる。
+  Git 追跡ファイルなので旧親の作業ツリーが汚れる。完了メッセージには出ない）。
+- SD 経由（1 → 2）、AP からの取り込み（1 → 3）、手で行った移動は、**新ハブの名簿に足すだけ**で、
+  旧親の名簿は変わらない。旧親で子の行を消す。
+- **試しに移して戻す**ときは、戻したあと元のハブの名簿から子の行が消えたままになり、
+  `fleet-status.sh` や `deploy-fleet.sh` の対象から**黙って漏れる**。逆向きに移し直すか（名簿は自動で戻る）、
+  手で元のハブの `fleet/children.conf` に行を書き足し、`git status` と `fleet-status.sh` で確かめる。
+  詳細は [`NEW-HUB-SETUP.md`](NEW-HUB-SETUP.md) の §3.14。
+
 ---
 
 ## 7. 増設（両ハブ同時稼働）の差分
