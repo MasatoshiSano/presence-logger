@@ -10,7 +10,6 @@
 | ファイル | 内容 |
 |---|---|
 | `sample.csv` | 子ラズパイの送信用 CSV(`/home/pi/send_logs/T1_<IP>_<日付>.csv`)。ヘッダー行なし |
-| `columns.md` | 各列・各項目の意味(`event_id` の作り方を含む) |
 | `sample.json` | `sample.csv` の全行(3行)を JSON にしたもの。読みやすさのため配列にまとめている |
 
 > 実際は配列ではなく、**CSV 1行につき 1 つの JSON メッセージ**を別々に送ります(`sample.json` の配列の要素 1 つ分が 1 メッセージ)。
@@ -38,4 +37,32 @@
 | `device_id` | 送信元の子ラズパイ(環境変数 `DEVICE_ID`、無ければホスト名) |
 | `schema_version` | 常に `1` |
 
-Oracle の `HF1RCM01` には `MK_DATE, STA_NO1, STA_NO2, STA_NO3, T1_STATUS` の 5 列が入ります。
+## `event_id` について
+
+同じ内容を 2 回送ってしまっても、親が「同じ 1 件」と判別して二重に登録しないための ID です(再送時に効く)。
+
+次の文字列を SHA-1 でハッシュ化した 16 進 40 桁です。
+
+```
+<device_id>|<日時>,<STA_NO1>,<STA_NO2>,<STA_NO3>,<T1_STATUS>
+
+例: pizero2w|20261104130307,HIME,ABC,001,1
+  → 01d21f6694dc7fb17408149f795190ab9fc9c894
+```
+
+- 同じ子・同じ行なら、何度作っても同じ値になる(乱数や現在時刻は使わない)。
+- 子・日時・設備名・状態コードのどれか 1 つでも違えば、別の値になる。
+
+## Oracle に入る列
+
+親は Oracle の `HF1RCM01` に次の 5 列を書きます。
+
+| Oracle の列 | JSON の項目 |
+|---|---|
+| `MK_DATE` | `mk_date` |
+| `STA_NO1` | `sta_no1` |
+| `STA_NO2` | `sta_no2` |
+| `STA_NO3` | `sta_no3` |
+| `T1_STATUS` | `t1_status` |
+
+`event_id`・`device_id`・`schema_version` は Oracle には入らず、親の中での重複判定や送信元の管理に使われます。
