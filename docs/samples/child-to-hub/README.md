@@ -10,6 +10,7 @@
 | ファイル | 内容 |
 |---|---|
 | `sample.csv` | 子ラズパイの送信用 CSV(`/home/pi/send_logs/T1_<IP>_<日付>.csv`)。ヘッダー行なし |
+| `columns.md` | 各列・各項目の意味(`event_id` の作り方を含む) |
 | `sample.json` | `sample.csv` の全行(3行)を JSON にしたもの。読みやすさのため配列にまとめている |
 
 > 実際は配列ではなく、**CSV 1行につき 1 つの JSON メッセージ**を別々に送ります(`sample.json` の配列の要素 1 つ分が 1 メッセージ)。
